@@ -111,6 +111,6 @@ patch -p1 < "$egisdir"/patches/libfprint-%{version}-egis0576.patch
 %{_datadir}/installed-tests/libfprint-2/
 
 %changelog
-* Sat Jul 19 2026 PHILIPPDEV5396 - 1.94.10-99.egis1
+* Sun Jul 19 2026 PHILIPPDEV5396 - 1.94.10-99.egis1
 - Rebuild of libfprint 1.94.10 with the out-of-tree EgisTec EH576 (1c7a:0576)
   driver egis0576 compiled in.
