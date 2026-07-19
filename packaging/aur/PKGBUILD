@@ -1,0 +1,65 @@
+# Maintainer: PHILIPPDEV5396
+#
+# libfprint rebuilt with the out-of-tree EgisTec EH576 (egis0576, USB 1c7a:0576)
+# driver compiled in. A libfprint driver is compiled INTO libfprint-2.so — it is
+# not a loadable module — so this package REPLACES the stock `libfprint`
+# (provides/conflicts). The unchanged system fprintd loads it via the same soname.
+#
+# Modeled on the established AUR pattern for out-of-tree libfprint drivers
+# (libfprint-git, libfprint-vfs009x-git, libfprint-goodix-521d, ...).
+
+pkgname=libfprint-egis0576
+pkgver=1.94.10
+pkgrel=1
+pkgdesc="libfprint rebuilt with the out-of-tree EgisTec EH576 (egis0576, USB 1c7a:0576) driver"
+arch=('x86_64')
+url="https://github.com/PHILIPPDEV5396/libfprint-egis0576"
+license=('LGPL-2.1-or-later')
+# Drop-in replacement for stock libfprint. makepkg rewrites the bare
+# 'libfprint-2.so' provide into the versioned soname (libfprint-2.so=2-64) that
+# fprintd depends on, so fprintd keeps working with no rebuild.
+provides=('libfprint' 'libfprint-2.so')
+conflicts=('libfprint')
+depends=('glib2' 'glibc' 'libgcc' 'libgudev' 'libgusb' 'openssl' 'pixman')
+# 'openssl' (3.x) supplies libcrypto>=3.0 required by the egis0576 TLS/crypto layer.
+makedepends=('git' 'glib2-devel' 'gobject-introspection' 'meson'
+             'python-gobject' 'python-cairo' 'systemd')
+options=('!lto')
+
+# Upstream libfprint pinned to the tag the driver patch targets, plus the driver
+# repo (driver sources + the meson integration patch), pinned to a release tag.
+source=(
+  "libfprint::git+https://gitlab.freedesktop.org/libfprint/libfprint.git#tag=v${pkgver}"
+  "libfprint-egis0576::git+https://github.com/PHILIPPDEV5396/libfprint-egis0576.git#tag=v0.1.0"
+)
+sha256sums=('SKIP'
+            'SKIP')
+
+prepare() {
+  cd "$srcdir/libfprint"
+  # Drop the egis0576 driver into the tree (mirrors the repo's install.sh).
+  cp "$srcdir/libfprint-egis0576/driver/egis0576.c" \
+     "$srcdir/libfprint-egis0576/driver/egis0576.h" \
+     libfprint/drivers/
+  cp -r "$srcdir/libfprint-egis0576/driver/egis0576" libfprint/drivers/
+  # Register the driver + its relaxed-flags engine static-lib in meson.
+  patch -Np1 < "$srcdir/libfprint-egis0576/patches/libfprint-${pkgver}-egis0576.patch"
+}
+
+build() {
+  # No -D drivers: builds the default driver set (into which the patch inserts
+  # egis0576), so any other fingerprint reader you own keeps working.
+  # arch-meson (shipped by the `meson` package) applies Arch's standard prefix,
+  # libdir=lib, buildtype=plain and CFLAGS/LDFLAGS.
+  arch-meson "$srcdir/libfprint" build \
+    -D doc=false \
+    -D gtk-examples=false \
+    -D installed-tests=false \
+    -D udev_rules_dir=/usr/lib/udev/rules.d \
+    -D udev_hwdb_dir=/usr/lib/udev/hwdb.d
+  meson compile -C build
+}
+
+package() {
+  meson install -C build --destdir "$pkgdir"
+}

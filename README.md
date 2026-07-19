@@ -53,7 +53,34 @@ cross-device operation cannot be *proven* without a second physical EH576. If yo
 have one, **please open an issue with your results** — success or failure. That
 report is the most useful thing you can contribute after a clean-room matcher.
 
-## Building
+## Install
+
+The driver is compiled *into* `libfprint-2.so` (it is not a loadable module), so
+installing it means installing a libfprint that includes it, replacing the distro's.
+The stock `fprintd` then loads it through the unchanged ABI (no `fprintd` rebuild).
+
+### One command (packaged)
+
+**Fedora (COPR):**
+```bash
+sudo dnf copr enable PHILIPPDEV5396/libfprint-egis0576
+sudo dnf upgrade 'libfprint*'
+sudo systemctl restart fprintd
+```
+
+**Arch (AUR):**
+```bash
+yay -S libfprint-egis0576
+sudo systemctl restart fprintd
+```
+
+Packaging sources and how they're published live in [`packaging/`](packaging/).
+Both replace the stock `libfprint` (same soname); your other fingerprint hardware
+keeps working because the build includes the full default driver set.
+
+> Not published to a repo yet? Build from source below — it's the same result.
+
+## Building from source (any distro / development)
 
 A libfprint driver is compiled *into* `libfprint-2.so` (it is not a loadable
 module), so this builds a full libfprint that includes the driver. It does **not**
