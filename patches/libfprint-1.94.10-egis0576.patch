@@ -1,0 +1,68 @@
+diff --git a/libfprint/meson.build b/libfprint/meson.build
+index 3449481..a2a3714 100644
+--- a/libfprint/meson.build
++++ b/libfprint/meson.build
+@@ -125,6 +125,8 @@ driver_sources = {
+         [ 'drivers/etes603.c' ],
+     'egis0570' :
+         [ 'drivers/egis0570.c' ],
++    'egis0576' :
++        [ 'drivers/egis0576.c' ],
+     'egismoc' :
+         [ 'drivers/egismoc/egismoc.c' ],
+     'vfs0050' :
+@@ -267,11 +269,41 @@ libfprint_private = static_library('fprint-private',
+     link_with: libnbis,
+     install: false)
+ 
++# The egis0576 driver's matcher is Egis' own extractor+matcher, reimplemented
++# as native flat-memory C (reverse-engineered from the Windows driver). That
++# translated code intentionally mixes int/pointer types and relies on exact
++# stack layout, so it is built as a separate static library with relaxed flags
++# instead of libfprint's strict -Werror driver build.
++egis0576_engine_libs = []
++if 'egis0576' in drivers
++    # The sensor speaks TLS-PSK; egis0576_tls.c does the handshake + encrypted
++    # transport with OpenSSL libcrypto (AES/HMAC/SHA) over gusb.
++    egis0576_crypto_dep = dependency('libcrypto', version: '>= 3.0')
++    deps += egis0576_crypto_dep
++    egis0576_engine_libs = [ static_library('egis0576-engine',
++        sources: [
++            'drivers/egis0576/egis_funcs.c',
++            'drivers/egis0576/egis_rt.c',
++            'drivers/egis0576/egis_engine.c',
++            'drivers/egis0576/egis_preprocess.c',
++            'drivers/egis0576/egis_coherence_map.c',
++            'drivers/egis0576/egis0576_tls.c',
++        ],
++        include_directories: include_directories('drivers/egis0576'),
++        dependencies: [ gusb_dep, egis0576_crypto_dep ],
++        c_args: [
++            '-w', '-fno-stack-protector', '-fpermissive', '-fwrapv',
++            '-Wno-int-conversion', '-Wno-incompatible-pointer-types',
++            '-Wno-implicit-function-declaration',
++        ],
++        install: false) ]
++endif
++
+ libfprint_drivers = static_library('fprint-drivers',
+     sources: drivers_sources,
+     c_args: drivers_cflags,
+     dependencies: deps,
+-    link_with: libfprint_private,
++    link_with: [libfprint_private] + egis0576_engine_libs,
+     install: false)
+ 
+ mapfile = files('libfprint.ver')[0]
+diff --git a/meson.build b/meson.build
+index 14fb11f..faecc16 100644
+--- a/meson.build
++++ b/meson.build
+@@ -130,6 +130,7 @@ default_drivers = [
+     'vfs0050',
+     'etes603',
+     'egis0570',
++    'egis0576',
+     'egismoc',
+     'vcom5s',
+     'synaptics',

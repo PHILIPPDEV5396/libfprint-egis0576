@@ -1,0 +1,32 @@
+# --- Build artifacts ---
+builddir/
+build/
+*.o
+*.a
+*.so
+*.so.*
+
+# --- Egis' copyrighted material — reverse-engineering reference ONLY, never commit ---
+# The original Windows driver binary and any full decompilation of it are Egis
+# Technology's property. They are development/reference material that stays local.
+*.dll
+decomp*.txt
+*.decomp
+
+# --- Personal biometric data — NEVER commit captured fingerprints ---
+*.bin
+*.pgm
+*.raw
+live_frames/
+session_*/
+boot*_enroll/
+egis_dbg/
+cleanroom/livedata/
+baseline*.bin
+
+# --- Editor / OS cruft ---
+*.swp
+*~
+.DS_Store
+.vscode/
+.idea/
