@@ -202,6 +202,24 @@ Adds `auth sufficient pam_fprintd.so` to the `pam-config`-managed common auth st
 Prefer `pam-config` over hand-editing (it regenerates those files).
 Ref: [openSUSE SDB – Using fingerprint authentication](https://en.opensuse.org/SDB:Using_fingerprint_authentication)
 
+## Suspend / resume
+
+The driver holds a **TLS-PSK session** to the sensor, established at device-open.
+Across a system suspend — especially **s2idle**, where the USB device stays
+powered and is not re-enumerated — that session goes stale. On resume the next
+fingerprint attempt (typically the lock screen after wake) can then block on the
+dead session and, on some systems (observed on AMD Rembrandt laptops that only
+offer `mem_sleep=s2idle`), **hang the unlock screen hard**.
+
+Two small, fully reversible helpers in [`integration/`](integration/) fix this
+**without disabling fingerprint anywhere** — a systemd-sleep hook that resets the
+sensor around sleep, and a udev rule that disables its USB autosuspend.
+`install.sh` installs both automatically; to add them by hand see
+[`integration/README.md`](integration/README.md). Delete the two files to revert.
+
+> The proper fix belongs in the driver (re-establish the session in a libfprint
+> suspend/resume handler); until then these helpers are the reliable workaround.
+
 ## Usability & security notes
 
 - **Press firmly, flat, centred, and hold ~2 s.** Verification scores every frame

@@ -1,0 +1,10 @@
+# EgisTec EH576 (1c7a:0576): disable USB autosuspend for the fingerprint sensor.
+#
+# The driver keeps a TLS-PSK session open to the device; letting the USB device
+# autosuspend while idle can drop that session and cause capture/verify glitches.
+# Keeping it powered is the safe default for a sensor that is used interactively.
+#
+# Install to /etc/udev/rules.d/ then:
+#   sudo udevadm control --reload-rules && sudo udevadm trigger --attr-match=idVendor=1c7a
+# Delete the file (and reload) to revert. install.sh does this for you.
+ACTION=="add", SUBSYSTEM=="usb", ATTR{idVendor}=="1c7a", ATTR{idProduct}=="0576", TEST=="power/control", ATTR{power/control}="on"

@@ -61,6 +61,19 @@ echo ">>> installing to $PREFIX (sudo) ..."
 sudo ninja -C builddir install
 sudo ldconfig
 
+# --- suspend/resume integration --------------------------------------------
+# The driver holds a TLS-PSK session that goes stale across s2idle suspend and
+# can hang the unlock screen on resume. Install the sleep hook + udev rule that
+# reset the sensor cleanly around sleep. Fully reversible (delete the files).
+echo ">>> installing suspend/resume integration (sleep hook + udev rule) ..."
+if [ -f "$REPO/integration/50-egis0576-fp-resume.sh" ]; then
+    sudo install -m 0755 "$REPO/integration/50-egis0576-fp-resume.sh"    /usr/lib/systemd/system-sleep/
+    sudo install -m 0644 "$REPO/integration/60-egis0576-fp-nosuspend.rules" /etc/udev/rules.d/
+    sudo udevadm control --reload-rules 2>/dev/null || true
+    sudo udevadm trigger --attr-match=idVendor=1c7a 2>/dev/null || true
+    echo "    installed (see integration/README.md; delete the two files to revert)."
+fi
+
 echo
 echo ">>> Done. libfprint (with egis0576) installed to $PREFIX."
 echo
