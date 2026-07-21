@@ -11,7 +11,7 @@
 # package (keeping egis_etu905 + Fedora's fixes), see ./README.md and the tested
 # rebased patch libfprint-1.94.10-egis0576-fedora.patch in this directory.
 
-%global egis_tag v0.1.0
+%global egis_tag v0.2.0
 
 Name:           libfprint
 Version:        1.94.10
@@ -19,7 +19,7 @@ Version:        1.94.10
 # The robust backstop is a COPR repo *priority* (see README) which wins regardless
 # of version. When Fedora ships a NEWER libfprint VERSION, rebase onto it (Fedora
 # then legitimately wins and you bump this spec's Version).
-Release:        99%{?dist}.egis1
+Release:        99%{?dist}.egis2
 Summary:        Toolkit for fingerprint scanner (rebuilt with the EgisTec EH576 / 1c7a:0576 driver)
 
 License:        LGPL-2.1-or-later AND NIST-PD
@@ -111,6 +111,13 @@ patch -p1 < "$egisdir"/patches/libfprint-%{version}-egis0576.patch
 %{_datadir}/installed-tests/libfprint-2/
 
 %changelog
+* Tue Jul 21 2026 PHILIPPDEV5396 - 1.94.10-99.egis2
+- Update egis0576 driver to v0.2.0: in-driver suspend/resume TLS-session
+  recovery. Fingerprint unlock now survives s2idle suspend without hanging
+  the lock screen (the driver re-establishes its TLS session on resume;
+  read_record has a wall-clock deadline that falls back to password on a
+  dead session). Ships the integration/ sleep-hook + udev rule as fallback.
+
 * Sun Jul 19 2026 PHILIPPDEV5396 - 1.94.10-99.egis1
 - Rebuild of libfprint 1.94.10 with the out-of-tree EgisTec EH576 (1c7a:0576)
   driver egis0576 compiled in.
