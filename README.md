@@ -211,14 +211,19 @@ fingerprint attempt (typically the lock screen after wake) can then block on the
 dead session and, on some systems (observed on AMD Rembrandt laptops that only
 offer `mem_sleep=s2idle`), **hang the unlock screen hard**.
 
-Two small, fully reversible helpers in [`integration/`](integration/) fix this
-**without disabling fingerprint anywhere** — a systemd-sleep hook that resets the
-sensor around sleep, and a udev rule that disables its USB autosuspend.
-`install.sh` installs both automatically; to add them by hand see
-[`integration/README.md`](integration/README.md). Delete the two files to revert.
+The driver **self-heals** this: an in-driver `suspend`/`resume` handler flags the
+TLS session stale and cancels any in-flight capture, and the capture worker
+re-runs the handshake on the next capture (with a wall-clock deadline in the
+record reader so a dead session always fails fast to a password fallback instead
+of hanging the unlock screen).
 
-> The proper fix belongs in the driver (re-establish the session in a libfprint
-> suspend/resume handler); until then these helpers are the reliable workaround.
+As belt-and-suspenders, two small reversible helpers in
+[`integration/`](integration/) — a systemd-sleep hook that re-enumerates the
+sensor around sleep, and a udev rule disabling its USB autosuspend — are still
+installed by `install.sh` and do no harm. They remain the proven fallback until
+you've verified fingerprint unlock across several s2idle cycles on your hardware;
+see [`integration/README.md`](integration/README.md) to remove the hook once
+you're confident.
 
 ## Usability & security notes
 

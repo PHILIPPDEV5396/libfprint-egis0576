@@ -136,9 +136,22 @@ static int usb_fill (EgisTls *t, int timeout) {
   return (int) act;
 }
 static int read_record (EgisTls *t, unsigned char *rec, int *rt, int timeout) {
-  while (t->rlen < 5) if (usb_fill (t, timeout) < 0) return -1;
+  /* Absolute wall-clock deadline. usb_fill() returns 0 (not <0) on a zero-length
+   * bulk-IN, and once rbuf saturates it stops copying but still returns >0, so a
+   * mid-wake / dead session could otherwise spin these loops forever. Bounding by
+   * (timeout + 500 ms) makes read_record — and thus recv_app / getframe /
+   * egis_tls_open — always return, which is what the suspend/resume recovery and
+   * the password-fallback guarantee rely on. */
+  gint64 deadline = g_get_monotonic_time () + ((gint64) timeout + 500) * G_TIME_SPAN_MILLISECOND;
+  while (t->rlen < 5) {
+    if (usb_fill (t, timeout) < 0) return -1;
+    if (g_get_monotonic_time () >= deadline) return -1;   /* ZLP flood / stalled */
+  }
   int rl = (t->rbuf[3] << 8) | t->rbuf[4];
-  while (t->rlen < 5 + rl) if (usb_fill (t, timeout) < 0) return -1;
+  while (t->rlen < 5 + rl) {
+    if (usb_fill (t, timeout) < 0) return -1;
+    if (g_get_monotonic_time () >= deadline) return -1;   /* buffer saturated / stalled */
+  }
   *rt = t->rbuf[0]; memcpy (rec, t->rbuf + 5, rl);
   memmove (t->rbuf, t->rbuf + 5 + rl, t->rlen - (5 + rl)); t->rlen -= 5 + rl; return rl;
 }
@@ -167,8 +180,26 @@ static void drain (EgisTls *t, int timeout) {
   while (recv_app (t, o, 12) >= 0) {}          /* flush immediate followers only */
 }
 
+/* Discard bytes the sensor left queued on the IN endpoint from a previous
+ * (now-dead) TLS session, and drop any partial reassembly, so the fresh
+ * handshake's first read_record parses the real ClientHello and not stale
+ * ciphertext. Bounded: stops at the first short-timeout/empty read, capped at a
+ * few iterations. Cheap on a first open (endpoint already empty: one 30 ms wait).
+ * Runs BEFORE the 0x21/9 trigger, which is what elicits the ClientHello, so it
+ * can never consume the ClientHello itself. */
+static void flush_in (EgisTls *t) {
+  guint8 tmp[4096]; gsize act = 0;
+  for (int i = 0; i < 16; i++) {
+    if (!g_usb_device_bulk_transfer (t->usb, EP_IN, tmp, sizeof tmp, &act, 30, NULL, NULL))
+      break;                 /* timeout/error: nothing (more) queued */
+    if (act == 0) break;
+  }
+  t->rlen = 0;
+}
+
 /* ---- handshake + init ---- */
 gboolean egis_tls_open (EgisTls *t, GError **error) {
+  flush_in (t);   /* clear any stale IN-endpoint bytes from a dropped session */
   g_usb_device_control_transfer (t->usb, G_USB_DEVICE_DIRECTION_HOST_TO_DEVICE,
                                  G_USB_DEVICE_REQUEST_TYPE_CLASS, G_USB_DEVICE_RECIPIENT_INTERFACE,
                                  9, 0, 0, NULL, 0, NULL, 2000, NULL, NULL);
