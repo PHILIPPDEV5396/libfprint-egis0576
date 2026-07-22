@@ -52,14 +52,30 @@ retry when the first post-resume frame fails. `read_record` has a wall-clock
 deadline so a dead session always fails fast to a password fallback rather than
 hanging the unlock screen.
 
-The external `50-…-resume.sh` hook is therefore **belt-and-suspenders**: it is
-still installed by default and does no harm (a full re-enumeration simply makes
-the in-driver recovery a no-op), and it remains the proven fallback on any
-kernel/platform where the bare in-driver re-handshake turns out to be
-insufficient. Once you have verified fingerprint unlock across several s2idle
-cycles on your hardware, you may remove it:
+## Keep the hook installed — it is *not* redundant
 
-    sudo rm -f /usr/lib/systemd/system-sleep/50-egis0576-fp-resume.sh
+Measured on real hardware (Lenovo Yoga 7 14ARB7, s2idle, GNOME 50, hook
+deliberately disabled, suspend triggered while a verify was in flight):
+
+- The in-driver recovery does exactly what it promises. The `suspend` handler
+  fires (`suspend: invalidating TLS session, cancelling in-flight capture`), the
+  in-flight verify is cancelled cleanly, and after resume the unlock screen
+  **falls back to the password prompt without ever hanging** — the original
+  freeze is gone.
+- **But** GNOME does not re-arm the fingerprint after that suspend-time
+  cancellation. So the first unlock following a *suspend-while-armed* offers the
+  password only; the reader returns on the next fresh lock/unlock. (This is the
+  upper-stack "re-issue after cancel" dependency — not something the driver can
+  force.)
+
+The hook closes exactly that gap: re-enumerating the sensor makes fprintd open
+the device again, so the fingerprint is available immediately on the post-resume
+unlock screen. The two mechanisms are **complementary, not duplicated**:
+
+| | guarantees |
+|---|---|
+| in-driver `suspend`/`resume` + bounded `read_record` | the unlock screen never hangs — on any platform, with or without the hook |
+| `50-…-resume.sh` hook | fingerprint is usable again immediately after resume |
 
 The `60-…-nosuspend.rules` udev rule (disable USB autosuspend for 1c7a:0576)
 stays installed regardless.

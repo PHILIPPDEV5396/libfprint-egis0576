@@ -217,13 +217,15 @@ re-runs the handshake on the next capture (with a wall-clock deadline in the
 record reader so a dead session always fails fast to a password fallback instead
 of hanging the unlock screen).
 
-As belt-and-suspenders, two small reversible helpers in
-[`integration/`](integration/) — a systemd-sleep hook that re-enumerates the
-sensor around sleep, and a udev rule disabling its USB autosuspend — are still
-installed by `install.sh` and do no harm. They remain the proven fallback until
-you've verified fingerprint unlock across several s2idle cycles on your hardware;
-see [`integration/README.md`](integration/README.md) to remove the hook once
-you're confident.
+Two small helpers in [`integration/`](integration/) — a systemd-sleep hook that
+re-enumerates the sensor around sleep, and a udev rule disabling its USB
+autosuspend — are installed by `install.sh` and **should be kept**. They are not
+redundant with the in-driver fix but complementary: measured on hardware, the
+driver alone reliably prevents the hang, but GNOME does not re-arm the reader
+after the suspend-time cancellation, so the first unlock after a
+suspend-while-armed would offer the password only. The hook restores fingerprint
+availability immediately on resume. Details and the measurement are in
+[`integration/README.md`](integration/README.md).
 
 ## Usability & security notes
 
