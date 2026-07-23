@@ -11,7 +11,7 @@
 # package (keeping egis_etu905 + Fedora's fixes), see ./README.md and the tested
 # rebased patch libfprint-1.94.10-egis0576-fedora.patch in this directory.
 
-%global egis_tag v0.2.0
+%global egis_tag v0.3.0
 
 Name:           libfprint
 Version:        1.94.10
@@ -19,7 +19,7 @@ Version:        1.94.10
 # The robust backstop is a COPR repo *priority* (see README) which wins regardless
 # of version. When Fedora ships a NEWER libfprint VERSION, rebase onto it (Fedora
 # then legitimately wins and you bump this spec's Version).
-Release:        99%{?dist}.egis2
+Release:        99%{?dist}.egis3
 Summary:        Toolkit for fingerprint scanner (rebuilt with the EgisTec EH576 / 1c7a:0576 driver)
 
 License:        LGPL-2.1-or-later AND NIST-PD
@@ -84,6 +84,18 @@ patch -p1 < "$egisdir"/patches/libfprint-%{version}-egis0576.patch
 %install
 %meson_install
 
+# Suspend/resume integration from the egis0576 repo tarball: a systemd-sleep hook
+# and a udev rule. The hook's `pre` phase stops fprintd so no stale device claim
+# survives suspend (a known gnome-shell/fprintd bug — see the repo's
+# docs/suspend-resume.md); its `post` phase re-enumerates the reader. The udev rule
+# disables USB autosuspend for 1c7a:0576. The build dir still holds the unpacked
+# tarball from %prep, so re-detect its top dir the same way.
+egisdir=$(tar -tf %{SOURCE10} | head -1 | cut -d/ -f1)
+install -Dm 0755 "$egisdir/integration/50-egis0576-fp-resume.sh" \
+    %{buildroot}%{_prefix}/lib/systemd/system-sleep/50-egis0576-fp-resume.sh
+install -Dm 0644 "$egisdir/integration/60-egis0576-fp-nosuspend.rules" \
+    %{buildroot}%{_udevrulesdir}/60-egis0576-fp-nosuspend.rules
+
 %ldconfig_scriptlets
 
 # %%check is intentionally omitted (matches current Fedora: disabled under recent
@@ -97,6 +109,9 @@ patch -p1 < "$egisdir"/patches/libfprint-%{version}-egis0576.patch
 %{_udevhwdbdir}/60-autosuspend-libfprint-2.hwdb
 %{_udevrulesdir}/70-libfprint-2.rules
 %{_datadir}/metainfo/org.freedesktop.libfprint.metainfo.xml
+# egis0576 suspend/resume integration (see docs/suspend-resume.md)
+%{_prefix}/lib/systemd/system-sleep/50-egis0576-fp-resume.sh
+%{_udevrulesdir}/60-egis0576-fp-nosuspend.rules
 
 %files devel
 %doc HACKING.md
@@ -111,6 +126,14 @@ patch -p1 < "$egisdir"/patches/libfprint-%{version}-egis0576.patch
 %{_datadir}/installed-tests/libfprint-2/
 
 %changelog
+* Thu Jul 23 2026 PHILIPPDEV5396 - 1.94.10-99.egis3
+- Actually install the suspend/resume integration (systemd-sleep hook + udev
+  rule) that egis2 only documented. This is the real fix for "no fingerprint
+  after resume": fprintd holds a stale device claim across suspend (a known,
+  unfixed gnome-shell/fprintd bug, not a driver bug), so the hook restarts
+  fprintd around suspend to clear it. See docs/suspend-resume.md in the repo.
+- Driver code unchanged from egis2 (v0.3.0 tag differs only in docs/packaging).
+
 * Tue Jul 21 2026 PHILIPPDEV5396 - 1.94.10-99.egis2
 - Update egis0576 driver to v0.2.0: in-driver suspend/resume TLS-session
   recovery. Fingerprint unlock now survives s2idle suspend without hanging
