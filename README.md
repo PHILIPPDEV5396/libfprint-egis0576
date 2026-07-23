@@ -211,21 +211,29 @@ fingerprint attempt (typically the lock screen after wake) can then block on the
 dead session and, on some systems (observed on AMD Rembrandt laptops that only
 offer `mem_sleep=s2idle`), **hang the unlock screen hard**.
 
-The driver **self-heals** this: an in-driver `suspend`/`resume` handler flags the
-TLS session stale and cancels any in-flight capture, and the capture worker
-re-runs the handshake on the next capture (with a wall-clock deadline in the
-record reader so a dead session always fails fast to a password fallback instead
-of hanging the unlock screen).
+Two separate things are at play, and it took a long investigation to tell them
+apart (written up in full in [`docs/suspend-resume.md`](docs/suspend-resume.md)):
 
-Two small helpers in [`integration/`](integration/) — a systemd-sleep hook that
-re-enumerates the sensor around sleep, and a udev rule disabling its USB
-autosuspend — are installed by `install.sh` and **should be kept**. They are not
-redundant with the in-driver fix but complementary: measured on hardware, the
-driver alone reliably prevents the hang, but GNOME does not re-arm the reader
-after the suspend-time cancellation, so the first unlock after a
-suspend-while-armed would offer the password only. The hook restores fingerprint
-availability immediately on resume. Details and the measurement are in
-[`integration/README.md`](integration/README.md).
+- **The hard freeze** is prevented **in the driver**: `read_record` has a
+  wall-clock deadline, so if the driver ever talks to a dead TLS session it fails
+  fast to a clean error instead of spinning forever.
+- **"No fingerprint offered after resume"** (the lock screen drops to password) is
+  **not this driver's bug at all.** It is a well-known, still-unfixed
+  **gnome-shell/fprintd** issue: `fprintd` keeps a stale device *claim* across
+  suspend (`"Device was already claimed"`), so the post-resume claim is refused —
+  libfprint is never even reached. See gnome-shell
+  [#7791](https://gitlab.gnome.org/GNOME/gnome-shell/-/issues/7791) and Ubuntu
+  [#2067135](https://bugs.launchpad.net/bugs/2067135) (it hits ThinkPads, Framework
+  laptops, etc., on unrelated readers).
+
+The community-standard fix — **restart `fprintd` around suspend** — is what the two
+helpers in [`integration/`](integration/) do (a systemd-sleep hook that stops
+`fprintd` before sleep and re-enumerates the sensor on resume, plus a udev rule
+disabling USB autosuspend). `install.sh` installs them and you should **keep them
+installed**; they are the correct fix for the upstream bug, not a workaround for a
+driver shortcoming. Details and the full investigation:
+[`integration/README.md`](integration/README.md) and
+[`docs/suspend-resume.md`](docs/suspend-resume.md).
 
 ## Usability & security notes
 
