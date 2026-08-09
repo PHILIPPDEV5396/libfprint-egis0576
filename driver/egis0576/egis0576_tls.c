@@ -11,6 +11,7 @@
 #define EP_OUT 0x01
 #define EP_IN  0x82
 #define IMG EGIS_TLS_IMG
+#define TLS_RECORD_MAX 4096
 
 static const unsigned char PSK[] = {
   0xa2,0xe6,0xd6,0x72,0x5a,0x65,0x06,0x71,0x13,0xfc,0x9b,0xe3,0xb4,0x7a,0x0f,0xf3,
@@ -98,12 +99,12 @@ static int mac_then_encrypt (const unsigned char *mk, const unsigned char *ek, u
  * content length, or -1 on any structural/padding/MAC failure. The padding and MAC
  * comparisons accumulate into one branchless diff to avoid a padding/MAC oracle. */
 static int decrypt_verify (const unsigned char *mk, const unsigned char *ek, unsigned long long seq, int ct,
-                           const unsigned char *rec, int rl, unsigned char *content) {
+                           const unsigned char *rec, int rl, unsigned char *content, size_t content_cap) {
   unsigned char pt[4096], mac[32];
   int ptl, pad, cl, i, diff = 0;
 
-  if (rl < 16 || ((rl - 16) & 0x0f) != 0)     /* need explicit IV + block-aligned CT */
-    return -1;
+  if (rl < 16 || rl > TLS_RECORD_MAX || ((rl - 16) & 0x0f) != 0)
+    return -1;                                  /* bounded explicit IV + block-aligned CT */
   ptl = aes_cbc (0, ek, rec, rec + 16, rl - 16, pt);
   if (ptl < 33 || (ptl & 0x0f) != 0)          /* >= 1 pad byte + 32-byte MAC, block-aligned */
     return -1;
@@ -119,6 +120,8 @@ static int decrypt_verify (const unsigned char *mk, const unsigned char *ek, uns
   for (i = 0; i < 32; i++)
     diff |= mac[i] ^ pt[cl + i];
   if (diff != 0)                               /* padding or MAC mismatch -> reject */
+    return -1;
+  if ((size_t) cl > content_cap)                 /* caller-owned output must be large enough */
     return -1;
   memcpy (content, pt, cl);
   return cl;
@@ -148,6 +151,8 @@ static int read_record (EgisTls *t, unsigned char *rec, int *rt, int timeout) {
     if (g_get_monotonic_time () >= deadline) return -1;   /* ZLP flood / stalled */
   }
   int rl = (t->rbuf[3] << 8) | t->rbuf[4];
+  if (rl > TLS_RECORD_MAX)
+    return -1;
   while (t->rlen < 5 + rl) {
     if (usb_fill (t, timeout) < 0) return -1;
     if (g_get_monotonic_time () >= deadline) return -1;   /* buffer saturated / stalled */
@@ -163,10 +168,10 @@ static void send_app (EgisTls *t, const unsigned char *d, int n) {
   unsigned char enc[4096]; int el = mac_then_encrypt (t->smac, t->skey, t->sseq++, 23, d, n, enc);
   write_record (t, 23, enc, el);
 }
-static int recv_app (EgisTls *t, unsigned char *out, int timeout) {
-  unsigned char rec[4096]; int rt; int rl = read_record (t, rec, &rt, timeout);
+static int recv_app (EgisTls *t, unsigned char *out, size_t out_cap, int timeout) {
+  unsigned char rec[TLS_RECORD_MAX]; int rt; int rl = read_record (t, rec, &rt, timeout);
   if (rl < 0) return -1;
-  return decrypt_verify (t->cmac, t->ckey, t->cseq++, rt, rec, rl, out);
+  return decrypt_verify (t->cmac, t->ckey, t->cseq++, rt, rec, rl, out, out_cap);
 }
 /* Read and discard a command's response record(s). Waits up to `timeout` ms for
  * the FIRST record (so a slow response is never cut off, which would leave stale
@@ -176,8 +181,8 @@ static int recv_app (EgisTls *t, unsigned char *out, int timeout) {
  * issues 6 commands, so the old "full 80ms tail per command" cost ~0.5s/frame. */
 static void drain (EgisTls *t, int timeout) {
   unsigned char o[4096];
-  if (recv_app (t, o, timeout) < 0) return;   /* no response within the window */
-  while (recv_app (t, o, 12) >= 0) {}          /* flush immediate followers only */
+  if (recv_app (t, o, sizeof o, timeout) < 0) return;   /* no response within the window */
+  while (recv_app (t, o, sizeof o, 12) >= 0) {}          /* flush immediate followers only */
 }
 
 /* Discard bytes the sensor left queued on the IN endpoint from a previous
@@ -204,10 +209,14 @@ gboolean egis_tls_open (EgisTls *t, GError **error) {
                                  G_USB_DEVICE_REQUEST_TYPE_CLASS, G_USB_DEVICE_RECIPIENT_INTERFACE,
                                  9, 0, 0, NULL, 0, NULL, 2000, NULL, NULL);
   unsigned char transcript[8192]; int tl = 0;
-  unsigned char rec[4096]; int rt;
+  unsigned char rec[TLS_RECORD_MAX]; int rt = -1;
   int rl = read_record (t, rec, &rt, 3000);
-  if (rl < 0 || rt != 22 || rec[0] != 1) {
+  if (rl < 38 || rt != 22 || rec[0] != 1) {
     g_set_error (error, G_IO_ERROR, G_IO_ERROR_FAILED, "EH576: no TLS ClientHello (rt=%d)", rt);
+    return FALSE;
+  }
+  if ((size_t) rl > sizeof transcript - (size_t) tl) {
+    g_set_error (error, G_IO_ERROR, G_IO_ERROR_FAILED, "EH576: TLS transcript overflow");
     return FALSE;
   }
   memcpy (transcript + tl, rec, rl); tl += rl;
@@ -220,17 +229,34 @@ gboolean egis_tls_open (EgisTls *t, GError **error) {
   unsigned char ext[] = {0x00, 0x05, 0xff, 0x01, 0x00, 0x01, 0x00}; memcpy (body + b, ext, 7); b += 7;
   unsigned char sh[140]; sh[0] = 0x02; sh[1] = 0; sh[2] = (b >> 8) & 0xff; sh[3] = b & 0xff; memcpy (sh + 4, body, b);
   unsigned char shd[] = {0x0e, 0x00, 0x00, 0x00};
+  if ((size_t) (4 + b + 4) > sizeof transcript - (size_t) tl) {
+    g_set_error (error, G_IO_ERROR, G_IO_ERROR_FAILED, "EH576: TLS transcript overflow");
+    return FALSE;
+  }
   memcpy (transcript + tl, sh, 4 + b); tl += 4 + b; memcpy (transcript + tl, shd, 4); tl += 4;
   write_record (t, 22, sh, 4 + b); write_record (t, 22, shd, 4);
   gboolean have_keys = FALSE;
   for (int guard = 0; guard < 8; guard++) {
     rl = read_record (t, rec, &rt, 3000);
     if (rl < 0) break;
-    if (rt == 22 && rec[0] == 16) { memcpy (transcript + tl, rec, rl); tl += rl; derive_keys (t, cr, sr); have_keys = TRUE; }
+    if (rt == 22 && rl > 0 && rec[0] == 16) {
+      if ((size_t) rl > sizeof transcript - (size_t) tl) {
+        g_set_error (error, G_IO_ERROR, G_IO_ERROR_FAILED, "EH576: TLS transcript overflow");
+        return FALSE;
+      }
+      memcpy (transcript + tl, rec, rl); tl += rl; derive_keys (t, cr, sr); have_keys = TRUE;
+    }
     else if (rt == 20) { /* CCS */ }
     else if (rt == 22) {
-      unsigned char content[64]; int cl = decrypt_verify (t->cmac, t->ckey, t->cseq++, 22, rec, rl, content);
-      if (cl > 0) { memcpy (transcript + tl, content, cl); tl += cl; }
+      unsigned char content[64];
+      int cl = decrypt_verify (t->cmac, t->ckey, t->cseq++, 22, rec, rl, content, sizeof content);
+      if (cl > 0) {
+        if ((size_t) cl > sizeof transcript - (size_t) tl) {
+          g_set_error (error, G_IO_ERROR, G_IO_ERROR_FAILED, "EH576: TLS transcript overflow");
+          return FALSE;
+        }
+        memcpy (transcript + tl, content, cl); tl += cl;
+      }
       break;
     }
   }
@@ -263,7 +289,7 @@ static int egis_readreg (EgisTls *t, int reg) {
   unsigned char o[4096];
   int n;
   send_app (t, c, 7);
-  n = recv_app (t, o, 400);
+  n = recv_app (t, o, sizeof o, 400);
   drain (t, 50);
   return (n >= 6 && o[0] == 'S') ? o[5] : -1;
 }
@@ -339,7 +365,7 @@ gboolean egis_tls_getframe (EgisTls *t, guint8 *img, GError **error) {
     send_app (t, req, 7);
   }
   while (got < IMG) {
-    int n = recv_app (t, o, 800);
+    int n = recv_app (t, o, sizeof o, 800);
     if (n < 0) break;
     int take = (IMG - got < n) ? IMG - got : n; memcpy (img + got, o, take); got += take;
   }
