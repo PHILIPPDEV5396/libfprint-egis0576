@@ -11,7 +11,7 @@
 # package (keeping egis_etu905 + Fedora's fixes), see ./README.md and the tested
 # rebased patch libfprint-1.94.10-egis0576-fedora.patch in this directory.
 
-%global egis_tag v0.3.0
+%global egis_tag v0.3.1
 
 Name:           libfprint
 Version:        1.94.10
@@ -19,7 +19,7 @@ Version:        1.94.10
 # The robust backstop is a COPR repo *priority* (see README) which wins regardless
 # of version. When Fedora ships a NEWER libfprint VERSION, rebase onto it (Fedora
 # then legitimately wins and you bump this spec's Version).
-Release:        99%{?dist}.egis3
+Release:        99%{?dist}.egis4
 Summary:        Toolkit for fingerprint scanner (rebuilt with the EgisTec EH576 / 1c7a:0576 driver)
 
 License:        LGPL-2.1-or-later AND NIST-PD
@@ -126,6 +126,15 @@ install -Dm 0644 "$egisdir/integration/60-egis0576-fp-nosuspend.rules" \
 %{_datadir}/installed-tests/libfprint-2/
 
 %changelog
+* Fri Aug 21 2026 PHILIPPDEV5396 - 1.94.10-99.egis4
+- Update egis0576 driver to v0.3.1: TLS record bounds hardening.
+  Rejects device-supplied record lengths beyond TLS_RECORD_MAX, passes
+  real buffer capacities through the receive path, bounds the handshake
+  transcript, and validates the ClientHello minimum length. Fixes
+  device-controlled stack overflows in the TLS path. Contributed by
+  @adventureFAN; hardware-verified on Intel (Yoga 15ITL5) and AMD
+  (Yoga 14ARB7) platforms.
+
 * Thu Jul 23 2026 PHILIPPDEV5396 - 1.94.10-99.egis3
 - Actually install the suspend/resume integration (systemd-sleep hook + udev
   rule) that egis2 only documented. This is the real fix for "no fingerprint
