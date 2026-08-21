@@ -48,10 +48,20 @@ dependency is handled at runtime rather than baked in:
 - **On-chip background/vdm** — neutralized to a model-level constant so no single
   unit's calibration data is embedded.
 
-**Honest caveat:** all of that was validated on the author's single unit. True
-cross-device operation cannot be *proven* without a second physical EH576. If you
-have one, **please open an issue with your results** — success or failure. That
-report is the most useful thing you can contribute after a clean-room matcher.
+**Update:** originally all of this was validated on the author's single unit —
+that caveat is now retired. An independent tester ran the full stack on a second
+EH576 (different laptop, CPU vendor, USB host controller and sensor revision) with
+a 17-point PASS ([#2](https://github.com/PHILIPPDEV5396/libfprint-egis0576/issues/2)).
+More reports are still very welcome — success *or* failure.
+
+## Tested platforms
+
+| Laptop | Platform | Sensor `bcdDevice` | Distro | Result | Report |
+|---|---|---|---|---|---|
+| Lenovo Yoga 7 14ARB7 | AMD Ryzen 7 6800U | 15.72 | Fedora 44 | ✅ full stack (enroll, verify, GDM, sudo, unlock, suspend/resume) | author |
+| Lenovo Yoga 7 15ITL5 | Intel Core i5-1135G7 | 15.72 | Fedora 44 | ✅ full stack, 17-point PASS incl. 3× suspend/resume | [#2](https://github.com/PHILIPPDEV5396/libfprint-egis0576/issues/2) |
+
+Got a different machine with an EH576? **Please open an issue with your results.**
 
 ## Install
 
