@@ -10,7 +10,7 @@
 
 pkgname=libfprint-egis0576
 pkgver=1.94.10
-pkgrel=1
+pkgrel=2
 pkgdesc="libfprint rebuilt with the out-of-tree EgisTec EH576 (egis0576, USB 1c7a:0576) driver"
 arch=('x86_64')
 url="https://github.com/PHILIPPDEV5396/libfprint-egis0576"
@@ -30,7 +30,7 @@ options=('!lto')
 # repo (driver sources + the meson integration patch), pinned to a release tag.
 source=(
   "libfprint::git+https://gitlab.freedesktop.org/libfprint/libfprint.git#tag=v${pkgver}"
-  "libfprint-egis0576::git+https://github.com/PHILIPPDEV5396/libfprint-egis0576.git#tag=v0.1.0"
+  "libfprint-egis0576::git+https://github.com/PHILIPPDEV5396/libfprint-egis0576.git#tag=v0.3.1"
 )
 sha256sums=('SKIP'
             'SKIP')

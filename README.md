@@ -60,6 +60,7 @@ More reports are still very welcome — success *or* failure.
 |---|---|---|---|---|---|
 | Lenovo Yoga 7 14ARB7 | AMD Ryzen 7 6800U | 15.72 | Fedora 44 | ✅ full stack (enroll, verify, GDM, sudo, unlock, suspend/resume) | author |
 | Lenovo Yoga 7 15ITL5 | Intel Core i5-1135G7 | 15.72 | Fedora 44 | ✅ full stack, 17-point PASS incl. 3× suspend/resume | [#2](https://github.com/PHILIPPDEV5396/libfprint-egis0576/issues/2) |
+| Lenovo IdeaPad Flex 5 16IRU8 | Intel (13th-gen U) | 15.72 | Arch Linux (Omarchy 4.0.2) | ✅ enroll, verify, sudo/PAM, polkit (lock screen, reboot & suspend not yet tested) | [#2 (comment)](https://github.com/PHILIPPDEV5396/libfprint-egis0576/issues/2#issuecomment-5564929397) |
 
 Got a different machine with an EH576? **Please open an issue with your results.**
 
@@ -78,9 +79,11 @@ sudo dnf upgrade 'libfprint*'
 sudo systemctl restart fprintd
 ```
 
-**Arch (AUR):**
+**Arch (PKGBUILD, not on AUR yet):**
 ```bash
-yay -S libfprint-egis0576
+git clone https://github.com/PHILIPPDEV5396/libfprint-egis0576.git
+cd libfprint-egis0576/packaging/aur
+makepkg -si
 sudo systemctl restart fprintd
 ```
 
