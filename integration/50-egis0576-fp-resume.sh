@@ -2,7 +2,7 @@
 # systemd system-sleep hook: keep the EgisTec EH576 fingerprint sensor working
 # across suspend/resume.
 #
-# WHY: this driver opens a TLS-PSK session to the sensor at device-open. Across a
+# WHY: this driver brings the sensor up at device-open. Across a
 # system suspend -- especially s2idle, where the USB device stays powered and is
 # NOT re-enumerated -- that session goes stale. On resume the next fprintd
 # IDENTIFY blocks on the dead session, which on some systems (observed on AMD
@@ -38,7 +38,7 @@ case "$1" in
         dev=$(find_dev)
         [ -n "$dev" ] || exit 0
         # deauthorize + reauthorize = USB re-enumeration -> the driver re-opens
-        # the device and performs a fresh TLS-PSK handshake on next use
+        # the device and re-runs the sensor bring-up on next use
         echo 0 > "$dev/authorized" 2>/dev/null
         sleep 1
         echo 1 > "$dev/authorized" 2>/dev/null

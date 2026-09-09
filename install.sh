@@ -62,7 +62,7 @@ sudo ninja -C builddir install
 sudo ldconfig
 
 # --- suspend/resume integration --------------------------------------------
-# The driver holds a TLS-PSK session that goes stale across s2idle suspend and
+# The sensor comes back from s2idle suspend with its capture pipeline unusable and
 # can hang the unlock screen on resume. Install the sleep hook + udev rule that
 # reset the sensor cleanly around sleep. Fully reversible (delete the files).
 echo ">>> installing suspend/resume integration (sleep hook + udev rule) ..."

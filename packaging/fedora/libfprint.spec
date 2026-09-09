@@ -11,7 +11,7 @@
 # package (keeping egis_etu905 + Fedora's fixes), see ./README.md and the tested
 # rebased patch libfprint-1.94.10-egis0576-fedora.patch in this directory.
 
-%global egis_tag v0.3.1
+%global egis_tag v0.4.0
 
 Name:           libfprint
 Version:        1.94.10
@@ -19,7 +19,7 @@ Version:        1.94.10
 # The robust backstop is a COPR repo *priority* (see README) which wins regardless
 # of version. When Fedora ships a NEWER libfprint VERSION, rebase onto it (Fedora
 # then legitimately wins and you bump this spec's Version).
-Release:        99%{?dist}.egis4
+Release:        99%{?dist}.egis5
 Summary:        Toolkit for fingerprint scanner (rebuilt with the EgisTec EH576 / 1c7a:0576 driver)
 
 License:        LGPL-2.1-or-later AND NIST-PD
@@ -28,7 +28,8 @@ Source0:        https://gitlab.freedesktop.org/libfprint/libfprint/-/archive/v%{
 Source10:       https://github.com/PHILIPPDEV5396/libfprint-egis0576/archive/refs/tags/%{egis_tag}.tar.gz#/libfprint-egis0576-%{egis_tag}.tar.gz
 
 # --- BuildRequires: copied verbatim from Fedora's own libfprint.spec (known-good
-#     for 1.94.10). openssl-devel already covers the egis0576 engine's libcrypto. ---
+#     for 1.94.10). openssl-devel is upstream's own (uru4000); the egis0576 driver
+#     needs no crypto. ---
 BuildRequires:  meson
 BuildRequires:  gcc
 BuildRequires:  gcc-c++
@@ -126,6 +127,23 @@ install -Dm 0644 "$egisdir/integration/60-egis0576-fp-nosuspend.rules" \
 %{_datadir}/installed-tests/libfprint-2/
 
 %changelog
+* Tue Sep 09 2026 PHILIPPDEV5396 - 1.94.10-99.egis5
+- Update egis0576 driver to v0.4.0: replace the TLS-PSK transport with the
+  sensor's plaintext EGIS/SIGE protocol -- the same one the vendor's own
+  Windows driver for this device uses.
+  * Fixes dual-boot: earlier releases left the sensor in a session mode it
+    keeps across autosuspend, USB port reset and reboot, which made the
+    Windows vendor driver fail to start it (Device Manager Code 10) until
+    the machine was fully powered down. The driver no longer enters that
+    mode, and resets a sensor it finds stuck in it (one-time, on first open).
+  * Better images, not merely equivalent: finger/no-finger frame variance
+    1069/140 = 7.6x, against 890/160 = 5.6x through the TLS path on the
+    same unit.
+  * Removes ~460 lines of hand-rolled TLS 1.2, the hardcoded pre-shared key,
+    and the driver's libcrypto dependency. libcrypto remains in libfprint
+    only for upstream's own uru4000 driver.
+  * Adds the vendor's readiness poll (check_and_recovery) before bring-up.
+  * No re-enrollment needed: existing prints keep matching.
 * Fri Aug 21 2026 PHILIPPDEV5396 - 1.94.10-99.egis4
 - Update egis0576 driver to v0.3.1: TLS record bounds hardening.
   Rejects device-supplied record lengths beyond TLS_RECORD_MAX, passes

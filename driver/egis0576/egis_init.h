@@ -1,7 +1,18 @@
-/* Auto-generated: the exact 33 decrypted Windows init+calibration TLS
- * application-data records, replayed verbatim to bring the sensor up. */
-#ifndef EGIS_TLS_INIT_H
-#define EGIS_TLS_INIT_H
+/* The vendor's init + calibration sequence, replayed verbatim to bring the sensor
+ * up: 25 "EGIS" command records and, after record 15 ("EGIS 73 0f 96"), eight raw
+ * payload chunks totalling 3990 bytes -- the flat-field upload.
+ *
+ * Recovered from a decrypted TLS session, but the bytes are transport-independent
+ * and are sent in the clear, which is how the vendor's own driver sends them.
+ *
+ * Two known deviations from this laptop's own Windows bring-up, kept for now so
+ * that behaviour is unchanged across the plaintext migration:
+ *   - record 7 is "63 01 02 0f 07"; Windows sends "63 01 02 0f 03" here (0x03 is
+ *     this unit's detect_vref_sel) -- i.e. a per-unit value from a foreign unit;
+ *   - the flat field is a constant 0x20 fill, where Windows uploads a real
+ *     measured background (its persisted vdm_bk). */
+#ifndef EGIS_INIT_H
+#define EGIS_INIT_H
 
 static const struct { const unsigned char *data; int len; } egis_init_records[] = {
   { (const unsigned char[]){0x45,0x47,0x49,0x53,0x60,0x00,0x00}, 7 },

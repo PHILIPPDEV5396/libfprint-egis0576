@@ -17,7 +17,8 @@ re-treads the dead ends.
 On an AMD Rembrandt laptop (Lenovo Yoga 7 14ARB7, Fedora, GNOME 50, `mem_sleep=
 s2idle`):
 
-- Historically (before the `read_record` deadline, see below) a suspend that
+- Historically (before reads from the sensor were bounded in wall-clock time, see
+  below) a suspend that
   happened *while the sensor was armed* could **hang the unlock screen hard**
   (gnome-shell unresponsive, forced reboot).
 - After that hang was fixed, the remaining symptom is: **~40 % of resumes, the
@@ -66,8 +67,11 @@ On resume, `fprintd` is D-Bus-activated fresh, with no claim held, so the lock
 screen's `Claim` succeeds and the fingerprint works on the first press. The `post`
 phase additionally re-enumerates the sensor (`authorized` 0→1), which resets its
 exposure state so the first post-resume capture is well-exposed. The udev rule
-(`60-…-nosuspend.rules`) disables USB autosuspend so the reader's session isn't
-dropped while idle.
+(`60-…-nosuspend.rules`) pins the sensor's `power/control` to `on` so it is never
+bus-suspended between authentications. This is a conservative default for an
+interactively used reader, not a fix for a measured failure — the driver holds no
+session state, and USB autosuspend was separately measured *not* to disturb the
+sensor's protocol mode.
 
 None of this can live in libfprint: clearing an fprintd claim and restarting the
 service are operations *above* the driver, and they must run *at suspend/resume
@@ -77,12 +81,13 @@ time*, which is inherently a systemd-sleep hook.
 
 Two things, both real but both narrower than earlier versions of this doc claimed:
 
-1. **A wall-clock deadline in `read_record`** (`egis0576_tls.c`). If the driver
-   ever *does* talk to a dead TLS session (e.g. a suspend fires while a capture is
+1. **A bounded timeout on every bulk read** (`egis0576_proto.c`). If the driver
+   ever *does* talk to an unresponsive sensor (e.g. a suspend fires while a capture is
    genuinely in flight), every USB read is now bounded, so `getframe`/the
    handshake fail fast to a clean error instead of spinning forever. **This is
    what removed the original hard freeze.** Keep it.
-2. **`suspend`/`resume` vfuncs** that flag the session stale and cancel an
+2. **`suspend`/`resume` vfuncs** that flag the sensor as needing re-initialisation
+   (`needs_reinit`) and cancel an
    in-flight action. These only run when an action is *active at the instant of
    suspend* — which, in the real GNOME lock-screen flow, is usually **not** the
    case (fprintd has already gone idle and closed the device). So they are a minor
@@ -101,15 +106,37 @@ the call path** (fprintd hasn't opened/claimed the device yet, or refuses to).
    worker re-init either ran at the wrong time (the `suspend` vfunc fires ~2 s
    *before* the actual kernel suspend) or produced non-matching frames; recovery
    still came from a later fresh `open`, sometimes after a multi-second stall.
-3. **Replicate the Windows recovery.** The Windows driver
-   (`CRealTekDeviceCtrlForET576WithTLS::ForceResetDevice`) resets the sensor
-   *without* USB re-enumeration via a class control request **`0x21/9`
-   `wValue=0x00ff`** (the normal open trigger uses `wValue=0`), orchestrated by
-   `check_and_recovery` in `egis_fp_common_5XX.c` (poll token `0xAA` → ForceReset
-   → re-write regs `0x0A/0x0C/0x50` + vdm upload → `tz_calibrate_dvr`). This was
-   implemented (`egis_tls_force_reset`) and tested — but it is **moot here**: in
-   the real flow the post-resume `Claim` is refused with *"Device was already
-   claimed"* before any `open` runs, so a driver-level reset is never reached.
+3. **Replicate the vendor recovery.** A class control request **`0x21/9`
+   `wValue=0x00ff`** (*ForceResetDevice*; the normal open trigger uses
+   `wValue=0`) returns the sensor to its plaintext command mode. In the vendor's
+   Windows driver it is orchestrated by `check_and_recovery` in
+   `egis_fp_common_5XX.c` (poll register 0 for token `0xAA` → ForceReset →
+   re-write regs `0x0A/0x0C/0x50` + vdm upload → `tz_calibrate_dvr`). The reset
+   itself works reliably, and it survives in the shipped driver as
+   `egis_dev_open (reset_if_stuck=TRUE)` (`egis0576_proto.c`) for the migration case
+   described below — but as a *suspend/resume* fix it was tested and is
+   but it is **moot here**: in the real flow the post-resume `Claim` is refused with
+   *"Device was already claimed"* before any `open` runs, so a driver-level reset
+   is never reached.
+
+   Two corrections to what this document previously claimed, both measured on
+   hardware (2026-09-09):
+
+   - **The reset DOES re-enumerate the device.** Earlier text here said it worked
+     "without USB re-enumeration". That is wrong: the sensor drops off the bus and
+     comes back with a new device number after ~530 ms (`dmesg`: `USB disconnect`
+     → `new high-speed USB device`). Anything calling it has to cope with the
+     device object it holds becoming invalid.
+   - **The name `CRealTekDeviceCtrlForET576WithTLS` does not come from this
+     device's driver.** It appears in none of the three DLLs Lenovo ships for the
+     EH576 (`EgisTouchFP0576.dll`, `EgisTouchFPEngine0576.dll`,
+     `EgisTouchFPSensor0576.dll`) and should not be cited as the source of the
+     TLS protocol. The `check_and_recovery` / `0xAA` poll described above *is*
+     from this device's driver and is confirmed by Ghidra decompilation of
+     `EgisTouchFP0576.dll` (`FUN_180009594` → `FUN_18000bd14(0, 0xAA, 0xFE)`,
+     polling up to 3000 times); note that its recovery branch runs only *after*
+     the poll succeeds, so the vendor driver has no recovery for a sensor that is
+     not answering plaintext at all.
 
 The decisive measurement was a clean test with the *real* GNOME lock screen (not
 `fprintd-verify`, whose single-shot lifecycle confounded earlier runs): the
@@ -120,11 +147,37 @@ The `wValue=0x00ff` ForceReset sequence is documented above in case a future
 maintainer needs an in-driver device reset for a *different* reason — but it is not
 a fix for the suspend/resume claim problem.
 
+It is also how the driver recovers a sensor that a *pre-plaintext* build of itself
+left behind, which is worth recording because it drove a redesign.
+
+The sensor keeps whichever protocol mode it was last put into, and that state
+survives USB autosuspend, a USB port reset and a reboot — all measured. Only
+ForceResetDevice, or cutting board power, clears it. While this driver used the
+TLS-PSK session mode it therefore broke the vendor's Windows driver *for this
+device* (v3.10.3.3, which has no TLS at all — an older 2020 build does), which only
+ever speaks plaintext and fails the device with `STATUS_UNSUCCESSFUL` (Device
+Manager Code 10) when its `0xAA` readiness poll gets TLS records instead. Every
+placement of a compensating reset inside the driver's lifecycle was tested and
+rejected: from `close()` it costs roughly one failed authentication per reset
+(fprintd swaps the re-enumerated device too slowly), and from GObject `finalize`
+it fires after fprintd has released its D-Bus name, landing in the middle of the
+next session. There is no race-free point in the fprintd lifecycle for it.
+
+**The fix was to stop entering the mode.** The driver now speaks the sensor's
+plaintext protocol throughout, so it never opens the one-way door and needs no
+reset at all: measured across three consecutive fprintd sessions, zero
+re-enumerations, and the sensor still answering the plaintext readiness poll
+afterwards — exactly what Windows needs to find. `egis_dev_open` still issues one
+ForceResetDevice if it meets a sensor stuck in session mode by an older build; that
+open fails and the next one, on the re-enumerated device, succeeds. It is a
+one-time migration cost, not part of normal operation.
+
 ## Bottom line
 
 - **Keep the hook + udev rule** ([`integration/`](../integration/)). They are the
   correct, standard fix for a real upstream bug, not a workaround for a driver
   shortcoming.
-- The `read_record` deadline in the driver prevents the hard freeze.
+- The per-read timeout in the driver (every bulk read in `egis0576_proto.c` is
+  bounded) prevents the hard freeze.
 - If gnome-shell/fprintd ever fix the claim-across-suspend bug upstream, the hook
   simply becomes a harmless no-op and can be removed.

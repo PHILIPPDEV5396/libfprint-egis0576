@@ -5,16 +5,16 @@
  * peer: on open it is the TLS *client* and we (the host) are the TLS *server*.
  * After the handshake the EGIS/SIGE command protocol — including image capture —
  * runs encrypted over the USB bulk endpoints. The secure channel + Windows-exact
- * init/calibration replay + GetFrame live in drivers/egis0576/egis0576_tls.c.
+ * init/calibration replay + GetFrame live in drivers/egis0576/egis0576_proto.c.
  *
  * Captured 70x57 frames are matched host-side with Egis' own feature extractor +
  * matcher, reverse-engineered from the Windows driver and reimplemented as native
  * C (drivers/egis0576/egis_engine.*). Templates are stored as opaque blobs in
  * each print's fpi-data (plaintext, like every other libfprint driver).
  *
- * The TLS transport uses blocking synchronous USB, which must not run in the
- * fprintd main loop (nested-mainloop re-entrancy hangs it), so the capture loop
- * runs in a worker thread and marshals its results back with g_idle_add.
+ * The transport is blocking synchronous USB, which must not run in the fprintd
+ * main loop (nested-mainloop re-entrancy hangs it), so the capture loop runs in a
+ * worker thread and marshals its results back with g_idle_add.
  *
  * This library is free software; you can redistribute it and/or modify it under
  * the terms of the GNU Lesser General Public License as published by the Free
@@ -26,7 +26,7 @@
 
 #include "egis0576.h"
 #include "egis0576/egis_engine.h"
-#include "egis0576/egis0576_tls.h"
+#include "egis0576/egis0576_proto.h"
 #include "drivers_api.h"
 
 #define EGIS0576_ENROLL_STAGES 12
@@ -49,21 +49,22 @@ struct _FpDeviceEgis0576
 {
   FpDevice      parent;
 
-  EgisTls      *tls;            /* the encrypted channel to the sensor */
+  EgisDev      *sensor;         /* the plaintext channel to the sensor */
 
   /* capture runs in a worker thread (blocking sync USB must not run in the
    * main loop); results are marshalled back with g_idle_add. */
   GThread      *thread;
   gint          cancel;         /* atomic; set on main thread, read by worker */
-  gint          session_stale;  /* atomic; set by suspend/resume on the main
+  gint          needs_reinit;   /* atomic; set by suspend/resume on the main
                                  * thread, consumed by the worker: the sensor
-                                 * dropped its TLS-PSK session across s2idle (USB
-                                 * stays powered but the session dies), so it must
-                                 * be re-established before the next capture */
+                                 * does not reliably keep its bring-up state
+                                 * across s2idle (USB stays powered, but the
+                                 * capture pipeline comes back wedged), so it is
+                                 * re-initialised before the next capture */
 
-  guint8        frame[EGIS_TLS_IMG];
-  guint8        corrected[EGIS_TLS_IMG];    /* flat-field corrected frame */
-  guint8        baseline[EGIS_TLS_IMG];     /* per-session no-finger reference */
+  guint8        frame[EGIS_IMG];
+  guint8        corrected[EGIS_IMG];    /* flat-field corrected frame */
+  guint8        baseline[EGIS_IMG];     /* per-session no-finger reference */
   gboolean      have_baseline;
   guint         enroll_count;
 
@@ -82,15 +83,15 @@ frame_variance (const guint8 *buf)
 {
   gdouble sum = 0.0, var = 0.0, mean;
 
-  for (gsize i = 0; i < EGIS_TLS_IMG; i++)
+  for (gsize i = 0; i < EGIS_IMG; i++)
     sum += buf[i];
-  mean = sum / (gdouble) EGIS_TLS_IMG;
-  for (gsize i = 0; i < EGIS_TLS_IMG; i++)
+  mean = sum / (gdouble) EGIS_IMG;
+  for (gsize i = 0; i < EGIS_IMG; i++)
     {
       gdouble d = (gdouble) buf[i] - mean;
       var += d * d;
     }
-  return var / (gdouble) EGIS_TLS_IMG;
+  return var / (gdouble) EGIS_IMG;
 }
 
 /* Per-frame preprocessing (egis_preprocess, from egis_preprocess.c) is now the
@@ -113,10 +114,10 @@ frame_variance (const guint8 *buf)
  * the baseline builds itself from the natural no-finger moments and, once found,
  * is reused by every later enroll/verify without re-capturing. Single-sensor
  * driver, so a process global is fine. */
-static guint8   g_baseline[EGIS_TLS_IMG];
+static guint8   g_baseline[EGIS_IMG];
 static gboolean g_baseline_valid = FALSE;
 
-typedef struct { guint32 acc[EGIS_TLS_IMG]; int count; } BaselineAcc;
+typedef struct { guint32 acc[EGIS_IMG]; int count; } BaselineAcc;
 
 /* Feed one no-finger frame into the accumulator; publishes the global baseline
  * once EGIS0576_BASELINE_FRAMES have been gathered. No-op once already valid. */
@@ -127,12 +128,12 @@ baseline_feed (BaselineAcc *b, const guint8 *frame)
 
   if (g_baseline_valid)
     return;
-  for (i = 0; i < EGIS_TLS_IMG; i++)
+  for (i = 0; i < EGIS_IMG; i++)
     b->acc[i] += frame[i];
   b->count++;
   if (b->count >= EGIS0576_BASELINE_FRAMES)
     {
-      for (i = 0; i < EGIS_TLS_IMG; i++)
+      for (i = 0; i < EGIS_IMG; i++)
         g_baseline[i] = (guint8) (b->acc[i] / b->count);
       g_baseline_valid = TRUE;
       fp_dbg ("flat-field baseline built from %d no-finger frames (cached for boot)", b->count);
@@ -150,13 +151,13 @@ flat_field (const guint8 *raw, guint8 *out)
 
   if (!g_baseline_valid)
     {
-      memcpy (out, raw, EGIS_TLS_IMG);
+      memcpy (out, raw, EGIS_IMG);
       return;
     }
-  for (i = 0; i < EGIS_TLS_IMG; i++)
+  for (i = 0; i < EGIS_IMG; i++)
     sum += g_baseline[i];
-  mean = (int) (sum / EGIS_TLS_IMG);
-  for (i = 0; i < EGIS_TLS_IMG; i++)
+  mean = (int) (sum / EGIS_IMG);
+  for (i = 0; i < EGIS_IMG; i++)
     {
       int v = (int) raw[i] - (int) g_baseline[i] + mean;
       out[i] = v < 0 ? 0 : (v > 255 ? 255 : v);
@@ -328,34 +329,36 @@ post_msg (FpDevice *dev, Msg *m)
   g_idle_add (idle_handle_msg, m);
 }
 
-/* Re-establish ONLY the TLS-PSK session on the already-claimed, still-enumerated
- * device — the s2idle recovery. The USB device stayed powered and the interface
- * is still claimed, but the sensor silently dropped its TLS session, so every
- * field of the live EgisTls (keys, record sequence counters, reassembly buffer)
- * is stale. free+new+open discards all of it and does a fresh flush_in +
- * 0x21/9 trigger + PSK handshake + Windows init replay.
+/* Re-run the sensor bring-up on the already-claimed, still-enumerated device —
+ * the s2idle recovery. The USB device stayed powered and the interface is still
+ * claimed, but the sensor comes back from suspend with its capture pipeline in an
+ * unusable state, so the readiness poll + init replay are done again.
  *
  * Deliberately does NOT: re-claim the interface (still claimed -> EBUSY),
- * re-init the host match engine (host state, intact), re-run gain calibration
+ * re-init the host match engine (host state, intact), re-run exposure calibration
  * (persists in the powered sensor; the init replay never writes reg 0x0f, and
  * calibration needs a no-finger window we can't guarantee on resume), or
- * recapture the flat-field baseline (gain-tied, per-boot, still valid) — so
+ * recapture the flat-field baseline (exposure-tied, per-boot, still valid) — so
  * cross-boot matching is preserved.
  *
- * Blocks ~1 s of synchronous gusb — safe ONLY because it runs in the capture
- * worker thread, never on the fprintd main loop. On failure the session is left
- * flagged stale so the next worker eagerly re-handshakes instead of tripping
- * over a dead session. */
+ * Passes reset_if_stuck=FALSE: a ForceResetDevice here would take the device off
+ * the bus mid-recovery. If the sensor is unresponsive the flag stays set and the
+ * next worker tries again.
+ *
+ * Blocks ~0.3 s of synchronous gusb — safe ONLY because it runs in the capture
+ * worker thread, never on the fprintd main loop. On failure the device is left
+ * flagged so the next worker re-initialises eagerly rather than capturing into a
+ * dead pipeline. */
 static gboolean
 worker_reinit (FpDeviceEgis0576 *self, GError **error)
 {
   GUsbDevice *usb = fpi_device_get_usb_device (FP_DEVICE (self));
 
-  g_clear_pointer (&self->tls, egis_tls_free);
-  self->tls = egis_tls_new (usb);
-  if (!egis_tls_open (self->tls, error))
-    return FALSE;                            /* leave session_stale TRUE */
-  g_atomic_int_set (&self->session_stale, FALSE);
+  g_clear_pointer (&self->sensor, egis_dev_free);
+  self->sensor = egis_dev_new (usb);
+  if (!egis_dev_open (self->sensor, FALSE, error))
+    return FALSE;                            /* leave needs_reinit TRUE */
+  g_atomic_int_set (&self->needs_reinit, FALSE);
   return TRUE;
 }
 
@@ -370,7 +373,7 @@ capture_thread (gpointer data)
   gboolean finishing = FALSE;
   gboolean saw_finger = FALSE;   /* verify/identify: a press is in progress */
   int best_score = -1;           /* verify/identify: best score seen this press */
-  guint8 ffframe[EGIS_TLS_IMG];  /* flat-fielded frame (baseline-subtracted) */
+  guint8 ffframe[EGIS_IMG];  /* flat-fielded frame (baseline-subtracted) */
   BaselineAcc bl = { { 0 }, 0 }; /* opportunistic no-finger baseline accumulator */
 
   while (!finishing && !g_atomic_int_get (&self->cancel))
@@ -385,7 +388,7 @@ capture_thread (gpointer data)
        * timeout on a dead session. Honour a concurrent cancel first: suspend
        * cancels the action, and we must not run ~1 s of USB in the fragile
        * post-resume window when we're being torn down. */
-      if (g_atomic_int_get (&self->session_stale) &&
+      if (g_atomic_int_get (&self->needs_reinit) &&
           !g_atomic_int_get (&self->cancel))
         {
           if (!worker_reinit (self, &error))
@@ -398,10 +401,10 @@ capture_thread (gpointer data)
             }
         }
 
-      if (!egis_tls_getframe (self->tls, self->frame, &error))
+      if (!egis_dev_getframe (self->sensor, self->frame, &error))
         {
           /* Backstop that also covers the idle-at-suspend case (no vfunc fired,
-           * so session_stale was FALSE and the eager path was skipped) and any
+           * so needs_reinit was FALSE and the eager path was skipped) and any
            * unfreeze race: a dead session makes getframe return an error in
            * bounded time (read_record now has a wall-clock deadline). If we were
            * cancelled (suspend), fall through so the loop exits with a clean
@@ -419,7 +422,7 @@ capture_thread (gpointer data)
           g_clear_error (&error);
 
           if (!worker_reinit (self, &error) ||
-              !egis_tls_getframe (self->tls, self->frame, &error))
+              !egis_dev_getframe (self->sensor, self->frame, &error))
             {
               Msg *m = g_new0 (Msg, 1);
               m->kind = M_ERROR;
@@ -608,29 +611,29 @@ egis0576_open (FpDevice *dev)
       return;
     }
 
-  self->tls = egis_tls_new (fpi_device_get_usb_device (dev));
-  if (!egis_tls_open (self->tls, &error))
+  self->sensor = egis_dev_new (fpi_device_get_usb_device (dev));
+  if (!egis_dev_open (self->sensor, TRUE, &error))
     {
-      g_clear_pointer (&self->tls, egis_tls_free);
+      g_clear_pointer (&self->sensor, egis_dev_free);
       g_usb_device_release_interface (fpi_device_get_usb_device (dev),
                                       EGIS0576_INTF, 0, NULL);
       fpi_device_open_complete (dev, error);
       return;
     }
-  /* One-time per-device gain calibration (Windows calibrate_gain), before any
-   * capture and once per fprintd lifetime. A binary search over the fine-gain
-   * register converges the no-finger frame mean to a fixed target, so the exposure
-   * is the SAME on any EH576 unit — this is what makes the driver device-independent
-   * (the baked init gain is one unit's value). Validated on the reference unit:
-   * reliable verify-match at ~7500. No finger is expected at open. Non-fatal (keeps
-   * the baked gain on error). Set EGIS0576_NO_CALIBRATE=1 to fall back to fixed gain
-   * on a unit where calibration misbehaves. */
-  if (!g_getenv ("EGIS0576_NO_CALIBRATE") && !egis_tls_calibrate_gain (self->tls, &error))
+  /* One-time per-device exposure calibration (the vendor's calibrate_gain),
+   * before any capture and once per fprintd lifetime. A binary search over reg
+   * 0x0f converges the no-finger frame mean to a fixed target, so the exposure is
+   * the SAME on any EH576 unit — this is what makes the driver device-independent
+   * (the baked init values belong to one unit). Validated on the reference unit:
+   * reliable verify-match at ~7500. No finger is expected at open. Non-fatal
+   * (keeps the baked value on error). Set EGIS0576_NO_CALIBRATE=1 to fall back to
+   * the fixed value on a unit where calibration misbehaves. */
+  if (!g_getenv ("EGIS0576_NO_CALIBRATE") && !egis_dev_calibrate (self->sensor, &error))
     {
-      fp_dbg ("gain calibration skipped: %s", error ? error->message : "?");
+      fp_dbg ("exposure calibration skipped: %s", error ? error->message : "?");
       g_clear_error (&error);
     }
-  g_atomic_int_set (&self->session_stale, FALSE);
+  g_atomic_int_set (&self->needs_reinit, FALSE);
   fpi_device_open_complete (dev, NULL);
 }
 
@@ -641,7 +644,7 @@ egis0576_close (FpDevice *dev)
   GError *error = NULL;
 
   /* A capture worker may still be running (close racing a cancel/resume). It owns
-   * self->tls, so stop and join it before freeing the session or it would touch
+   * self->sensor, so stop and join it before freeing the session or it would touch
    * freed memory. The join is bounded: the worker is at most one read_record
    * deadline away from noticing self->cancel and returning. */
   if (self->thread)
@@ -650,7 +653,7 @@ egis0576_close (FpDevice *dev)
       g_thread_join (self->thread);
       self->thread = NULL;
     }
-  g_clear_pointer (&self->tls, egis_tls_free);
+  g_clear_pointer (&self->sensor, egis_dev_free);
   g_usb_device_release_interface (fpi_device_get_usb_device (dev),
                                   EGIS0576_INTF, 0, &error);
   fpi_device_close_complete (dev, error);
@@ -758,7 +761,7 @@ egis0576_suspend (FpDevice *dev)
 
   /* The TLS-PSK session will not survive s2idle (sensor stays powered but drops
    * the session). Flag it so the next capture re-handshakes in the worker. */
-  g_atomic_int_set (&self->session_stale, TRUE);
+  g_atomic_int_set (&self->needs_reinit, TRUE);
 
   /* Cancel the running action exactly as egismoc does (egismoc.c:1571-1578):
    * stop our worker (sets self->cancel -> worker exits and posts a cancelled
@@ -785,7 +788,7 @@ egis0576_resume (FpDevice *dev)
    * bounded getframe-failure retry re-handshakes. In the normal flow suspend
    * cancelled the action, so current_action == NONE and libfprint completes
    * resume itself without ever calling this (fpi-device.c:1655-1666). */
-  g_atomic_int_set (&self->session_stale, TRUE);
+  g_atomic_int_set (&self->needs_reinit, TRUE);
   fpi_device_resume_complete (dev, NULL);
 }
 

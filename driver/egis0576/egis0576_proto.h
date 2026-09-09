@@ -1,0 +1,58 @@
+/* egis0576_proto.h — plaintext EGIS/SIGE protocol to the EgisTec EH576.
+ *
+ * This is the protocol the sensor's own vendor driver speaks. Commands go out as
+ * "EGIS" + cmd + two parameter bytes on bulk EP 0x01; replies come back as "SIGE"
+ * + echoed selector + value + status on EP 0x82. Image frames are 3990 raw bytes
+ * (70x57, 8-bit) fetched with "EGIS 64 0f 96".
+ *
+ * It replaces an earlier TLS-PSK transport. That mode exists in the sensor and is
+ * reachable with class request 0x21/9 wValue=0, but the vendor driver installed
+ * for this device never uses it, entering it is a one-way door that leaves the
+ * sensor unusable for any other OS until a ForceResetDevice, and it measurably
+ * bought nothing: driving this same command sequence in the clear yields a better
+ * signal-to-baseline ratio (finger/no-finger frame variance 1069/140 = 7.6x,
+ * against 890/160 = 5.6x through the TLS path on the same unit).
+ */
+#ifndef EGIS0576_PROTO_H
+#define EGIS0576_PROTO_H
+
+#include <glib.h>
+#include <gusb.h>
+
+#define EGIS_IMG 3990                  /* 70 x 57, 8-bit */
+
+typedef struct EgisDev EgisDev;
+
+/* Bind to an already-claimed GUsbDevice. */
+EgisDev *egis_dev_new (GUsbDevice *usb);
+void     egis_dev_free (EgisDev *d);
+
+/* Bring the sensor up: poll it ready (the vendor's check_and_recovery), then
+ * replay the vendor init/calibration sequence. Blocks (~0.3 s).
+ *
+ * Fails with G_IO_ERROR_NOT_INITIALIZED if the sensor does not answer the
+ * plaintext readiness poll. The one case that happens in practice is a sensor
+ * left in TLS session mode by a pre-plaintext build of this driver; pass
+ * reset_if_stuck=TRUE to issue a ForceResetDevice for it. That takes the device
+ * off the bus for ~530 ms, so this open still fails — the caller gets a fresh
+ * device object from the hotplug and the next open succeeds. */
+gboolean egis_dev_open (EgisDev *d, gboolean reset_if_stuck, GError **error);
+
+/* Capture one EGIS_IMG-byte frame: per-frame trigger sequence, then GetFrame.
+ * Blocks ~0.1 s. img must hold EGIS_IMG bytes. */
+gboolean egis_dev_getframe (EgisDev *d, guint8 *img, GError **error);
+
+/* One-time per-device exposure calibration (the vendor's calibrate_gain): a
+ * binary search over register 0x0f so the no-finger frame mean is the same on
+ * any EH576 unit, whatever per-unit values the baked init carries. Runs once per
+ * boot, before any capture. Templates must be re-enrolled if it moves the
+ * exposure. Returns FALSE (keeping the baked value) on capture error. */
+gboolean egis_dev_calibrate (EgisDev *d, GError **error);
+
+/* One auto-exposure step from a frame's min/max; TRUE iff the exposure changed,
+ * so the caller can re-take its flat-field baseline. Unlike the TLS transport,
+ * plaintext lets register reads interleave with capture, so this is usable
+ * per-frame the way the vendor uses it. */
+gboolean egis_dev_autoexpose (EgisDev *d, int frame_min, int frame_max);
+
+#endif

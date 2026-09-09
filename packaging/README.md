@@ -10,6 +10,23 @@ Two layers below: **installing** (for users, once published) and **publishing**
 
 ---
 
+
+## Upgrading from a release before v0.4.0
+
+Those builds spoke a TLS-PSK transport to the sensor and left it in a mode it keeps
+until something resets it. Two consequences for anyone packaging or installing the
+upgrade:
+
+- **The first fingerprint attempt after the upgrade can fail once** while the driver
+  resets the sensor and it re-enumerates (~0.5 s). The next one works.
+- **No re-enrollment is needed.** Existing prints keep matching — the exposure
+  target and register are unchanged.
+
+The same change also fixes dual-boot: earlier releases left the sensor in a state
+where the Windows vendor driver failed to start it (Device Manager **Code 10**)
+until the machine was fully powered down. v0.4.0 never enters that mode, and resets
+a sensor it finds stuck in it.
+
 ## Fedora / COPR  →  `packaging/fedora/`
 
 ### Users install with
@@ -35,20 +52,22 @@ copr-cli create libfprint-egis0576 --chroot fedora-44-x86_64 --chroot fedora-raw
 #    or after enabling, add `priority=90` to the generated /etc/yum.repos.d/_copr:*.repo.
 
 # 3. build from this spec (it fetches Source0 = upstream tarball and
-#    Source10 = this repo's v0.1.0 archive itself)
+#    Source10 = this repo's own archive, at the tag in `%global egis_tag`)
 copr-cli build-package ... # or the SCM method pointed at this repo + packaging/fedora/libfprint.spec
 #   simplest: build a local SRPM and upload it:
 sudo dnf install rpmdevtools rpmbuild
 rpmdev-setuptree
 spectool -g -R packaging/fedora/libfprint.spec        # download sources
 rpmbuild -bs packaging/fedora/libfprint.spec          # build the SRPM
-copr-cli build libfprint-egis0576 ~/rpmbuild/SRPMS/libfprint-1.94.10-99.egis1*.src.rpm
+copr-cli build libfprint-egis0576 ~/rpmbuild/SRPMS/libfprint-1.94.10-99.*.src.rpm
 ```
 
 **What the spec builds:** pristine upstream libfprint **v1.94.10** + the egis0576
 driver, keeping the package name `libfprint` (drop-in). BuildRequires, `%files`
 and `%meson -Ddrivers=all` are taken verbatim from Fedora's own libfprint.spec, so
-the file layout matches stock exactly.
+the file layout matches stock exactly — plus two files the spec installs on top:
+the suspend/resume sleep hook and the no-autosuspend udev rule from
+[`../integration/`](../integration/).
 
 **Tradeoff:** the pristine build omits Fedora's *downstream* patches — notably
 Fedora's own `egis_etu905` driver (USB `1c7a:05ae` / `1c7a:9201`). This only
@@ -69,10 +88,18 @@ and rebuild. (COPR can auto-rebuild.)
 
 ### Users install with
 
+Not on the AUR — build from the PKGBUILD kept in this repo:
+
 ```bash
-yay -S libfprint-egis0576          # or paru, or makepkg -si from a clone
+git clone https://github.com/PHILIPPDEV5396/libfprint-egis0576.git
+cd libfprint-egis0576/packaging/aur
+makepkg -si
 sudo systemctl restart fprintd
 ```
+
+`package()` is a bare `meson install`, so — unlike the Fedora RPM — it installs
+**neither** the suspend/resume sleep hook nor the no-autosuspend udev rule. Install
+both by hand afterwards; see [`../integration/`](../integration/).
 
 pacman will prompt to replace the stock `libfprint` (this package `conflicts` with
 it). Every time Arch bumps `libfprint`, `pacman -Syu` offers the stock package —
@@ -92,15 +119,23 @@ cd aur-repo && git add -A && git commit -m "Initial import" && git push
 ```
 
 **What the PKGBUILD builds:** upstream libfprint tag `v1.94.10` + this repo's
-driver (tag `v0.1.0`), default driver set (so other readers keep working),
-`provides/conflicts libfprint`. Arch's stock libfprint is also `1.94.10`, so this
+driver (at the release tag pinned in the PKGBUILD's `source=`), default driver set
+(so other readers keep working),
+`provides/conflicts libfprint`. `pkgver` is pinned to the upstream tag the meson
+patch targets; if Arch's repo libfprint has moved past it, installing this package
+downgrades libfprint itself (the driver still works — but rebasing the patch onto
+the newer tag is the better move). At the time of writing Arch's stock libfprint is
+also `1.94.10`, so this
 is a lateral rebuild, not a downgrade.
 
 ---
 
 ## Common notes
 
-- **OpenSSL:** the egis0576 engine links `libcrypto`; both packages already pull
+- **OpenSSL:** the egis0576 driver and its engine static library link **no** crypto
+  at all — the sensor's `EGIS`/`SIGE` transport is plaintext. `libcrypto` is still a
+  dependency of the finished `libfprint-2.so`, but only because upstream's own
+  `uru4000` driver uses it. Both packages already pull
   OpenSSL ≥ 3.0 (Fedora `openssl-devel` BR / Arch `openssl` dep). RPM's automatic
   soname dep adds `libcrypto.so.3` at runtime.
 - **SELinux (Fedora):** the rebuilt `.so` installs to the standard `%{_libdir}`

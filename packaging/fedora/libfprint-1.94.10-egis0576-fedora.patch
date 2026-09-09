@@ -11,7 +11,7 @@ index 0f2b8e4..e6e03e1 100644
      'egismoc' :
          [ 'drivers/egismoc/egismoc.c' ],
      'egis_etu905' :
-@@ -269,11 +271,41 @@ libfprint_private = static_library('fprint-private',
+@@ -269,11 +271,39 @@ libfprint_private = static_library('fprint-private',
      link_with: libnbis,
      install: false)
  
@@ -22,10 +22,8 @@ index 0f2b8e4..e6e03e1 100644
 +# instead of libfprint's strict -Werror driver build.
 +egis0576_engine_libs = []
 +if 'egis0576' in drivers
-+    # The sensor speaks TLS-PSK; egis0576_tls.c does the handshake + encrypted
-+    # transport with OpenSSL libcrypto (AES/HMAC/SHA) over gusb.
-+    egis0576_crypto_dep = dependency('libcrypto', version: '>= 3.0')
-+    deps += egis0576_crypto_dep
++    # egis0576_proto.c speaks the sensor's plaintext EGIS/SIGE protocol over
++    # gusb -- the same one the vendor's own driver uses. No crypto dependency.
 +    egis0576_engine_libs = [ static_library('egis0576-engine',
 +        sources: [
 +            'drivers/egis0576/egis_funcs.c',
@@ -33,10 +31,10 @@ index 0f2b8e4..e6e03e1 100644
 +            'drivers/egis0576/egis_engine.c',
 +            'drivers/egis0576/egis_preprocess.c',
 +            'drivers/egis0576/egis_coherence_map.c',
-+            'drivers/egis0576/egis0576_tls.c',
++            'drivers/egis0576/egis0576_proto.c',
 +        ],
 +        include_directories: include_directories('drivers/egis0576'),
-+        dependencies: [ gusb_dep, egis0576_crypto_dep ],
++        dependencies: [ gusb_dep ],
 +        c_args: [
 +            '-w', '-fno-stack-protector', '-fpermissive', '-fwrapv',
 +            '-Wno-int-conversion', '-Wno-incompatible-pointer-types',

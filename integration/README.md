@@ -13,8 +13,8 @@ investigation is in [`../docs/suspend-resume.md`](../docs/suspend-resume.md).
 Two independent problems, only one of which is even in this driver's reach:
 
 1. **Hard freeze** (historic): a suspend fired while the sensor was armed left the
-   driver talking to a dead TLS session, hanging the unlock screen. **Fixed in the
-   driver** by a wall-clock deadline in `read_record` — not by these helpers.
+   driver talking to an unresponsive sensor, hanging the unlock screen. **Fixed in the
+   driver** by a bounded timeout on every bulk read (`egis0576_proto.c`) — not by these helpers.
 2. **"No fingerprint after resume"**: on ~40 % of resumes the lock screen offers
    only the password. The journal shows the cause has nothing to do with the
    sensor:
@@ -35,7 +35,9 @@ Two independent problems, only one of which is even in this driver's reach:
 | File | Installs to | Effect |
 |---|---|---|
 | `50-egis0576-fp-resume.sh` | `/usr/lib/systemd/system-sleep/` | **`pre`: stops `fprintd` before sleep** so no stale claim survives — this is the fix for problem 2. **`post`: re-enumerates the sensor** (`authorized` 0→1) so its exposure is reset and the first post-resume capture is well-exposed. |
-| `60-egis0576-fp-nosuspend.rules` | `/etc/udev/rules.d/` | Disables USB autosuspend for the sensor so its session isn't dropped while idle. |
+| `60-egis0576-fp-nosuspend.rules` | `/etc/udev/rules.d/` | Keeps the sensor powered instead of letting it autosuspend while idle. There is no
+session state to protect — the protocol is stateless — but an interactively used
+reader should not have to come back from runtime PM on every press. |
 
 Restarting `fprintd` around suspend is exactly the community-standard workaround
 for the upstream claim bug. Fingerprint stays enabled everywhere — login, `sudo`,
@@ -65,8 +67,9 @@ No — and [`../docs/suspend-resume.md`](../docs/suspend-resume.md) explains why
 detail. Short version: at the moment recovery is needed, the failing operation is
 an fprintd/polkit device **claim** that happens *before* libfprint is opened, so
 the driver has no code path there. Three in-driver approaches (cancel-on-suspend;
-keep-alive + worker re-handshake; even replicating the Windows `ForceReset`
-control request `0x21/9 wValue=0xff`) were built and tested — none can help,
+keep-alive + worker re-init; even replicating the Windows `ForceReset`
+control request `0x21/9 wValue=0x00ff`, which re-enumerates the device) were built
+and tested — none can help,
 because the driver is never invoked. Clearing the stale claim requires restarting
 `fprintd` at resume time, which is inherently a systemd-sleep hook.
 

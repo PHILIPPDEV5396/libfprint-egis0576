@@ -20,28 +20,41 @@ login / `sudo` / screen-unlock through PAM, on stock GNOME/KDE.
 | PAM login, `sudo`, unlock | ✅ works (`sufficient`, password fallback intact) |
 | Cross-reboot matching | ✅ (per-boot flat-field) |
 | Security | genuine finger matches; other fingers (incl. adjacent same-hand) rejected at a strict threshold |
-| Validated on | **one** physical unit (Lenovo Yoga 7 14ARB7, Fedora). See "Universality" below. |
+| Validated on | **three** laptop models (AMD + Intel, Fedora + Arch); the third is a partial pass. See "Tested platforms" below. |
 
 ## The sensor, briefly
 
-The EH576 is a small **70×57 px** capacitive/optical image sensor behind a
-**TLS-PSK** secure channel (the host is the TLS *server*, the device the client).
-After the handshake it speaks a simple `EGIS`/`SIGE` command protocol; the host
-pulls raw frames and does feature extraction + matching in software.
+The EH576 is a small **70×57 px** capacitive/optical image sensor speaking a
+simple `EGIS`/`SIGE` command protocol in the clear: the host pulls raw frames and
+does feature extraction + matching in software.
 
-This driver implements the whole chain natively: TLS-PSK (OpenSSL) → sensor init →
-frame capture → per-boot flat-field + preprocessing → Egis' extractor/matcher →
-libfprint enroll/verify. Design detail lives in the source comments and
+This driver implements the whole chain natively: sensor bring-up → frame capture →
+per-boot flat-field + preprocessing → Egis' extractor/matcher → libfprint
+enroll/verify. Design detail lives in the source comments and
 [`PROVENANCE.md`](PROVENANCE.md).
+
+The sensor also has a TLS-PSK session mode, reachable with class request `0x21/9
+wValue=0`. **This driver deliberately does not use it**, and neither does the
+vendor's own Windows driver for this device — verified against a USB capture of a
+working Windows session, which contains no vendor *or class* control transfers at
+all — only plaintext `EGIS`/`SIGE` bulk traffic. (The mode switch is a class
+request, so ruling out vendor requests alone would not have settled it.)
+Entering that mode is a one-way door: the sensor stays in it across USB
+autosuspend, a USB port reset and a reboot, and only a `ForceResetDevice`
+(`wValue=0x00ff`, which re-enumerates the device) brings it back. On a dual-boot
+machine that left Windows unable to start the sensor at all — Device Manager
+Code 10 — until the board was fully powered down. Driving the same command
+sequence in the clear also measures *better*: finger/no-finger frame variance
+1069/140 = 7.6×, against 890/160 = 5.6× through the TLS path on the same unit.
 
 ## Universality (does it work on *other* EH576 units?)
 
 The driver is engineered to be **device-independent**, and every per-device
 dependency is handled at runtime rather than baked in:
 
-- **PSK / init / protocol** — per-**model** constants, identical for every EH576.
-- **Gain** — a per-device closed-loop calibration runs once at open (binary search
-  over the fine-gain register to a fixed no-finger exposure target), so each unit
+- **Init / protocol** — per-**model** constants, identical for every EH576.
+- **Exposure** — a per-device closed-loop calibration runs once at open (binary
+  search over register `0x0f` to a fixed no-finger exposure target), so each unit
   self-adjusts.
 - **Fixed-pattern noise** — removed by a per-boot host-side flat-field captured
   fresh on every unit.
@@ -50,7 +63,8 @@ dependency is handled at runtime rather than baked in:
 
 **Update:** originally all of this was validated on the author's single unit —
 that caveat is now retired. An independent tester ran the full stack on a second
-EH576 (different laptop, CPU vendor, USB host controller and sensor revision) with
+EH576 (different laptop, CPU vendor and USB host controller; same sensor revision,
+`bcdDevice` 15.72) with
 a 17-point PASS ([#2](https://github.com/PHILIPPDEV5396/libfprint-egis0576/issues/2)).
 More reports are still very welcome — success *or* failure.
 
@@ -65,6 +79,18 @@ More reports are still very welcome — success *or* failure.
 Got a different machine with an EH576? **Please open an issue with your results.**
 
 ## Install
+
+> **Upgrading from a release before v0.4.0?** Those builds spoke a TLS-PSK
+> transport and left the sensor in a mode it keeps until something resets it — so
+> the **first** fingerprint attempt after the upgrade can fail once while the
+> driver resets the sensor and it re-enumerates (~0.5 s). The next attempt works.
+> **No re-enrollment is needed**: existing prints keep matching, because the
+> exposure target and register are unchanged.
+>
+> The same change fixes dual-boot: earlier releases left the sensor in a state
+> where Windows' own driver failed to start it (Device Manager **Code 10**) until
+> the machine was fully powered down. v0.4.0 never enters that mode.
+
 
 The driver is compiled *into* `libfprint-2.so` (it is not a loadable module), so
 installing it means installing a libfprint that includes it, replacing the distro's.
@@ -89,7 +115,11 @@ sudo systemctl restart fprintd
 
 Packaging sources and how they're published live in [`packaging/`](packaging/).
 Both replace the stock `libfprint` (same soname); your other fingerprint hardware
-keeps working because the build includes the full default driver set.
+keeps working because the build includes the full **upstream** default driver set.
+One caveat on Fedora: the COPR build is pristine upstream, so it does not carry
+Fedora's *downstream* `egis_etu905` driver (`1c7a:05ae` / `1c7a:9201`). That only
+matters if you also own one of those readers — see [`packaging/`](packaging/) for a
+rebased patch that keeps both.
 
 > Not published to a repo yet? Build from source below — it's the same result.
 
@@ -101,7 +131,10 @@ rebuild `fprintd` — the stock daemon loads the new library through its unchang
 
 ### 1. Install build dependencies
 
-You need the usual libfprint build stack plus **OpenSSL/libcrypto ≥ 3.0**:
+You need the usual libfprint build stack, which includes **OpenSSL ≥ 3.0** —
+upstream's own `uru4000` driver requires it (`meson.build`: `'uru4000' : [ 'openssl' ]`).
+The egis0576 driver itself links no crypto at all; it speaks the sensor's plaintext
+protocol over gusb.
 
 - **Fedora:** `sudo dnf install git meson ninja-build gcc pkgconf-pkg-config glib2-devel libgusb-devel openssl-devel gobject-introspection-devel nss-devel systemd-devel libgudev-devel pixman-devel cairo-gobject-devel`
 - **Arch:** `sudo pacman -S --needed git meson ninja gcc pkgconf glib2 libgusb openssl gobject-introspection nss systemd-libs libgudev pixman cairo`
@@ -217,19 +250,19 @@ Ref: [openSUSE SDB – Using fingerprint authentication](https://en.opensuse.org
 
 ## Suspend / resume
 
-The driver holds a **TLS-PSK session** to the sensor, established at device-open.
-Across a system suspend — especially **s2idle**, where the USB device stays
-powered and is not re-enumerated — that session goes stale. On resume the next
-fingerprint attempt (typically the lock screen after wake) can then block on the
-dead session and, on some systems (observed on AMD Rembrandt laptops that only
-offer `mem_sleep=s2idle`), **hang the unlock screen hard**.
+The sensor is brought up at device-open. Across a system suspend — especially
+**s2idle**, where the USB device stays powered and is not re-enumerated — it comes
+back with its capture pipeline unusable. On resume the next fingerprint attempt
+(typically the lock screen after wake) can then block on it and, on some systems
+(observed on AMD Rembrandt laptops that only offer `mem_sleep=s2idle`), **hang the
+unlock screen hard**.
 
 Two separate things are at play, and it took a long investigation to tell them
 apart (written up in full in [`docs/suspend-resume.md`](docs/suspend-resume.md)):
 
-- **The hard freeze** is prevented **in the driver**: `read_record` has a
-  wall-clock deadline, so if the driver ever talks to a dead TLS session it fails
-  fast to a clean error instead of spinning forever.
+- **The hard freeze** is prevented **in the driver**: every bulk read is bounded
+  by a timeout, so talking to an unresponsive sensor fails fast to a clean error
+  instead of spinning forever.
 - **"No fingerprint offered after resume"** (the lock screen drops to password) is
   **not this driver's bug at all.** It is a well-known, still-unfixed
   **gnome-shell/fprintd** issue: `fprintd` keeps a stale device *claim* across
@@ -250,6 +283,15 @@ driver shortcoming. Details and the full investigation:
 
 ## Usability & security notes
 
+- **The wire is plaintext, by design.** Traffic to the sensor is the vendor's own
+  `EGIS`/`SIGE` protocol, exactly as the shipped Windows driver sends it, and the
+  driver links no crypto. The sensor does have a TLS-PSK session mode; using it
+  would not have bought a security property here — the key is a fixed per-*model*
+  constant, the channel would terminate in the same userspace process that then
+  handles the decrypted image anyway, and matching is host-side, so the template
+  is on disk regardless. On Linux the meaningful boundary is match-on-chip, which
+  this sensor does not offer. See [`docs/`](docs/) for the measurements.
+
 - **Press firmly, flat, centred, and hold ~2 s.** Verification scores every frame
   while the finger is down and takes the best; light or brief taps on a 70×57 sensor
   can score zero.
@@ -257,16 +299,20 @@ driver shortcoming. Details and the full investigation:
   rejecting impostors (including adjacent same-hand fingers), not maximum convenience.
 - Templates are stored by fprintd under `/var/lib/fprint/`, protected by filesystem
   permissions (as with every libfprint driver).
-- Re-enroll after anything that changes capture conditions materially (the gain
-  calibration is deterministic per boot, so normal reboots are fine).
+- Re-enroll after anything that changes capture conditions materially (the exposure
+  calibration converges to the same fixed target every boot, so normal reboots are fine).
 
 ## Troubleshooting
+
+- **The first verify after upgrading fails, the next one works.** Expected, once:
+  the driver found the sensor in the session mode an older release left behind,
+  reset it, and the device re-enumerated. See the note under [Install](#install).
 
 - **`fprintd` still uses the old driver / device not found:** confirm
   `ldconfig -p | grep libfprint-2` points at your `PREFIX`, then
   `sudo systemctl restart fprintd`.
 - **Enrollment "fails to capture":** press more firmly and hold; ensure no finger is
-  on the sensor during the first ~2 s (baseline + gain calibration run then).
+  on the sensor during the first ~2 s (baseline + exposure calibration run then).
 - **Verify always fails after it worked:** re-enroll with coverage (see "Enrolling").
 - **Debug logging:** `sudo G_MESSAGES_DEBUG=all fprintd` (stop the service first) or
   `journalctl -u fprintd -f`.

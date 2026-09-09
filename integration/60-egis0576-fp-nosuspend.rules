@@ -1,8 +1,10 @@
 # EgisTec EH576 (1c7a:0576): disable USB autosuspend for the fingerprint sensor.
 #
-# The driver keeps a TLS-PSK session open to the device; letting the USB device
-# autosuspend while idle can drop that session and cause capture/verify glitches.
-# Keeping it powered is the safe default for a sensor that is used interactively.
+# The driver holds no session state — the EGIS/SIGE protocol is stateless — so this
+# is a conservative default rather than a fix for a measured failure: an
+# interactively used reader should not have to come back from runtime PM on every
+# press. (Measured separately: USB autosuspend does NOT reset the sensor's protocol
+# mode, so this rule was never what caused the dual-boot problem.)
 #
 # Install to /etc/udev/rules.d/ then:
 #   sudo udevadm control --reload-rules && sudo udevadm trigger --attr-match=idVendor=1c7a

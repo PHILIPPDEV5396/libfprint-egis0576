@@ -10,7 +10,9 @@ A [libfprint](https://gitlab.freedesktop.org/libfprint/libfprint) driver for the
 **EgisTec (LighTuning) EH576** fingerprint sensor (USB ID `1c7a:0576`), which ships
 in several laptops but has **no vendor-provided Linux driver**. It was produced by
 reverse-engineering the Windows driver (`EgisTouchFP0576.dll`) for the sole purpose
-of **interoperability** — making hardware that people already own usable on Linux.
+of **interoperability**. Two vendor builds were examined and the distinction matters
+below: the build shipped for this device (v3.10.3.3, 2021) and an older one
+(v3.10.0.7, 2020) that bundles mbedTLS — making hardware that people already own usable on Linux.
 
 ## Two categories of code
 
@@ -21,7 +23,7 @@ Written from scratch for libfprint:
 | File | What it is |
 |------|-----------|
 | `egis0576.c`, `egis0576.h` | The libfprint `FpDevice` driver: enroll/verify/identify state machines, capture worker thread, per-boot flat-field, software finger detection. |
-| `egis0576/egis0576_tls.c`, `.h` | The TLS-PSK transport (OpenSSL/libcrypto over gusb), per-device gain calibration, init orchestration. |
+| `egis0576/egis0576_proto.c`, `.h` | The plaintext `EGIS`/`SIGE` transport over gusb, per-device exposure calibration, init orchestration. |
 | `egis0576/egis_rt.c`, `.h`, `egis_engine.c`, `.h` | The flat-memory runtime and the enroll/verify/gallery wrapper around the matcher. |
 
 These files are licensed **LGPL-2.1-or-later**, matching libfprint. See `LICENSE`.
@@ -36,13 +38,39 @@ clean-room equivalent proved viable (see below):
 | `egis0576/egis_funcs.c` | Egis' fingerprint feature extractor + matcher, translated from the decompiled DLL to native C. |
 | `egis0576/egis_coherence_map.c` | The ridge-coherence estimator and its 6 lookup tables, extracted byte-exact from the DLL `.rdata`. |
 | `egis0576/egis_preprocess.c` | The image preprocessing pipeline (min-subtract, invert, Otsu contrast stretch, vertical flip). |
-| `egis0576/egis_tls_init.h` | The sensor initialization command sequence. |
+| `egis0576/egis_init.h` | The sensor initialization command sequence. |
 | `egis0576/egis_blobs.h`, `egis_dat.h`, `egis_decls.h`, `egis_intrin.h` | Extracted data tables and support declarations for the translated code. |
-| The TLS-PSK pre-shared key in `egis0576_tls.c` | A per-**model** constant recovered from the DLL — required to speak to the sensor at all. |
+
+`egis0576/egis0576_proto.c` is listed under category 1 as original work, with one
+exception: its `EGIS_STEP_TABLE` is a 16-entry table taken byte-exact from the
+vendor DLL's `.rdata`, and belongs to this second category.
+
+An earlier revision of this driver also carried the sensor's TLS-PSK pre-shared
+key, recovered from the older (2020) vendor DLL. That transport has been removed —
+the device is driven in the clear, the way its own shipped Windows driver drives
+it — so the key is **not present in the current source**. It does remain reachable
+in this repository's **git history** (in the deleted `egis0576/egis0576_tls.c`);
+the history has deliberately not been rewritten, so anyone re-publishing this
+repository re-publishes that key with it.
+
+The driver also no longer links any crypto library. `libcrypto` remains a
+dependency of the built `libfprint-2.so`, but only because upstream's own
+`uru4000` driver requires it.
 
 The author **does not claim copyright** over this second category. It is the
 intellectual property of Egis Technology Inc. and is reproduced here only to the
 extent necessary for the device to function.
+
+### 3. Prior art by others
+
+The plaintext `EGIS`/`SIGE` framing and the first working capture path were
+established by the third-party [`Pengu601/EgisTec-EH576`](https://github.com/Pengu601/EgisTec-EH576)
+project, which this work started from. Consult that repository for its own terms.
+
+### Everything outside `driver/`
+
+`patches/`, `packaging/`, `integration/`, `install.sh` and `docs/` are the author's
+own work and carry the repository's licence.
 
 ## Legal basis and honest risk disclosure
 
