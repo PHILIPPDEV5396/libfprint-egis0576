@@ -55,7 +55,7 @@ copr-cli create libfprint-egis0576 --chroot fedora-44-x86_64 --chroot fedora-raw
 #    Source10 = this repo's own archive, at the tag in `%global egis_tag`)
 copr-cli build-package ... # or the SCM method pointed at this repo + packaging/fedora/libfprint.spec
 #   simplest: build a local SRPM and upload it:
-sudo dnf install rpmdevtools rpmbuild
+sudo dnf install rpmdevtools rpm-build
 rpmdev-setuptree
 spectool -g -R packaging/fedora/libfprint.spec        # download sources
 rpmbuild -bs packaging/fedora/libfprint.spec          # build the SRPM
@@ -124,11 +124,20 @@ driver (at the release tag pinned in the PKGBUILD's `source=`), default driver s
 `provides/conflicts libfprint`. `pkgver` is pinned to the upstream tag the meson
 patch targets; if Arch's repo libfprint has moved past it, installing this package
 downgrades libfprint itself (the driver still works — but rebasing the patch onto
-the newer tag is the better move). At the time of writing Arch's stock libfprint is
-also `1.94.10`, so this
+the newer tag is the better move). As of September 2026 Arch's stock libfprint is also `1.94.10`, so this
 is a lateral rebuild, not a downgrade.
 
 ---
+
+## Releasing a new driver version
+
+Both recipes pin the driver by **tag** — neither follows `main` — so a driver
+release means bumping both, or users keep getting the old one:
+
+| File | What to bump |
+|---|---|
+| `packaging/fedora/libfprint.spec` | `%global egis_tag` **and** the `Release:` suffix (`egisN`), plus a `%changelog` entry |
+| `packaging/aur/PKGBUILD` | the `#tag=` in `source=`, and reset `pkgrel=1` |
 
 ## Common notes
 

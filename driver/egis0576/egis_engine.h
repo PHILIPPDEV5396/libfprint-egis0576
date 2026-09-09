@@ -34,7 +34,7 @@ int egis_verify(const uint8_t *raw, int idx);
 
 /* --- byte-exact Windows per-frame preprocessing (egis_preprocess.c) ---
  * min-subtract -> invert -> auto-brightness -> Otsu stretch(0x8c) -> row-flip.
- * Normalises per-session brightness/contrast so a template enrolled in one TLS
+ * Normalises per-session brightness/contrast so a template enrolled in one
  * session matches a probe from another. Apply to BOTH enroll and verify frames. */
 void egis_preprocess(const uint8_t *raw, uint8_t *out);
 /* best match of a probe across the whole gallery; sets *out_idx to the matched

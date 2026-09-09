@@ -107,15 +107,14 @@ the call path** (fprintd hasn't opened/claimed the device yet, or refuses to).
    *before* the actual kernel suspend) or produced non-matching frames; recovery
    still came from a later fresh `open`, sometimes after a multi-second stall.
 3. **Replicate the vendor recovery.** A class control request **`0x21/9`
-   `wValue=0x00ff`** (*ForceResetDevice*; the normal open trigger uses
-   `wValue=0`) returns the sensor to its plaintext command mode. In the vendor's
+   `wValue=0x00ff`** (*ForceResetDevice*; the same request with `wValue=0` is the
+   TLS-session door this driver never opens) returns the sensor to its plaintext command mode. In the vendor's
    Windows driver it is orchestrated by `check_and_recovery` in
    `egis_fp_common_5XX.c` (poll register 0 for token `0xAA` → ForceReset →
    re-write regs `0x0A/0x0C/0x50` + vdm upload → `tz_calibrate_dvr`). The reset
    itself works reliably, and it survives in the shipped driver as
    `egis_dev_open (reset_if_stuck=TRUE)` (`egis0576_proto.c`) for the migration case
-   described below — but as a *suspend/resume* fix it was tested and is
-   but it is **moot here**: in the real flow the post-resume `Claim` is refused with
+   described below — but as a *suspend/resume* fix it is **moot here**: in the real flow the post-resume `Claim` is refused with
    *"Device was already claimed"* before any `open` runs, so a driver-level reset
    is never reached.
 
@@ -146,6 +145,11 @@ driver's `suspend` vfunc did not fire at all, and the failure was the polkit-lev
 The `wValue=0x00ff` ForceReset sequence is documented above in case a future
 maintainer needs an in-driver device reset for a *different* reason — but it is not
 a fix for the suspend/resume claim problem.
+
+## The dual-boot one-way door (and why v0.4.0 removed it)
+
+What follows is a separate story that happens to use the same ForceReset
+mechanism. **It changes none of the suspend/resume conclusions above.**
 
 It is also how the driver recovers a sensor that a *pre-plaintext* build of itself
 left behind, which is worth recording because it drove a redesign.

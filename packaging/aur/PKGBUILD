@@ -31,7 +31,7 @@ options=('!lto')
 # repo (driver sources + the meson integration patch), pinned to a release tag.
 source=(
   "libfprint::git+https://gitlab.freedesktop.org/libfprint/libfprint.git#tag=v${pkgver}"
-  "libfprint-egis0576::git+https://github.com/PHILIPPDEV5396/libfprint-egis0576.git#tag=v0.4.0"
+  "libfprint-egis0576::git+https://github.com/PHILIPPDEV5396/libfprint-egis0576.git#tag=v0.4.1"
 )
 sha256sums=('SKIP'
             'SKIP')

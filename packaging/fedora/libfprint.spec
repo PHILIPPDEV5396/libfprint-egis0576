@@ -11,7 +11,7 @@
 # package (keeping egis_etu905 + Fedora's fixes), see ./README.md and the tested
 # rebased patch libfprint-1.94.10-egis0576-fedora.patch in this directory.
 
-%global egis_tag v0.4.0
+%global egis_tag v0.4.1
 
 Name:           libfprint
 Version:        1.94.10
@@ -19,7 +19,7 @@ Version:        1.94.10
 # The robust backstop is a COPR repo *priority* (see README) which wins regardless
 # of version. When Fedora ships a NEWER libfprint VERSION, rebase onto it (Fedora
 # then legitimately wins and you bump this spec's Version).
-Release:        99%{?dist}.egis5
+Release:        99%{?dist}.egis6
 Summary:        Toolkit for fingerprint scanner (rebuilt with the EgisTec EH576 / 1c7a:0576 driver)
 
 License:        LGPL-2.1-or-later AND NIST-PD
@@ -127,6 +127,22 @@ install -Dm 0644 "$egisdir/integration/60-egis0576-fp-nosuspend.rules" \
 %{_datadir}/installed-tests/libfprint-2/
 
 %changelog
+* Wed Sep 09 2026 PHILIPPDEV5396 - 1.94.10-99.egis6
+- Update egis0576 driver to v0.4.1: documentation and measured limits.
+  * New docs/sensor-tuning.md records three tested non-improvements, so they
+    are not re-attempted: uploading a measured background to the sensor has
+    no effect on this fetch path; raising the gain buys no signal-to-noise
+    and starts clipping pixels from reg 0x12 = 0x06 upward; and the exposure
+    register's usable window is only about eight counts wide, which is why
+    per-frame auto-exposure is deliberately not wired into the capture loop.
+  * States plainly that no EER/FAR/FRR has ever been measured, and qualifies
+    the README's security row accordingly.
+  * Removes the last pre-plaintext leftovers from the driver, including two
+    user-visible fp_dbg messages that still spoke of a TLS session.
+  * Documentation pass across all six markdown files: dead cross-references,
+    a broken `dnf install rpmbuild` (the package is rpm-build), terminology
+    drift, and a garbled sentence introduced by an earlier edit.
+- No functional change to capture, matching or enrolled templates.
 * Wed Sep 09 2026 PHILIPPDEV5396 - 1.94.10-99.egis5
 - Update egis0576 driver to v0.4.0: replace the TLS-PSK transport with the
   sensor's plaintext EGIS/SIGE protocol -- the same one the vendor's own

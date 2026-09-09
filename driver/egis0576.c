@@ -1,11 +1,10 @@
 /*
  * Egis Technology Inc. (aka. LighTuning) EH576 (1c7a:0576) driver for libfprint
  *
- * A tiny press-type secure image sensor (70x57 px). The sensor is a TLS-PSK
- * peer: on open it is the TLS *client* and we (the host) are the TLS *server*.
- * After the handshake the EGIS/SIGE command protocol — including image capture —
- * runs encrypted over the USB bulk endpoints. The secure channel + Windows-exact
- * init/calibration replay + GetFrame live in drivers/egis0576/egis0576_proto.c.
+ * A tiny press-type image sensor (70x57 px), driven with the vendor's own
+ * plaintext EGIS/SIGE command protocol over the USB bulk endpoints — the same one
+ * its Windows driver speaks. The transport, the vendor init/calibration replay and
+ * GetFrame live in drivers/egis0576/egis0576_proto.c.
  *
  * Captured 70x57 frames are matched host-side with Egis' own feature extractor +
  * matcher, reverse-engineered from the Windows driver and reimplemented as native
@@ -30,8 +29,9 @@
 #include "drivers_api.h"
 
 #define EGIS0576_ENROLL_STAGES 12
-/* In TLS/Windows-calibrated mode the no-finger frame has a fixed-pattern
- * variance around ~163; a real finger pushes it well past 300. Hysteresis: */
+/* After the vendor init + exposure calibration the no-finger frame has a
+ * fixed-pattern variance around ~163; a real finger pushes it well past 300.
+ * Hysteresis: */
 #define EGIS0576_FINGER_ON_VAR  250.0
 #define EGIS0576_FINGER_OFF_VAR 215.0
 #define EGIS0576_POLL_SLEEP_US  5000    /* small gap between captures */
@@ -100,7 +100,7 @@ frame_variance (const guint8 *buf)
  * declared in egis_engine.h and validated on fp_final (genuine 8/10 preserved,
  * impostor 0/12 — my earlier hand-written approximation destroyed minutiae, 0/10).
  * The min-subtract + Otsu-stretch normalise per-session brightness/contrast so a
- * template enrolled in one TLS session matches a probe from another. */
+ * template enrolled in one capture session matches a probe from another. */
 
 /* Process-global per-boot flat-field baseline. The sensor's fixed-pattern noise
  * (~163 var, no finger) differs per power-cycle; subtracting it per-pixel makes
@@ -382,10 +382,10 @@ capture_thread (gpointer data)
       gdouble var;
       const guint8 *probe;
 
-      /* Eager fast-path: a suspend/resume since the last frame dropped the
-       * sensor's TLS session (flag set by the vfuncs). Re-handshake HERE (worker
+      /* Eager fast-path: a suspend/resume since the last frame left the sensor
+       * needing re-initialisation (flag set by the vfuncs). Re-init HERE (worker
        * thread, blocking-safe) before getframe so we don't burn a getframe
-       * timeout on a dead session. Honour a concurrent cancel first: suspend
+       * timeout on a sensor that cannot answer. Honour a concurrent cancel first: suspend
        * cancels the action, and we must not run ~1 s of USB in the fragile
        * post-resume window when we're being torn down. */
       if (g_atomic_int_get (&self->needs_reinit) &&
@@ -417,7 +417,7 @@ capture_thread (gpointer data)
               g_clear_error (&error);
               break;
             }
-          fp_dbg ("getframe failed (%s); re-establishing TLS session and retrying",
+          fp_dbg ("getframe failed (%s); re-initialising the sensor and retrying",
                   error ? error->message : "?");
           g_clear_error (&error);
 
@@ -757,10 +757,11 @@ egis0576_suspend (FpDevice *dev)
 {
   FpDeviceEgis0576 *self = FPI_DEVICE_EGIS0576 (dev);
 
-  fp_dbg ("suspend: invalidating TLS session, cancelling in-flight capture");
+  fp_dbg ("suspend: flagging the sensor for re-init, cancelling in-flight capture");
 
-  /* The TLS-PSK session will not survive s2idle (sensor stays powered but drops
-   * the session). Flag it so the next capture re-handshakes in the worker. */
+  /* The sensor does not come back from s2idle usable (it stays powered, but the
+   * capture pipeline is wedged). Flag it so the next capture re-runs the vendor
+   * bring-up in the worker. */
   g_atomic_int_set (&self->needs_reinit, TRUE);
 
   /* Cancel the running action exactly as egismoc does (egismoc.c:1571-1578):

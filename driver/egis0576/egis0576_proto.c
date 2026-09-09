@@ -286,6 +286,15 @@ auto_expose_mm (EgisDev *d, int mn, int mx)
   return 0;
 }
 
+/* NOT wired into the capture loop, deliberately. Since the plaintext migration a
+ * register read may interleave with capture (measured: frame variance 140.1
+ * before, 140.4 after), so this is mechanically possible for the first time. But
+ * reg 0x0f has a usable window of only ~8 counts (docs/sensor-tuning.md), and the
+ * step-table arithmetic above computes jumps that would overshoot it straight
+ * into saturation. No unit with a badly-exposed starting point is available to
+ * test that on, and shipping an untested behaviour change to other people's
+ * hardware is exactly the mistake that produced the TLS transport. Kept because
+ * the mechanism is sound and a future maintainer with such a unit will want it. */
 gboolean
 egis_dev_autoexpose (EgisDev *d, int frame_min, int frame_max)
 {
@@ -300,7 +309,16 @@ egis_dev_calibrate (EgisDev *d, GError **error)
   unsigned char img[EGIS_IMG];
   /* Full range [0,0x3f], no unit-specific cap: the search finds each unit's own
    * operating point. best tracks the closest-to-target mean seen, so a unit that
-   * saturates early still converges somewhere sane. */
+   * saturates early still converges somewhere sane.
+   *
+   * MEASURED on the reference unit (see docs/sensor-tuning.md): this register's
+   * transfer curve is far steeper than the search range suggests --
+   * 0x18 -> frame mean 0, 0x20 -> 94, 0x28 -> 255 -- so the usable window is only
+   * about 0x1C..0x24 and most of [0,0x3f] is saturation. The search still
+   * converges because the mean is monotonic in the register, but do not read the
+   * wide range as evidence that the sensor tolerates a wide range. The target
+   * below is within a few counts of what the baked init value produces unaided,
+   * which is why this is close to a no-op here and adaptive elsewhere. */
   int lo = 0, hi = 0x3f, best = 0x1f, best_diff = 0x100;
 
   if (g_exposure_calibrated)

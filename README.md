@@ -19,7 +19,7 @@ login / `sudo` / screen-unlock through PAM, on stock GNOME/KDE.
 | Enroll / verify / identify | ✅ works via `fprintd` |
 | PAM login, `sudo`, unlock | ✅ works (`sufficient`, password fallback intact) |
 | Cross-reboot matching | ✅ (per-boot flat-field) |
-| Security | genuine finger matches; other fingers (incl. adjacent same-hand) rejected at a strict threshold |
+| Security | genuine finger matches; other fingers (incl. adjacent same-hand) rejected at a strict threshold — qualitative, on one unit; **no FAR/FRR has been measured** ([details](docs/sensor-tuning.md)) |
 | Validated on | **three** laptop models (AMD + Intel, Fedora + Arch); the third is a partial pass. See "Tested platforms" below. |
 
 ## The sensor, briefly
@@ -112,6 +112,10 @@ cd libfprint-egis0576/packaging/aur
 makepkg -si
 sudo systemctl restart fprintd
 ```
+
+Unlike the Fedora package, the PKGBUILD installs **neither** the suspend/resume
+sleep hook nor the no-autosuspend udev rule — install both by hand, see
+[`integration/`](integration/).
 
 Packaging sources and how they're published live in [`packaging/`](packaging/).
 Both replace the stock `libfprint` (same soname); your other fingerprint hardware
@@ -290,7 +294,9 @@ driver shortcoming. Details and the full investigation:
   constant, the channel would terminate in the same userspace process that then
   handles the decrypted image anyway, and matching is host-side, so the template
   is on disk regardless. On Linux the meaningful boundary is match-on-chip, which
-  this sensor does not offer. See [`docs/`](docs/) for the measurements.
+  this sensor does not offer. The variance figures quoted above, and what else was
+  measured and found to be at its limit, are in
+  [`docs/sensor-tuning.md`](docs/sensor-tuning.md).
 
 - **Press firmly, flat, centred, and hold ~2 s.** Verification scores every frame
   while the finger is down and takes the best; light or brief taps on a 70×57 sensor
@@ -323,7 +329,8 @@ Most wanted, in order:
 
 1. **A clean-room fingerprint matcher** good enough to distinguish adjacent same-hand
    fingers at 70×57 — this is what blocks clean libfprint upstreaming. See the
-   "Why the RE'd matcher" section in [`PROVENANCE.md`](PROVENANCE.md).
+   ["Why the reverse-engineered matcher (and not a clean-room one)?"](PROVENANCE.md#why-the-reverse-engineered-matcher-and-not-a-clean-room-one)
+   in `PROVENANCE.md`.
 2. **Test reports from other physical EH576 units** (see "Universality").
 3. Packaging (AUR, .deb, DKMS-style), other distro build recipes.
 

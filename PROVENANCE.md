@@ -9,12 +9,19 @@ before you use or fork it.
 A [libfprint](https://gitlab.freedesktop.org/libfprint/libfprint) driver for the
 **EgisTec (LighTuning) EH576** fingerprint sensor (USB ID `1c7a:0576`), which ships
 in several laptops but has **no vendor-provided Linux driver**. It was produced by
-reverse-engineering the Windows driver (`EgisTouchFP0576.dll`) for the sole purpose
-of **interoperability**. Two vendor builds were examined and the distinction matters
-below: the build shipped for this device (v3.10.3.3, 2021) and an older one
-(v3.10.0.7, 2020) that bundles mbedTLS — making hardware that people already own usable on Linux.
+reverse-engineering Egis' proprietary Windows driver (`EgisTouchFP0576.dll`) for the
+sole purpose of **interoperability** — making hardware that people already own usable
+on Linux.
 
-## Two categories of code
+Two builds of that DLL were examined, and the distinction matters below: the build
+shipped for this device (v3.10.3.3, 2021), which has no TLS record layer, and an
+older one (v3.10.0.7, 2020) that bundles mbedTLS and carries the sensor's
+pre-shared key.
+
+## Where the code comes from
+
+File paths in the tables below are relative to `driver/`; `install.sh` copies them
+into `libfprint/drivers/` of the libfprint tree it builds.
 
 ### 1. Original work — © the author, LGPL-2.1-or-later
 
@@ -38,7 +45,7 @@ clean-room equivalent proved viable (see below):
 | `egis0576/egis_funcs.c` | Egis' fingerprint feature extractor + matcher, translated from the decompiled DLL to native C. |
 | `egis0576/egis_coherence_map.c` | The ridge-coherence estimator and its 6 lookup tables, extracted byte-exact from the DLL `.rdata`. |
 | `egis0576/egis_preprocess.c` | The image preprocessing pipeline (min-subtract, invert, Otsu contrast stretch, vertical flip). |
-| `egis0576/egis_init.h` | The sensor initialization command sequence. |
+| `egis0576/egis_init.h` | The sensor's init + calibration sequence: 25 `EGIS` command records plus the 3990-byte payload upload. Recovered by observing a decrypted vendor session rather than from the decompilation; the bytes are transport-independent and are now sent in the clear. |
 | `egis0576/egis_blobs.h`, `egis_dat.h`, `egis_decls.h`, `egis_intrin.h` | Extracted data tables and support declarations for the translated code. |
 
 `egis0576/egis0576_proto.c` is listed under category 1 as original work, with one
@@ -95,10 +102,13 @@ own work and carry the repository's licence.
 
 A clean-room matcher was seriously attempted — block-local normalized cross-
 correlation, band-limited phase-only correlation, NBIS minutiae/bozorth, ridge-
-orientation fields, Gabor FingerCode, and census/LBP texture. **Every one of them
-failed the decisive security case:** on this tiny **70×57-pixel** sensor they could
-not reliably tell an *adjacent same-hand finger* (e.g. your own middle finger) apart
-from an enrolled index finger — a real false-accept hole. Egis' purpose-built
+orientation fields, Gabor FingerCode, and census/LBP texture. **Not one was usable on this tiny
+70×57-pixel sensor**, and they failed in two different ways. The minutiae route
+(NBIS/bozorth, in an early `FpImageDevice` version of this driver) could not accept
+a *genuine* finger at all — measured 0 % genuine accept, because the patch is too
+small to carry enough minutiae. The rest reached usable genuine-accept rates but
+could not reliably tell an *adjacent same-hand finger* (e.g. your own middle
+finger) from an enrolled index finger — a real false-accept hole. Egis' purpose-built
 matcher does separate them.
 
 A driver that any adjacent finger can unlock would be worse than no driver, so the
