@@ -127,7 +127,7 @@ install -Dm 0644 "$egisdir/integration/60-egis0576-fp-nosuspend.rules" \
 %{_datadir}/installed-tests/libfprint-2/
 
 %changelog
-* Tue Sep 09 2026 PHILIPPDEV5396 - 1.94.10-99.egis5
+* Wed Sep 09 2026 PHILIPPDEV5396 - 1.94.10-99.egis5
 - Update egis0576 driver to v0.4.0: replace the TLS-PSK transport with the
   sensor's plaintext EGIS/SIGE protocol -- the same one the vendor's own
   Windows driver for this device uses.
