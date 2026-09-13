@@ -20,7 +20,7 @@ login / `sudo` / screen-unlock through PAM, on stock GNOME/KDE.
 | PAM login, `sudo`, unlock | ✅ works (`sufficient`, password fallback intact) |
 | Cross-reboot matching | ✅ (per-boot flat-field) |
 | Security | genuine finger matches; other fingers (incl. adjacent same-hand) rejected at a strict threshold — qualitative, on one unit; **no FAR/FRR has been measured** ([details](docs/sensor-tuning.md)) |
-| Validated on | **four** laptop models (AMD + Intel; Fedora, Arch and Ubuntu); two of the four are partial passes. See "Tested platforms" below. |
+| Validated on | **four** laptop models (AMD + Intel; Fedora, Arch and Ubuntu); one of the four is a partial pass. See "Tested platforms" below. |
 
 ## The sensor, briefly
 
@@ -74,7 +74,7 @@ More reports are still very welcome — success *or* failure.
 |---|---|---|---|---|---|
 | Lenovo Yoga 7 14ARB7 | AMD Ryzen 7 6800U | 15.72 | Fedora 44 | ✅ full stack (enroll, verify, GDM, sudo, unlock, suspend/resume) | author |
 | Lenovo Yoga 7 15ITL5 | Intel Core i5-1135G7 | 15.72 | Fedora 44 | ✅ full stack, 17-point PASS incl. 3× suspend/resume | [#2](https://github.com/PHILIPPDEV5396/libfprint-egis0576/issues/2) |
-| Lenovo IdeaPad Flex 5 16IRU8 | Intel (13th-gen U) | 15.72 | Arch Linux (Omarchy 4.0.2) | ✅ enroll, verify, sudo/PAM, polkit (lock screen, reboot & suspend not yet tested) | [#2 (comment)](https://github.com/PHILIPPDEV5396/libfprint-egis0576/issues/2#issuecomment-5564929397) |
+| Lenovo IdeaPad Flex 5 16IRU8 | Intel Core i7-1355U | 15.72 | Arch Linux (Omarchy 4.0.2) | ✅ full stack (enroll, verify, sudo/PAM, polkit, lock screen, reboot, 3× suspend/resume); one long-lock stale-claim limitation, see report | [#3](https://github.com/PHILIPPDEV5396/libfprint-egis0576/issues/3) |
 | Lenovo Yoga 6 13ALC6 | AMD Ryzen 7 5700U | 15.72 | Ubuntu 26.04 | ✅ enroll, verify, sudo/PAM, polkit, unlock, suspend/resume (GDM login not tested) | [#4](https://github.com/PHILIPPDEV5396/libfprint-egis0576/pull/4) |
 
 Got a different machine with an EH576? **Please open an issue with your results.**
