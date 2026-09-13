@@ -2,16 +2,19 @@ diff --git a/libfprint/meson.build b/libfprint/meson.build
 index 0f2b8e4..e6e03e1 100644
 --- a/libfprint/meson.build
 +++ b/libfprint/meson.build
-@@ -125,6 +125,8 @@ driver_sources = {
+@@ -125,6 +125,11 @@ driver_sources = {
          [ 'drivers/etes603.c' ],
      'egis0570' :
          [ 'drivers/egis0570.c' ],
 +    'egis0576' :
-+        [ 'drivers/egis0576.c' ],
++        [ 'drivers/egis0576.c',
++          # the sensor's plaintext EGIS/SIGE protocol over gusb (what its own
++          # vendor driver speaks); plain C, built under the normal driver flags
++          'drivers/egis0576/egis0576_proto.c' ],
      'egismoc' :
          [ 'drivers/egismoc/egismoc.c' ],
      'egis_etu905' :
-@@ -269,11 +271,60 @@ libfprint_private = static_library('fprint-private',
+@@ -269,11 +271,57 @@ libfprint_private = static_library('fprint-private',
      link_with: libnbis,
      install: false)
  
@@ -25,34 +28,31 @@ index 0f2b8e4..e6e03e1 100644
 +    # Host matcher flavour (meson option 'egis0576_matcher', default 'vendor').
 +    # 'cleanroom' swaps the vendor extractor/matcher for Thaddeus Stepanovich's
 +    # LGPL correlation matcher; documented in drivers/egis0576/egis_engine_cleanroom.c.
++    # Exactly one of the two libraries is built. The USB protocol itself
++    # (egis0576_proto.c) lives in the driver sources above, under the normal
++    # driver flags -- only the translated vendor code needs the relaxed ones.
 +    egis0576_matcher = get_option('egis0576_matcher')
-+    # egis0576_proto.c speaks the sensor's plaintext EGIS/SIGE protocol over
-+    # gusb -- the same one the vendor's own driver uses. No crypto dependency.
-+    # It is needed by both flavours.
-+    egis0576_engine_sources = [ 'drivers/egis0576/egis0576_proto.c' ]
 +    if egis0576_matcher == 'vendor'
-+        egis0576_engine_sources += [
-+            'drivers/egis0576/egis_funcs.c',
-+            'drivers/egis0576/egis_rt.c',
-+            'drivers/egis0576/egis_engine.c',
-+            'drivers/egis0576/egis_preprocess.c',
-+            'drivers/egis0576/egis_coherence_map.c',
-+        ]
-+    endif
-+    egis0576_engine_libs = [ static_library('egis0576-engine',
-+        sources: egis0576_engine_sources,
-+        include_directories: include_directories('drivers/egis0576'),
-+        dependencies: [ gusb_dep ],
-+        c_args: [
-+            '-w', '-fno-stack-protector', '-fpermissive', '-fwrapv',
-+            '-Wno-int-conversion', '-Wno-incompatible-pointer-types',
-+            '-Wno-implicit-function-declaration',
-+        ],
-+        install: false) ]
-+    if egis0576_matcher == 'cleanroom'
++        egis0576_engine_libs = [ static_library('egis0576-engine',
++            sources: [
++                'drivers/egis0576/egis_funcs.c',
++                'drivers/egis0576/egis_rt.c',
++                'drivers/egis0576/egis_engine.c',
++                'drivers/egis0576/egis_preprocess.c',
++                'drivers/egis0576/egis_coherence_map.c',
++            ],
++            include_directories: include_directories('drivers/egis0576'),
++            dependencies: [ gusb_dep ],
++            c_args: [
++                '-w', '-fno-stack-protector', '-fpermissive', '-fwrapv',
++                '-Wno-int-conversion', '-Wno-incompatible-pointer-types',
++                '-Wno-implicit-function-declaration',
++            ],
++            install: false) ]
++    else
 +        # Clean-room matcher + its egis_engine.h adapter: plain C99, built with
 +        # libfprint's normal flags (no -w, no -fno-stack-protector).
-+        egis0576_engine_libs += [ static_library('egis0576-cleanroom',
++        egis0576_engine_libs = [ static_library('egis0576-cleanroom',
 +            sources: [
 +                'drivers/egis0576/egis_engine_cleanroom.c',
 +                'drivers/egis0576/tsteppy/egis_match.c',
