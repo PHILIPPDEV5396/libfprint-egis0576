@@ -13,7 +13,7 @@
 #
 set -euo pipefail
 
-LIBFPRINT_VERSION="1.94.10"
+LIBFPRINT_VERSION="1.94.100"
 LIBFPRINT_URL="https://gitlab.freedesktop.org/libfprint/libfprint.git"
 PREFIX="${PREFIX:-/usr/local}"
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

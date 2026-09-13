@@ -1,20 +1,21 @@
 diff --git a/libfprint/meson.build b/libfprint/meson.build
-index 3449481..a2a3714 100644
+index f11533c..fe3f692 100644
 --- a/libfprint/meson.build
 +++ b/libfprint/meson.build
-@@ -125,6 +125,11 @@ driver_sources = {
-         [ 'drivers/etes603.c' ],
-     'egis0570' :
-         [ 'drivers/egis0570.c' ],
-+    'egis0576' :
-+        [ 'drivers/egis0576.c',
-+          # the sensor's plaintext EGIS/SIGE protocol over gusb (what its own
-+          # vendor driver speaks); plain C, built under the normal driver flags
-+          'drivers/egis0576/egis0576_proto.c' ],
-     'egismoc' :
-         [ 'drivers/egismoc/egismoc.c' ],
-     'vfs0050' :
-@@ -267,11 +269,57 @@ libfprint_private = static_library('fprint-private',
+@@ -116,6 +116,12 @@ driver_sources = {
+     ),
+     'etes603' : files('drivers/etes603.c'),
+     'egis0570' : files('drivers/egis0570.c'),
++    'egis0576' : files(
++        'drivers/egis0576.c',
++        # the sensor's plaintext EGIS/SIGE protocol over gusb (what its own
++        # vendor driver speaks); plain C, built under the normal driver flags
++        'drivers/egis0576/egis0576_proto.c',
++    ),
+     'egismoc' : files('drivers/egismoc/egismoc.c'),
+     'egis_etu905' : files('drivers/egismoc/egis_etu905.c'),
+     'vfs0050' : files('drivers/vfs0050.c'),
+@@ -250,13 +256,59 @@ libfprint_private = static_library('fprint-private',
      link_with: libnbis,
      install: false)
  
@@ -62,8 +63,6 @@ index 3449481..a2a3714 100644
 +            dependencies: [ mathlib_dep ],
 +            install: false) ]
 +    endif
-+endif
-+
  libfprint_drivers = static_library('fprint-drivers',
      sources: drivers_sources,
      c_args: drivers_cflags,
@@ -72,26 +71,32 @@ index 3449481..a2a3714 100644
 +    link_with: [libfprint_private] + egis0576_engine_libs,
      install: false)
  
++endif
++
  mapfile = files('libfprint.ver')[0]
+ if meson.version().version_compare('>=1.4')
+     mapfile_path = mapfile.full_path()
 diff --git a/meson.build b/meson.build
-index 14fb11f..faecc16 100644
+index ab09dc1..a51abd5 100644
 --- a/meson.build
 +++ b/meson.build
-@@ -130,6 +130,7 @@ default_drivers = [
-     'vfs0050',
-     'etes603',
-     'egis0570',
-+    'egis0576',
-     'egismoc',
-     'vcom5s',
-     'synaptics',
+@@ -132,6 +132,7 @@ drivers_info = {
+     'egis0570': {},
+     'egismoc': {},
+     'egis_etu905': {},
++    'egis0576': {},
+     'vcom5s': {},
+     'synaptics': {},
+     'elan': { 'endian_dependent': true },
 diff --git a/meson_options.txt b/meson_options.txt
+index 3c4cd26..1a992b2 100644
 --- a/meson_options.txt
 +++ b/meson_options.txt
-@@ -34,3 +34,8 @@
+@@ -34,3 +34,9 @@ option('installed-tests',
         description: 'Whether to install the installed tests',
         type: 'boolean',
         value: true)
++
 +option('egis0576_matcher',
 +       description: 'Which host matcher the egis0576 (EgisTec EH576) driver links: vendor = Egis extractor/matcher translated from the Windows driver (default, not upstreamable); cleanroom = Thaddeus Stepanovich\'s LGPL correlation matcher (egis_match.c). Templates enrolled under one flavour are rejected by the other (re-enrol after switching).',
 +       type: 'combo',

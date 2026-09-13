@@ -48,6 +48,11 @@ void     egis_dev_set_cancellable (EgisDev *d, GCancellable *cancellable);
 /* Bring the sensor up: poll it ready (the vendor's check_and_recovery), then
  * replay the vendor init/calibration sequence. Blocks (~0.3 s).
  *
+ * The replay resets the exposure register (0x0f) to the baked value; if
+ * egis_dev_calibrate has already run in this process, the calibrated value is
+ * re-applied at the end of the open, so the exposure (and the exposure-tied
+ * flat-field baseline) stays valid across every re-open and post-resume re-init.
+ *
  * Fails with G_IO_ERROR_NOT_INITIALIZED if the sensor does not answer the
  * plaintext readiness poll. The one case that happens in practice is a sensor
  * left in TLS session mode by a pre-plaintext build of this driver; pass
@@ -66,8 +71,12 @@ gboolean egis_dev_getframe (EgisDev *d, guint8 *img, GError **error);
 /* One-time per-device exposure calibration (the vendor's calibrate_gain): a
  * binary search over register 0x0f so the no-finger frame mean is the same on
  * any EH576 unit, whatever per-unit values the baked init carries. Runs once per
- * boot, before any capture. Templates must be re-enrolled if it moves the
- * exposure. Returns FALSE (keeping the baked value) on capture error. */
+ * fprintd process, before any capture; the value found is cached process-wide
+ * and re-applied by egis_dev_open after every later bring-up (the sensor itself
+ * does not keep it -- the replay overwrites it). Templates must be re-enrolled
+ * if it moves the exposure. Returns FALSE on capture error, leaving the
+ * register at the last value the search tried and the process-wide cache unset,
+ * so the next open's replay restores the baked value and the search is retried. */
 gboolean egis_dev_calibrate (EgisDev *d, GError **error);
 
 /* One auto-exposure step from a frame's min/max; TRUE iff the exposure changed,

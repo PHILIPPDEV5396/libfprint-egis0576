@@ -65,31 +65,30 @@ sudo dnf install rpmdevtools rpm-build
 rpmdev-setuptree
 spectool -g -R packaging/fedora/libfprint.spec        # download sources
 rpmbuild -bs packaging/fedora/libfprint.spec          # build the SRPM
-copr-cli build libfprint-egis0576 ~/rpmbuild/SRPMS/libfprint-1.94.10-99.*.src.rpm
+copr-cli build libfprint-egis0576 ~/rpmbuild/SRPMS/libfprint-1.94.100-99.*.src.rpm
 ```
 
-**What the spec builds:** pristine upstream libfprint **v1.94.10** + the egis0576
+**What the spec builds:** pristine upstream libfprint **v1.94.100** + the egis0576
 driver, keeping the package name `libfprint` (drop-in). BuildRequires, `%files`
 and `%meson -Ddrivers=all` are taken verbatim from Fedora's own libfprint.spec, so
 the file layout matches stock exactly — plus two files the spec installs on top:
 the suspend/resume sleep hook and the no-autosuspend udev rule from
 [`../integration/`](../integration/).
 
-**Tradeoff:** the pristine build omits Fedora's *downstream* patches — notably
-Fedora's own `egis_etu905` driver (USB `1c7a:05ae` / `1c7a:9201`). This only
-affects you if you own one of those (rare) readers. If you want a true **superset**
-on top of Fedora's package (keeping `egis_etu905` + Fedora's fixes), rebase onto
-Fedora's dist-git and apply the tested
-`libfprint-1.94.10-egis0576-fedora.patch` in this directory — it 3-way-merges
-cleanly with Fedora's `egis_reader.patch` (both `egis0576` and `egis_etu905` then
-coexist in one `libfprint-2.so`, verified).
+**No tradeoff since 1.94.100:** Fedora's own package now carries *no* downstream
+patches (its spec has no `Patch:` lines) and upstream ships the `egis_etu905`
+driver (USB `1c7a:05ae` / `1c7a:9201`) itself, so this build is a true superset of
+Fedora's — nothing of theirs is lost. Up to 1.94.10 that was not true, and this
+directory carried a separately rebased patch against Fedora's tree; the rebase
+retired it.
 
 **Maintenance:** you are now forwarding libfprint updates for enabled users. When
-Fedora ships a **newer** libfprint version, bump `Version:` in the spec, re-test,
-and rebuild. (COPR can auto-rebuild.) *Status (September 2026):* Fedora 44 already
-ships libfprint 1.94.100-1.fc44 while this spec is still at 1.94.10; enabled users
-stay on the COPR build only because of the `priority=90` setting (step 2 above),
-and a rebase onto 1.94.100 is pending.
+Fedora ships a **newer** libfprint version, bump `Version:` in the spec, rebase
+`../patches/libfprint-<version>-egis0576.patch` (the meson hunks move), re-test,
+and rebuild. (COPR can auto-rebuild.) *Status (September 2026):* this spec is at
+1.94.100, the same version Fedora 44 ships, so `Release: 99…` wins on its own —
+but keep the `priority=90` from step 2 anyway: it is what protects enabled users
+during the window between a Fedora bump and the next rebase here.
 
 ---
 
@@ -127,16 +126,15 @@ cp PKGBUILD .SRCINFO aur-repo/
 cd aur-repo && git add -A && git commit -m "Initial import" && git push
 ```
 
-**What the PKGBUILD builds:** upstream libfprint tag `v1.94.10` + this repo's
+**What the PKGBUILD builds:** upstream libfprint tag `v1.94.100` + this repo's
 driver (at the release tag pinned in the PKGBUILD's `source=`), default driver set
 (so other readers keep working),
 `provides/conflicts libfprint`. `pkgver` is pinned to the upstream tag the meson
 patch targets; if Arch's repo libfprint has moved past it, installing this package
 downgrades libfprint itself (the driver still works — but rebasing the patch onto
 the newer tag is the better move). As of September 2026 Arch's stock libfprint is
-`1.94.100` (extra, since 2026-07-26), so installing this package currently
-downgrades libfprint to `1.94.10` until the meson patch is rebased onto upstream
-tag `v1.94.100` and `pkgver` is bumped.
+`1.94.100` (extra, since 2026-07-26) and this PKGBUILD targets the same tag, so it
+is a lateral rebuild, not a downgrade.
 
 ---
 

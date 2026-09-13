@@ -2,27 +2,24 @@
 # driver compiled in. It keeps the package name `libfprint` so it is a DROP-IN
 # replacement that the stock fprintd loads unchanged (same soname libfprint-2.so.2).
 #
-# Built from PRISTINE upstream libfprint v1.94.10 + the egis0576 driver.
+# Built from PRISTINE upstream libfprint v1.94.100 + the egis0576 driver.
 #
-# NOTE (tradeoff): this build does NOT carry Fedora's downstream patches — most
-# notably Fedora's own `egis_etu905` driver (USB 1c7a:05ae / 1c7a:9201). That only
-# matters if you ALSO own one of those (rare) readers; for the EH576 this is a
-# complete, working libfprint. If you need a true SUPERSET on top of Fedora's own
-# package (keeping egis_etu905 + Fedora's fixes), see ./README.md and the tested
-# rebased patch libfprint-1.94.10-egis0576-fedora.patch in this directory.
+# NOTE: as of libfprint 1.94.100 Fedora's package carries NO downstream patches
+# (its spec has no Patch: lines) and upstream ships the egis_etu905 driver itself,
+# so this build is a true superset of Fedora's — nothing of theirs is dropped.
+# (Up to 1.94.10 that was not the case, and this directory carried a separately
+# rebased patch for Fedora's own tree; it is gone with the rebase.)
 
-%global egis_tag v0.4.3
+%global egis_tag v0.4.4
 
 Name:           libfprint
-Version:        1.94.10
-# NOTE: Fedora 44 and rawhide now ship libfprint 1.94.100-1, which outranks this
-# 1.94.10-99.egis8 build on Version (rpm compares Version before Release), so
-# `dnf upgrade` would pull Fedora's package. What keeps this build installed is
-# the COPR repo *priority* (see ../README.md, e.g. priority=90), which wins
-# regardless of version. The 99 Release only sorts above Fedora's NN.fcNN for
-# the SAME Version. TODO: rebase the driver onto libfprint 1.94.100 and bump
-# Version here.
-Release:        99%{?dist}.egis8
+Version:        1.94.100
+# Release sorts ABOVE Fedora's own 1.fcNN for the SAME Version, so `dnf upgrade`
+# prefers this build. The robust backstop is the COPR repo *priority* (see
+# ../README.md, e.g. priority=90), which wins regardless of version — keep it
+# set, because it is what saves enabled users when Fedora ships a version this
+# spec has not been rebased onto yet.
+Release:        99%{?dist}.egis9
 Summary:        Toolkit for fingerprint scanner (rebuilt with the EgisTec EH576 / 1c7a:0576 driver)
 
 License:        LGPL-2.1-or-later AND NIST-PD
@@ -31,7 +28,7 @@ Source0:        https://gitlab.freedesktop.org/libfprint/libfprint/-/archive/v%{
 Source10:       https://github.com/PHILIPPDEV5396/libfprint-egis0576/archive/refs/tags/%{egis_tag}.tar.gz#/libfprint-egis0576-%{egis_tag}.tar.gz
 
 # --- BuildRequires: copied verbatim from Fedora's own libfprint.spec (known-good
-#     for 1.94.10). openssl-devel is upstream's own (uru4000); the egis0576 driver
+#     for 1.94.100). openssl-devel is upstream's own (uru4000); the egis0576 driver
 #     needs no crypto. ---
 BuildRequires:  meson
 BuildRequires:  gcc
@@ -130,6 +127,27 @@ install -Dm 0644 "$egisdir/integration/60-egis0576-fp-nosuspend.rules" \
 %{_datadir}/installed-tests/libfprint-2/
 
 %changelog
+* Sun Sep 13 2026 PHILIPPDEV5396 - 1.94.100-99.egis9
+- Rebase onto upstream libfprint 1.94.100 (Fedora 44 and rawhide ship it).
+  * The meson integration patch moved with upstream's build refactor: drivers
+    are registered in the new drivers_info dict, driver_sources entries use
+    files(), and the egis0576 matcher static library now attaches to
+    libfprint_drivers (the fprint-list-* helpers link it too, so attaching it
+    to the shared library alone no longer resolves).
+  * Fedora's package carries no downstream patches at this version and upstream
+    ships egis_etu905 itself, so this build is a true superset of Fedora's; the
+    separately rebased Fedora-tree patch in this directory is retired.
+  * Both matcher flavours (-Degis0576_matcher=vendor|cleanroom) build clean.
+- Update egis0576 driver to v0.4.4: re-apply the calibrated exposure after
+  every sensor bring-up.
+  * The vendor init replay block-writes registers 0x09..0x13 and so resets the
+    exposure register 0x0f to the baked value. Since fprintd opens the device
+    on every claim, only the first open of a process ran with the calibrated
+    exposure; every later open and every post-resume re-init fell back to the
+    baked value, and the flat-field baseline is exposure-tied. The calibrated
+    value is now cached process-wide and re-applied at the end of each
+    bring-up. No effect on units whose calibration equals the baked value (the
+    reference unit); no re-enrollment needed.
 * Sun Sep 13 2026 PHILIPPDEV5396 - 1.94.10-99.egis8
 - Update egis0576 driver to v0.4.3: fix a hang in the capture thread.
   * Symptom: a verify that never answers, then every later attempt refused

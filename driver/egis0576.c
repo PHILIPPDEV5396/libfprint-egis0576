@@ -371,13 +371,12 @@ post_msg (FpDevice *dev, Msg *m)
  * re-init the host match engine (host state, intact), re-run exposure calibration
  * (it needs a no-finger window we can't guarantee on resume. NOTE: the replay's
  * record 25 block-writes regs 0x09..0x13 and so puts reg 0x0f back to the baked
- * 0x20 — see the register table above auto_expose_mm in egis0576_proto.c — and
- * egis_dev_open re-reads that into the dc_c cache; on the reference unit the
- * calibration lands on 0x20 itself (measured: baked 0x20 -> calibrated 0x20),
- * on other units the calibrated exposure is lost until the next fprintd
- * start -- a defect to fix in code, not here), or recapture the
- * flat-field baseline (exposure-tied, per-boot, still valid to the extent that
- * 0x20 equals the calibrated value) — so cross-boot matching is preserved.
+ * 0x20 — see the register table above auto_expose_mm in egis0576_proto.c — but
+ * egis_dev_open re-applies the value the once-per-process calibration found,
+ * so the exposure stays the calibrated one across this re-init and across every
+ * re-open), or recapture the flat-field baseline (exposure-tied, per-boot, and
+ * still valid precisely because the exposure is re-applied) — so cross-boot
+ * matching is preserved.
  *
  * Passes reset_if_stuck=FALSE: a ForceResetDevice here would take the device off
  * the bus mid-recovery. If the sensor is unresponsive the flag stays set and the
@@ -753,7 +752,8 @@ egis0576_open (FpDevice *dev)
    * the SAME on any EH576 unit — this is what makes the driver device-independent
    * (the baked init values belong to one unit). Validated on the reference unit:
    * reliable verify-match at ~7500. No finger is expected at open. Non-fatal
-   * (keeps the baked value on error). Set EGIS0576_NO_CALIBRATE=1 to fall back to
+   * (on error the search is simply retried at the next open; see
+   * egis_dev_calibrate). Set EGIS0576_NO_CALIBRATE=1 to fall back to
    * the fixed value on a unit where calibration misbehaves. */
   if (!g_getenv ("EGIS0576_NO_CALIBRATE") && !egis_dev_calibrate (self->sensor, &error))
     {

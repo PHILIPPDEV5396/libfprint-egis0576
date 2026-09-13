@@ -53,9 +53,10 @@ The driver is engineered to be **device-independent**, and every per-device
 dependency is handled at runtime rather than baked in:
 
 - **Init / protocol** — per-**model** constants, identical for every EH576.
-- **Exposure** — a per-device closed-loop calibration runs once at open (binary
-  search over register `0x0f` to a fixed no-finger exposure target), so each unit
-  self-adjusts.
+- **Exposure** — a per-device closed-loop calibration (binary search over register
+  `0x0f` to a fixed no-finger exposure target) is measured once per fprintd process
+  and re-applied after every sensor bring-up (the vendor init sequence resets the
+  register, and the sensor does not retain it), so each unit self-adjusts.
 - **Fixed-pattern noise** — removed by a per-boot host-side flat-field captured
   fresh on every unit.
 - **On-chip background/vdm** — neutralized to a model-level constant so no single
@@ -165,7 +166,7 @@ protocol over gusb.
 ./install.sh
 ```
 
-This clones libfprint **1.94.10**, applies the driver, builds the full default
+This clones libfprint **1.94.100**, applies the driver, builds the full default
 driver set (so any other fingerprint hardware you have keeps working), and installs
 to `/usr/local` (override with `PREFIX=/usr ./install.sh`).
 

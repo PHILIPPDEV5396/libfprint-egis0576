@@ -274,6 +274,20 @@ egis_wait_ready (EgisDev *d)
 
 /* ---------------------------------------------------------------- open ---- */
 
+/* Process-global: the exposure calibration runs once per fprintd process
+ * (it needs a no-finger window, which only the first open can guarantee), and
+ * the value it found is cached here so egis_dev_open can re-apply it after
+ * every later bring-up -- the vendor replay resets reg 0x0f to the baked value
+ * and each EgisDev has its own dc_c cache, so neither survives a re-open on
+ * its own. THREADING: written only by egis_dev_calibrate, which libfprint
+ * dispatches inside the open() vfunc on the main thread, at a point where no
+ * capture worker exists (one action at a time; the worker is created after
+ * open and joined before close). Read later by egis_dev_open on both threads
+ * -- main thread for each open(), worker thread for a post-resume re-init --
+ * with g_thread_new / g_thread_join providing the ordering. */
+static gboolean g_exposure_calibrated = FALSE;
+static unsigned char g_dc_c_calibrated;
+
 gboolean
 egis_dev_open (EgisDev *d, gboolean reset_if_stuck, GError **error)
 {
@@ -342,7 +356,27 @@ egis_dev_open (EgisDev *d, gboolean reset_if_stuck, GError **error)
    * silent sensor) and before the caller clears its re-init flag. */
   if (egis_cancelled (d, error))
     return FALSE;
-  d->dc_c = (unsigned char) MAX (egis_readreg (d, REG_DC_C), 0);
+  int dc_c_read = egis_readreg (d, REG_DC_C);
+
+  d->dc_c = (unsigned char) MAX (dc_c_read, 0);
+  /* Record 25 of the replay block-writes regs 0x09..0x13 and so puts reg 0x0f
+   * back to the baked value. The calibrated exposure lives only in the sensor
+   * and in this cache, both of which the replay just overwrote, so re-apply
+   * the value egis_dev_calibrate found earlier in this process -- every open
+   * after the first (fprintd opens on each claim) and every post-resume
+   * re-init would otherwise run with the baked value, and the per-boot
+   * flat-field baseline is exposure-tied. */
+  if (g_exposure_calibrated && d->dc_c != g_dc_c_calibrated)
+    {
+      if (dc_c_read < 0)
+        g_debug ("EH576: re-applying calibrated dc_c 0x%02x after bring-up "
+                 "(could not read the register back)", g_dc_c_calibrated);
+      else
+        g_debug ("EH576: re-applied calibrated dc_c 0x%02x after bring-up "
+                 "(replay left 0x%02x)", g_dc_c_calibrated, dc_c_read);
+      egis_writereg (d, REG_DC_C, g_dc_c_calibrated);
+      d->dc_c = g_dc_c_calibrated;
+    }
   d->gain = (unsigned char) MAX (egis_readreg (d, REG_GAIN), 0);
   return TRUE;
 }
@@ -480,8 +514,6 @@ egis_dev_autoexpose (EgisDev *d, int frame_min, int frame_max)
   return auto_expose_mm (d, frame_min, frame_max) != 0;
 }
 
-static gboolean g_exposure_calibrated = FALSE;
-
 gboolean
 egis_dev_calibrate (EgisDev *d, GError **error)
 {
@@ -501,7 +533,7 @@ egis_dev_calibrate (EgisDev *d, GError **error)
   int lo = 0, hi = 0x3f, best = 0x1f, best_diff = 0x100;
 
   if (g_exposure_calibrated)
-    return TRUE;                        /* once per boot; the value persists */
+    return TRUE;                        /* once per process; egis_dev_open re-applies it */
   for (int it = 0; it < 6; it++)
     {
       int mid = (lo + hi) >> 1, level, diff;
@@ -510,7 +542,10 @@ egis_dev_calibrate (EgisDev *d, GError **error)
       egis_writereg (d, REG_DC_C, mid);
       d->dc_c = (unsigned char) mid;
       if (!egis_dev_getframe (d, img, error))
-        return FALSE;                   /* keep the baked value on failure */
+        return FALSE;                   /* leaves reg 0x0f at the last value tried;
+                                           the flag stays FALSE, so the next open's
+                                           replay restores the baked value and the
+                                           search is retried */
       for (int i = 0; i < EGIS_IMG; i++)
         sum += img[i];
       level = (int) (sum / EGIS_IMG);   /* mean of the no-finger frame */
@@ -521,6 +556,7 @@ egis_dev_calibrate (EgisDev *d, GError **error)
     }
   egis_writereg (d, REG_DC_C, best);
   d->dc_c = (unsigned char) best;
+  g_dc_c_calibrated = (unsigned char) best;
   g_exposure_calibrated = TRUE;
   return TRUE;
 }
