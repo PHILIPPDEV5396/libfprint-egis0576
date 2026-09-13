@@ -11,7 +11,7 @@
 # package (keeping egis_etu905 + Fedora's fixes), see ./README.md and the tested
 # rebased patch libfprint-1.94.10-egis0576-fedora.patch in this directory.
 
-%global egis_tag v0.4.1
+%global egis_tag v0.4.2
 
 Name:           libfprint
 Version:        1.94.10
@@ -19,7 +19,7 @@ Version:        1.94.10
 # The robust backstop is a COPR repo *priority* (see README) which wins regardless
 # of version. When Fedora ships a NEWER libfprint VERSION, rebase onto it (Fedora
 # then legitimately wins and you bump this spec's Version).
-Release:        99%{?dist}.egis6
+Release:        99%{?dist}.egis7
 Summary:        Toolkit for fingerprint scanner (rebuilt with the EgisTec EH576 / 1c7a:0576 driver)
 
 License:        LGPL-2.1-or-later AND NIST-PD
@@ -127,6 +127,23 @@ install -Dm 0644 "$egisdir/integration/60-egis0576-fp-nosuspend.rules" \
 %{_datadir}/installed-tests/libfprint-2/
 
 %changelog
+* Sun Sep 13 2026 PHILIPPDEV5396 - 1.94.10-99.egis7
+- Update egis0576 driver to v0.4.2.
+  * Cancel latency bounded to one transfer sequence (a getframe, ~2.6 s worst
+    case on a sensor that stopped answering) instead of a whole re-init
+    (~11 s): the worker now honours a cancel at every sequence boundary, the
+    recovery path included. Aborting the in-flight USB transfer was measured
+    to wedge the sensor until a board power cycle, so the driver deliberately
+    never does that; documented in docs/sensor-tuning.md.
+  * Experimental build option -Degis0576_matcher=cleanroom selects Thaddeus
+    Stepanovich's LGPL clean-room correlation matcher instead of the vendor
+    one, for comparing both on the same captures. Default unchanged. Prints
+    enrolled under one matcher are rejected by the other.
+  * egis0576_proto.c is built under libfprint's normal driver flags (stack
+    protector on) instead of the vendor engine's relaxed ones.
+  * install.sh passes EGIS0576_MESON_ARGS through to meson.
+- No re-enrollment needed; no change to capture or matching in the default
+  build.
 * Wed Sep 09 2026 PHILIPPDEV5396 - 1.94.10-99.egis6
 - Update egis0576 driver to v0.4.1: documentation and measured limits.
   * New docs/sensor-tuning.md records three tested non-improvements, so they

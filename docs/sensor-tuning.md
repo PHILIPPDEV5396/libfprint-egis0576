@@ -120,6 +120,39 @@ The proof/regression harness for this lives outside the repository
 boundary; and, decisively, *the sensor is still usable afterwards*). It refuses
 to run against a build that passes a cancellable to gusb.
 
+## 5. Retained ("ghost") frames — not reproduced on the plain path
+
+Thaddeus Stepanovich's driver saw, rarely, an "impostor" frame that correlated
+0.98 with the *first enrolment* frame taken many presses earlier — a retained
+image with fresh noise on top, following a gain write, a re-arm of the capture
+sequence and a second fetch. Two of his false accepts came from it. Since v0.4.0
+this driver runs the same plain protocol he does, and its per-boot calibration
+does a register write followed by a fetch at open, so the question became ours.
+
+Test, 2026-09-13, reference unit, one session: 6 presses of the enrolled finger
+as raw reference frames, then 20 presses of other fingers with **every** frame
+while the finger was down kept (what the verify loop sees, ~100 frames); before
+every second impostor press the driver's own calibration pattern was replayed
+(reg `0x0f` write + one discarded fetch). Every impostor frame was correlated
+raw-against-raw with every reference, NCC over a ±6 px translation search.
+
+| | NCC |
+|---|---:|
+| impostor frame vs any reference — median / p90 / **max** | 0.39 / 0.69 / **0.756** |
+| same enrolled finger, press vs press (15 pairs) — median / range | 0.49 / 0.25–0.81 |
+| a retained frame would score (tsteppy's observation) | ~0.98 |
+| **events above 0.90** | **0** |
+
+No retained frame. The impostor maximum sits inside the genuine-vs-genuine
+spread, far below the 0.98 signature. Caveats: ~100 impostor frames in one
+session on one unit, and the re-arm replayed was this driver's calibration
+pattern, not his exact gain-6 second capture — so this is evidence that the
+plain path and this driver's re-arm do not produce it, not proof that his
+sensor's timing cannot. (Side result: raw-frame NCC is not a matcher — the same
+finger scores 0.25–0.81 across presses; the separation his matcher reports
+comes from its enhancement and coherence mask, which this test deliberately
+did not use.)
+
 ## What this means
 
 The driver is at the sensor's operating point. The remaining limits are physical:
