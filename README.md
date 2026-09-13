@@ -19,7 +19,7 @@ login / `sudo` / screen-unlock through PAM, on stock GNOME/KDE.
 | Enroll / verify / identify | ✅ works via `fprintd` |
 | PAM login, `sudo`, unlock | ✅ works (`sufficient`, password fallback intact) |
 | Cross-reboot matching | ✅ (per-boot flat-field) |
-| Security | genuine finger matches; other fingers (incl. adjacent same-hand) rejected at a strict threshold — qualitative, on one unit; **no FAR/FRR has been measured** ([details](docs/sensor-tuning.md)) |
+| Security | measured on one person, one session, 5 fingers × 12 presses, impostors = own adjacent fingers: **0 / 60 false rejects, 0 / 480 false accepts** at the shipped threshold, every impostor scoring exactly 0 ([how, and what that does and does not show](docs/matcher-comparison.md)) |
 | Validated on | **four** laptop models (AMD + Intel; Fedora, Arch and Ubuntu); one of the four is a partial pass. See "Tested platforms" below. |
 
 ## The sensor, briefly
@@ -179,9 +179,11 @@ EGIS0576_MESON_ARGS="-Degis0576_matcher=cleanroom" ./install.sh
 ```
 
 Templates enrolled under one matcher are rejected by the other, so switching
-means re-enrolling. It builds and passes a synthetic contract test; the
-hardware comparison has not been done yet, so no accuracy claim is attached to
-it. Details in
+means re-enrolling. **Measured on the same 715-frame dataset as the vendor
+matcher** ([`docs/matcher-comparison.md`](docs/matcher-comparison.md)): at its
+published threshold it rejects 35 % of genuine presses (vendor: 0 %), and its
+genuine and impostor scores overlap (EER 15 %), so it is not yet a drop-in
+replacement — it is the starting point for one. Details in
 [`driver/egis0576/egis_engine_cleanroom.c`](driver/egis0576/egis_engine_cleanroom.c).
 
 ## Enrolling

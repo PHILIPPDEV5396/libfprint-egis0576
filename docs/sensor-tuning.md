@@ -163,9 +163,12 @@ genuine-accept rates but could not keep an adjacent same-hand finger out. That i
 why the vendor's own matcher is used; see
 [`PROVENANCE.md`](../PROVENANCE.md#why-the-reverse-engineered-matcher-and-not-a-clean-room-one).
 
-**Not measured, and worth being honest about:** no EER/FAR/FRR has ever been
-established for this driver. The security statement in the README is a qualitative
-observation on one unit, not a certified accuracy figure.
+**Accuracy:** a first measured FAR/FRR exists now — see
+[`matcher-comparison.md`](matcher-comparison.md): one person, one session, 715
+frames; the vendor matcher separated 60 genuine from 480 adjacent-finger impostor
+presses with no error and a wide margin. That is a real number with a stated n,
+not a certification; a second person and a second session are the obvious next
+steps.
 
 ## Reproducing
 
