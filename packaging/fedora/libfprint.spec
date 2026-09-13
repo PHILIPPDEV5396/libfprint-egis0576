@@ -11,7 +11,7 @@
 # package (keeping egis_etu905 + Fedora's fixes), see ./README.md and the tested
 # rebased patch libfprint-1.94.10-egis0576-fedora.patch in this directory.
 
-%global egis_tag v0.4.2
+%global egis_tag v0.4.3
 
 Name:           libfprint
 Version:        1.94.10
@@ -19,7 +19,7 @@ Version:        1.94.10
 # The robust backstop is a COPR repo *priority* (see README) which wins regardless
 # of version. When Fedora ships a NEWER libfprint VERSION, rebase onto it (Fedora
 # then legitimately wins and you bump this spec's Version).
-Release:        99%{?dist}.egis7
+Release:        99%{?dist}.egis8
 Summary:        Toolkit for fingerprint scanner (rebuilt with the EgisTec EH576 / 1c7a:0576 driver)
 
 License:        LGPL-2.1-or-later AND NIST-PD
@@ -127,6 +127,22 @@ install -Dm 0644 "$egisdir/integration/60-egis0576-fp-nosuspend.rules" \
 %{_datadir}/installed-tests/libfprint-2/
 
 %changelog
+* Sun Sep 13 2026 PHILIPPDEV5396 - 1.94.10-99.egis8
+- Update egis0576 driver to v0.4.3: fix a hang in the capture thread.
+  * Symptom: a verify that never answers, then every later attempt refused
+    with "Device was already claimed" until fprintd is restarted (the lock
+    screen falls back to the password). Root cause, found with gdb on the
+    stuck daemon: the driver's worker thread used gusb's synchronous transfer
+    helpers, whose completion is dispatched on the DEFAULT GMainContext -- by
+    the fprintd main thread, not the worker. If that completion lands before
+    the worker's g_main_loop_run is running, the quit is lost and the worker
+    waits forever, holding the device claim.
+  * The transport now drives gusb's async API on a private GMainContext the
+    worker iterates itself, so no other thread is involved in completing a
+    transfer. Timeouts, cancellation (polled between transfers, never handed
+    to gusb) and the wire protocol are unchanged. Written up in
+    docs/worker-thread.md.
+- No re-enrollment needed; no change to capture or matching.
 * Sun Sep 13 2026 PHILIPPDEV5396 - 1.94.10-99.egis7
 - Update egis0576 driver to v0.4.2.
   * Cancel latency bounded to one transfer sequence (a getframe, ~2.6 s worst

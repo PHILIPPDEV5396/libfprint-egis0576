@@ -11,9 +11,14 @@
  * C (drivers/egis0576/egis_engine.*). Templates are stored as opaque blobs in
  * each print's fpi-data (plaintext, like every other libfprint driver).
  *
- * The transport is blocking synchronous USB, which must not run in the fprintd
- * main loop (nested-mainloop re-entrancy hangs it), so the capture loop runs in a
- * worker thread and marshals its results back with g_idle_add.
+ * The transport is blocking USB (each transfer parks the calling thread for up
+ * to its timeout). The one-time bring-up in open() runs on the fprintd main
+ * thread, as libfprint dispatches it; every capture runs in a worker thread and
+ * marshals its results back with g_idle_add, so the main loop never stalls
+ * while a finger is on the sensor. The transport drives gusb's async API on a
+ * private GMainContext rather than gusb's sync wrappers, so neither caller
+ * depends on the default context -- see docs/worker-thread.md for why that
+ * matters.
  *
  * This library is free software; you can redistribute it and/or modify it under
  * the terms of the GNU Lesser General Public License as published by the Free
@@ -51,8 +56,8 @@ struct _FpDeviceEgis0576
 
   EgisDev      *sensor;         /* the plaintext channel to the sensor */
 
-  /* capture runs in a worker thread (blocking sync USB must not run in the
-   * main loop); results are marshalled back with g_idle_add. */
+  /* capture runs in a worker thread (blocking USB must not run in the main
+   * loop); results are marshalled back with g_idle_add. */
   GThread      *thread;
   gint          cancel;         /* atomic; set on main thread, read by worker */
 
@@ -371,7 +376,7 @@ post_msg (FpDevice *dev, Msg *m)
  * the bus mid-recovery. If the sensor is unresponsive the flag stays set and the
  * next worker tries again.
  *
- * Blocks ~0.3 s of synchronous gusb — safe ONLY because it runs in the capture
+ * Blocks ~0.3 s in USB transfers — safe ONLY because it runs in the capture
  * worker thread, never on the fprintd main loop. On failure the device is left
  * flagged so the next worker re-initialises eagerly rather than capturing into a
  * dead pipeline. */
@@ -758,13 +763,18 @@ egis0576_close (FpDevice *dev)
    * so it must be stopped and joined before the session is freed, or it would
    * touch freed memory.
    *
-   * If it ever IS reached while the worker sits inside a synchronous gusb
-   * transfer, this join DEADLOCKS: gusb's sync transfers complete through an
-   * idle on the default GMainContext, which this (main) thread owns and is
-   * not iterating while it blocks here. The cancel below shortens the wait to
-   * one transfer boundary in every case where the worker is not inside a
-   * transfer, and that is all it can do -- which is why the path must stay
-   * unreachable, and why it warns rather than pretending to be safe. */
+   * If it ever IS reached while the worker is busy, the cancel below is seen
+   * at the worker's next cancellation point and this join blocks the main
+   * thread until it gets there. In the capture loop that is the end of the
+   * current transfer sequence (a getframe, ~2.6 s worst case on a silent
+   * sensor); inside worker_reinit it is the end of the vendor replay, which
+   * is deliberately uncancellable as a unit -- up to ~25 records x 800 ms if
+   * the sensor has stopped answering. The join cannot deadlock: the transport
+   * completes transfers on a private GMainContext the worker iterates itself,
+   * so it never needs this thread's default context (it did before v0.4.3,
+   * see docs/worker-thread.md). Stalling fprintd's main loop for seconds is
+   * still wrong, which is why the path must stay unreachable, and why it
+   * warns rather than pretending to be free. */
   if (self->thread)
     {
       g_warn_if_reached ();              /* see above: must not happen */

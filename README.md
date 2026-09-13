@@ -92,6 +92,17 @@ Got a different machine with an EH576? **Please open an issue with your results.
 > where Windows' own driver failed to start it (Device Manager **Code 10**) until
 > the machine was fully powered down. v0.4.0 never enters that mode.
 
+> **Upgrading from any release before v0.4.3 (v0.1.0 – v0.4.2)?** Those
+> releases could hang: a fingerprint verify that never answers, and from then
+> on **every** attempt refused with `"Device was already claimed"` until
+> `fprintd` is restarted (the lock screen falls back to the password). The
+> cause was a lost wakeup between the driver's capture thread and the fprintd
+> main loop inside gusb's synchronous transfer helpers, narrow enough to
+> survive months of use before it was caught on hardware. **v0.4.3 fixes it**
+> — the capture thread no longer depends on the main loop at all (write-up in
+> [`docs/worker-thread.md`](docs/worker-thread.md)). No re-enrollment is
+> needed; capture and matching are unchanged.
+
 
 The driver is compiled *into* `libfprint-2.so` (it is not a loadable module), so
 installing it means installing a libfprint that includes it, replacing the distro's.
@@ -316,6 +327,12 @@ driver shortcoming. Details and the full investigation:
   this sensor does not offer. The variance figures quoted above, and what else was
   measured and found to be at its limit, are in
   [`docs/sensor-tuning.md`](docs/sensor-tuning.md).
+
+- **Every capture runs on a worker thread**, never on the fprintd main loop
+  (only the one-time bring-up in `open()` runs there), and the transport drives
+  gusb's async API on a private `GMainContext` rather than gusb's synchronous
+  wrappers. Why that distinction matters — the lost-wakeup hang it fixed in
+  v0.4.3 — is in [`docs/worker-thread.md`](docs/worker-thread.md).
 
 - **Press firmly, flat, centred, and hold ~2 s.** Verification scores every frame
   while the finger is down and takes the best; light or brief taps on a 70×57 sensor

@@ -1,5 +1,6 @@
 /* egis0576_proto.c — plaintext EGIS/SIGE protocol to the EgisTec EH576.
- * Synchronous gusb bulk transfers; no crypto, no session state. */
+ * Blocking gusb bulk transfers driven by the async API on a private
+ * GMainContext (see the USB section); no crypto, no session state. */
 #include "egis0576_proto.h"
 #include "egis_init.h"
 #include <string.h>
@@ -41,6 +42,125 @@ static const int EGIS_STEP_TABLE[16] = {
 
 /* ---------------------------------------------------------------- USB ---- */
 
+/* Every transfer below blocks the calling thread until it completes or times
+ * out. The caller is the capture worker for everything a capture does
+ * (re-init when needed, GetFrame), and the fprintd MAIN thread for the
+ * one-time bring-up in the open() vfunc (readiness poll, ForceReset, replay,
+ * exposure calibration) -- libfprint dispatches open() inline and this driver
+ * does not spawn a thread for it. Blocking is done by running the ASYNC gusb
+ * API against a private GMainContext, not by calling gusb's own synchronous
+ * wrappers. The distinction matters -- it is the fix for a lost-wakeup hang
+ * found on 2026-09-13 (docs/worker-thread.md):
+ *
+ * gusb's g_usb_device_bulk_transfer() spins a GMainLoop on the GUsbContext's
+ * main context, which is the DEFAULT GMainContext -- the one the fprintd main
+ * thread owns for the lifetime of its g_main_loop_run. The GTask behind the
+ * transfer completes on the thread-default context of the thread that created
+ * it, and on the worker that is also the default context. So the completion
+ * idle -- and with it the g_main_loop_quit that is meant to release the worker
+ * -- is dispatched by the MAIN thread. If that quit lands after
+ * libusb_submit_transfer but before the worker has entered g_main_loop_run,
+ * its effect is lost: g_main_loop_quit clears is_running (already clear) and
+ * broadcasts the context's condition variable, but nobody is waiting on it
+ * yet. The worker's g_main_loop_run then fails to acquire the context (the
+ * main thread owns it), only THEN sets is_running = TRUE -- overwriting the
+ * quit -- and waits on that condition variable forever (glib gmain.c,
+ * g_main_loop_run / g_main_loop_quit). Seen on hardware: helper.ret already 7
+ * (the bulk OUT had completed), libusb with no transfer in flight, the loop's
+ * is_running set, the worker parked in
+ * g_main_context_wait_internal, and fprintd never answering the verify.
+ *
+ * Verified against gusb 0.4.9 (gusb-device.c): g_usb_device_bulk_transfer_async
+ * and g_usb_device_control_transfer_async both create their GTask with
+ * g_task_new() after entry -- for the real (non-emulated) device path directly
+ * before libusb_submit_transfer -- and neither pushes or pops a thread-default
+ * context of its own. g_task_new captures g_main_context_ref_thread_default()
+ * at that moment. So with a private context pushed as thread-default around the
+ * async call, the completion idle is attached to THAT context, which only this
+ * thread iterates, inside g_main_loop_run, i.e. after is_running is set. No
+ * other thread can quit the loop, nothing can be lost, and the worker no longer
+ * depends on the main thread making progress at all. (gusb's internal libusb
+ * event thread, "GUsbEventThread", still signals completion via g_task_return;
+ * it is not inside a source dispatch, so GTask always queues the completion
+ * as an idle on the task's context -- ours -- instead of the default one.)
+ *
+ * On the main thread (open()) the same helper is safe for the same reason, and
+ * it is a behaviour change worth knowing: the fresh context is unowned, so
+ * g_main_loop_run acquires it and the completion lands on it. Before v0.4.3
+ * gusb's sync wrapper nested a loop on the DEFAULT context here, re-entrantly
+ * dispatching fprintd's own sources (D-Bus and all) from inside open(); now
+ * they are simply not dispatched for the duration of the bring-up, which is
+ * what a blocking open() should look like.
+ *
+ * RULE: never call the gusb sync API (g_usb_device_bulk_transfer,
+ * _control_transfer, _interrupt_transfer) from a thread that does not own the
+ * GUsbContext's main context. */
+
+typedef struct {
+  GMainLoop *loop;
+  gssize     ret;
+  GError   **error;
+} SyncXfer;
+
+static void
+bulk_done (GObject *src, GAsyncResult *res, gpointer ud)
+{
+  SyncXfer *x = ud;
+
+  x->ret = g_usb_device_bulk_transfer_finish (G_USB_DEVICE (src), res, x->error);
+  g_main_loop_quit (x->loop);
+}
+
+static void
+control_done (GObject *src, GAsyncResult *res, gpointer ud)
+{
+  SyncXfer *x = ud;
+
+  x->ret = g_usb_device_control_transfer_finish (G_USB_DEVICE (src), res, x->error);
+  g_main_loop_quit (x->loop);
+}
+
+/* Bulk transfer on @ep, blocking until done. Returns the byte count, or -1 on
+ * error/timeout (with *error set). @cancellable is deliberately always NULL
+ * (see the comment above usb_out). */
+static gssize
+egis_bulk (EgisDev *d, guint8 ep, guint8 *buf, gsize len, guint timeout_ms,
+           GError **error)
+{
+  g_autoptr(GMainContext) ctx = g_main_context_new ();
+  SyncXfer x = { NULL, -1, error };
+
+  g_main_context_push_thread_default (ctx);
+  x.loop = g_main_loop_new (ctx, FALSE);
+  g_usb_device_bulk_transfer_async (d->usb, ep, buf, len, timeout_ms, NULL,
+                                    bulk_done, &x);
+  g_main_loop_run (x.loop);
+  g_main_loop_unref (x.loop);
+  g_main_context_pop_thread_default (ctx);
+  return x.ret;
+}
+
+/* Control transfer, same shape as egis_bulk. */
+static gssize
+egis_control (EgisDev *d, GUsbDeviceDirection dir, GUsbDeviceRequestType type,
+              GUsbDeviceRecipient recipient, guint8 request, guint16 value,
+              guint16 idx, guint8 *buf, gsize len, guint timeout_ms,
+              GError **error)
+{
+  g_autoptr(GMainContext) ctx = g_main_context_new ();
+  SyncXfer x = { NULL, -1, error };
+
+  g_main_context_push_thread_default (ctx);
+  x.loop = g_main_loop_new (ctx, FALSE);
+  g_usb_device_control_transfer_async (d->usb, dir, type, recipient, request,
+                                       value, idx, buf, len, timeout_ms, NULL,
+                                       control_done, &x);
+  g_main_loop_run (x.loop);
+  g_main_loop_unref (x.loop);
+  g_main_context_pop_thread_default (ctx);
+  return x.ret;
+}
+
 /* The cancellable is consulted BETWEEN transfers only -- it is never handed to
  * gusb. Measured on the reference unit: aborting an in-flight bulk transfer
  * (libusb_cancel_transfer, which is what gusb does with a cancelled
@@ -55,22 +175,19 @@ static const int EGIS_STEP_TABLE[16] = {
  * getframe on a sensor that has stopped answering. Abandoning either half-way
  * would be a new, untested sensor state; that is a deliberate trade. */
 
+/* TRUE iff the transfer completed (any byte count), exactly as the gusb sync
+ * wrapper's "helper.ret != -1" used to report it. */
 static gboolean
 usb_out (EgisDev *d, const unsigned char *b, int n)
 {
-  gsize act = 0;
-  return g_usb_device_bulk_transfer (d->usb, EP_OUT, (guint8 *) b, n, &act,
-                                     3000, NULL, NULL);
+  return egis_bulk (d, EP_OUT, (guint8 *) b, n, 3000, NULL) != -1;
 }
 
+/* Bytes read, or -1 on error/timeout. */
 static int
 usb_in (EgisDev *d, unsigned char *b, int cap, int timeout)
 {
-  gsize act = 0;
-
-  if (!g_usb_device_bulk_transfer (d->usb, EP_IN, b, cap, &act, timeout, NULL, NULL))
-    return -1;
-  return (int) act;
+  return (int) egis_bulk (d, EP_IN, b, cap, timeout, NULL);
 }
 
 /* TRUE (and *error set to G_IO_ERROR_CANCELLED) iff the attached cancellable has
@@ -171,12 +288,11 @@ egis_dev_open (EgisDev *d, gboolean reset_if_stuck, GError **error)
       if (egis_cancelled (d, error))
         return FALSE;
       if (reset_if_stuck)
-        g_usb_device_control_transfer (d->usb,
-                                       G_USB_DEVICE_DIRECTION_HOST_TO_DEVICE,
-                                       G_USB_DEVICE_REQUEST_TYPE_CLASS,
-                                       G_USB_DEVICE_RECIPIENT_INTERFACE,
-                                       MODE_REQUEST, FORCE_RESET, INTF,
-                                       NULL, 0, NULL, 500, NULL, NULL);
+        egis_control (d, G_USB_DEVICE_DIRECTION_HOST_TO_DEVICE,
+                      G_USB_DEVICE_REQUEST_TYPE_CLASS,
+                      G_USB_DEVICE_RECIPIENT_INTERFACE,
+                      MODE_REQUEST, FORCE_RESET, INTF,
+                      NULL, 0, 500, NULL);
       g_set_error (error, G_IO_ERROR, G_IO_ERROR_NOT_INITIALIZED,
                    "EH576: sensor did not answer the readiness poll%s",
                    reset_if_stuck ? " — reset issued, retry once it re-enumerates"
