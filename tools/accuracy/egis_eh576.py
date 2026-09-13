@@ -3,7 +3,7 @@
 
 This is the capture side of the accuracy kit (tools/accuracy). It replays the
 driver's own bring-up records from driver/egis0576/egis_init.h -- the same
-bytes drivers/egis0576/egis0576_proto.c sends -- runs the driver's per-open
+bytes driver/egis0576/egis0576_proto.c sends -- runs the driver's per-open
 exposure calibration, and pulls raw 70x57 frames with "EGIS 64 0f 96". pyusb
 only; numpy is not needed here. pyusb is imported lazily, so parsing
 egis_init.h (and capture.py --dry-run) works without it.
@@ -28,7 +28,7 @@ at sequence boundaries). So the exit-signal handler defers: while a sequence
 is open (`with sequence():`, a module-level depth counter) the first signal
 is only RECORDED, and the KeyboardInterrupt is raised when the outermost
 sequence exits. Sequences are: grab() as a whole; run_init() as a whole
-(readiness poll, replay incl. the 8-record upload group, trailing reads); one
+(the replay incl. the 8-record upload group and its per-command reply reads); one
 write + grab per calibration step; each readiness-poll iteration in
 acquire(); force_reset()'s control transfer; and every single cmd() round
 trip. Between sequences (the sleeps in capture.py's wait_press / wait_lift,

@@ -11,7 +11,7 @@
  * ---------------------------------------------------------------------------
  * WHAT THIS FILE IS
  *
- * The egis0576 driver (drivers/egis0576.c) talks to its host matcher only
+ * The egis0576 driver (driver/egis0576.c) talks to its host matcher only
  * through the small contract in egis_engine.h. Two implementations exist:
  *
  *   egis_engine.c            "vendor"    Egis' own extractor/matcher, machine-
@@ -48,7 +48,7 @@
  *   matcher's input contract and is not compiled here.
  *
  *   What the engine still receives from the driver is the per-boot flat-field
- *   corrected frame (drivers/egis0576.c: flat_field() runs before
+ *   corrected frame (driver/egis0576.c: flat_field() runs before
  *   egis_preprocess() on every frame and cannot be bypassed from the engine
  *   side). "Same captures" for the A/B comparison therefore means: same sensor
  *   bytes, same flat-field correction, same finger on/off gating and the same
@@ -56,8 +56,13 @@
  *   Thaddeus' published numbers (0 % FAR / ~10 % FRR at NCC 0.53) were measured
  *   on un-flat-fielded raw frames with ONE settled, ghost-checked frame per
  *   press; this driver scores EVERY frame while the finger is down and accepts
- *   on the first one over threshold, so absolute scores and error rates on this
- *   pipeline must be re-measured before anyone reads FAR/FRR off them.
+ *   on the first one over threshold. Measured on THIS pipeline (identical
+ *   captures for both flavours, 714 frames / 60 presses, impostors = the same
+ *   person's other fingers, docs/matcher-comparison.md): at the shipped
+ *   threshold 5000 (NCC 0.53) this flavour gives FRR 35.0 % / FAR 0.0 %
+ *   (genuine 1220 / 6961 / 9135, impostor 710 / 1638 / 4470; EER ~15 % at
+ *   NCC 0.24), against the vendor flavour's 0 / 60 and 0 / 480. Reproduce
+ *   with tools/accuracy/ (score-cleanroom / score-vendor + evaluate.py).
  *
  * SCORE MAPPING
  *
@@ -138,7 +143,7 @@
 #include "egis_engine.h"
 #include "egis_match.h"
 
-/* Must equal EGIS0576_ENROLL_STAGES in drivers/egis0576.c. If the driver asks
+/* Must equal EGIS0576_ENROLL_STAGES in driver/egis0576.c. If the driver asks
  * for more presses than this, enrolment still terminates (extra adds return 2)
  * but the extra frames are not stored. */
 #define EGIS_CR_MAX_FRAMES 12

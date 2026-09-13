@@ -6,7 +6,12 @@ on the table?**
 
 Short answer: **no.** The driver already runs at the sensor's operating point.
 Three plausible improvements were tested and all three measured out as
-non-improvements. This document records them so they are not re-litigated.
+non-improvements; sections 1–3 record them so they are not re-litigated.
+Sections 4–6 record three sensor behaviours measured on the same unit while
+working on the driver and the accuracy kit: cancelling an in-flight USB
+transfer wedges the sensor (§4), retained "ghost" frames were not reproduced
+on the plain path (§5), and `ForceResetDevice` only takes effect on the next
+transfer (§6).
 
 ## 1. Uploading a measured background to the sensor (`0x73`) — no effect
 
@@ -45,6 +50,12 @@ to the noise band (period < 3 px).
 | 0x06 | 866.5 | 170.5 | 5.08× | 10.10 | 18 |
 | 0x07 | 1002.8 | 203.1 | 4.94× | 9.97 | 83 |
 | 0x08 | 1200.9 | 237.3 | 5.06× | 10.66 | 250 |
+
+The finger-variance column is from one held press and is not comparable across
+sessions; the plaintext-vs-TLS comparison quoted in the README (finger/no-finger
+variance 1069/140 = 7.6× in the clear against 890/160 = 5.6× through the TLS
+path, same unit, shipped gain `0x05`) was a separate capture and is recorded here
+for reference. The no-finger baseline (140) is the stable number.
 
 Signal and noise scale together — the ratio is flat to slightly falling — and from
 `0x06` upward the sensor starts clipping pixels to 0, destroying information. The
@@ -187,7 +198,7 @@ why the vendor's own matcher is used; see
 [`PROVENANCE.md`](../PROVENANCE.md#why-the-reverse-engineered-matcher-and-not-a-clean-room-one).
 
 **Accuracy:** a first measured FAR/FRR exists now — see
-[`matcher-comparison.md`](matcher-comparison.md): one person, one session, 715
+[`matcher-comparison.md`](matcher-comparison.md): one person, one session, 714
 frames; the vendor matcher separated 60 genuine from 480 adjacent-finger impostor
 presses with no error and a wide margin. That is a real number with a stated n,
 not a certification; a second person and a second session are the obvious next
@@ -195,8 +206,13 @@ steps.
 
 ## Reproducing
 
-The measurement scripts are not shipped in this repository — they drive the sensor
-directly over raw USB and are development tools, not part of the driver. The
-procedure is: `ForceResetDevice`, replay `egis_init.h` in the clear, then for each
-register setting capture no-finger and finger frames with the per-frame trigger
-sequence plus `EGIS 64 0f 96`, and compare variance and ridge-band energy.
+The register-sweep scripts behind sections 1–3 are not shipped — they were one-off
+development tools. The transport they used is, since v0.4.3:
+[`tools/accuracy/egis_eh576.py`](../tools/accuracy/egis_eh576.py) implements
+`ForceResetDevice` (`force_reset()`), the plaintext replay of `egis_init.h`
+(`run_init()`), register access (`read_reg()`/`write_reg()`), the per-frame
+trigger plus `EGIS 64 0f 96` (`grab()`) and `frame_mean()`/`frame_variance()`;
+[`capture.py`](../tools/accuracy/capture.py) shows how they are sequenced around
+fprintd. To redo a sweep, loop over the register values with `write_reg()` and
+capture no-finger and finger frames with `grab()` for each, then compare variance
+and ridge-band energy.

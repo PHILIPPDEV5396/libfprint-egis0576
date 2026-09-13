@@ -165,8 +165,9 @@ egis_control (EgisDev *d, GUsbDeviceDirection dir, GUsbDeviceRequestType type,
  * gusb. Measured on the reference unit: aborting an in-flight bulk transfer
  * (libusb_cancel_transfer, which is what gusb does with a cancelled
  * GCancellable) wedged the sensor at USB level -- bulk OUT NAKed for 3 s
- * timeouts, and afterwards even the EP0 ForceReset and a sysfs deauthorize
- * timed out; only a port-level reset brought it back. A timeout never does that
+ * timeouts, and afterwards the EP0 ForceReset was ignored, a sysfs deauthorize
+ * timed out, and a hub-port link reset only made it drop off the bus; nothing
+ * short of cutting board power brought it back. A timeout never does that
  * (it only fires when no data is flowing), a cancel can hit mid-frame. So a
  * cancel costs at most one transfer timeout of latency (800 ms read, 3 s
  * write) inside a sequence -- and the two sequences that must not be

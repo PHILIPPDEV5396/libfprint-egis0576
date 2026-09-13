@@ -35,7 +35,8 @@ if [ "$missing" = 1 ]; then
     echo
     echo "Install the build tools + dev libraries first (see README.md, 'Building')."
     echo "You also need the -dev packages for: glib2, gusb, openssl/libcrypto (>=3.0),"
-    echo "gobject-introspection, gudev, nss, pixman, cairo."
+    echo "gobject-introspection, gudev, nss, pixman, cairo, udev/systemd (Debian: systemd-dev)"
+    echo "and gtk-doc (Debian: gtk-doc-tools; needed because the API docs are built by default)."
     exit 1
 fi
 
@@ -65,9 +66,11 @@ sudo ninja -C builddir install
 sudo ldconfig
 
 # --- suspend/resume integration --------------------------------------------
-# The sensor comes back from s2idle suspend with its capture pipeline unusable and
-# can hang the unlock screen on resume. Install the sleep hook + udev rule that
-# reset the sensor cleanly around sleep. Fully reversible (delete the files).
+# The sleep hook stops fprintd before suspend so no stale device claim survives
+# (an upstream gnome-shell/fprintd bug, not a driver issue) and re-enumerates the
+# sensor after resume; the udev rule keeps the sensor from USB-autosuspending while
+# idle. The old hard freeze on resume is fixed in the driver itself, not by these
+# files. See integration/README.md. Fully reversible (delete the files).
 echo ">>> installing suspend/resume integration (sleep hook + udev rule) ..."
 if [ -f "$REPO/integration/50-egis0576-fp-resume.sh" ]; then
     sudo install -m 0755 "$REPO/integration/50-egis0576-fp-resume.sh"    /usr/lib/systemd/system-sleep/

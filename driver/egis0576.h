@@ -23,21 +23,23 @@
 #define EGIS0576_EP_OUT (0x01 | FPI_USB_ENDPOINT_OUT)   /* 0x01 */
 #define EGIS0576_EP_IN  (0x02 | FPI_USB_ENDPOINT_IN)    /* 0x82 */
 
+/* Unused, historical: the transport in egis0576/egis0576_proto.c owns its own
+ * timeouts (bulk OUT 3000 ms, bulk IN 300/800 ms, control 500 ms). */
 #define EGIS0576_TIMEOUT 1000
 
 /* Raw sensor image geometry: 70 x 57 = 3990 bytes, one byte per pixel
- * (see also egis0576-match.h, which defines the same geometry for the
- * correlation matcher). */
+ * (egis0576/egis0576_proto.h defines the same geometry as EGIS_IMG, which is
+ * what the driver uses). */
 #define EGIS0576_IMG_SIZE 3990
 
 /* Response scratch length for command packets. */
 #define EGIS0576_CMD_RECV_LEN 64
 
 /*
- * Population variance of the raw frame: uniform field (no finger) sits ~4,
- * a finger pressed on the sensor spikes to 15-30 (measured 30-50 on real
- * presses). Hysteresis pair: >= ON means finger present, < OFF means the
- * finger has been lifted again.
+ * Unused, historical (pre-plaintext finger-detection model): uniform field
+ * (no finger) sat ~4, a finger spiked to 15-30. The live hysteresis pair is
+ * EGIS0576_FINGER_ON_VAR 250.0 / EGIS0576_FINGER_OFF_VAR 215.0 in egis0576.c
+ * (no-finger variance ~140 after the vendor init + exposure calibration).
  */
 #define EGIS0576_FINGER_ON_THRESHOLD  13.0
 #define EGIS0576_FINGER_OFF_THRESHOLD 8.0
@@ -50,8 +52,10 @@ typedef struct
 } EgisPkt;
 
 /*
- * Init sequence — tells the sensor to power up, calibrate and be ready to
- * stream frames. Packet #16 (0x64 0x0f 0x96) flushes the image buffer.
+ * Unused, historical: an early init sequence. The authoritative bring-up replay
+ * is egis_init_records in egis0576/egis_init.h (33 records, 25 EGIS commands
+ * including the 0x73 upload); the bytes below differ from it in several
+ * records, and the driver never sends them.
  */
 static const EgisPkt egis0576_init_pkts[] = {
   { 7, { 0x45, 0x47, 0x49, 0x53, 0x60, 0x00, 0x00 } },

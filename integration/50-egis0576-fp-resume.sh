@@ -2,16 +2,23 @@
 # systemd system-sleep hook: keep the EgisTec EH576 fingerprint sensor working
 # across suspend/resume.
 #
-# WHY: this driver brings the sensor up at device-open. Across a
-# system suspend -- especially s2idle, where the USB device stays powered and is
-# NOT re-enumerated -- that session goes stale. On resume the next fprintd
-# IDENTIFY blocks on the dead session, which on some systems (observed on AMD
-# Rembrandt laptops using s2idle) hangs the GNOME/KDE unlock screen hard.
+# WHY: two independent things go wrong across suspend/resume, neither of them
+# session state in this driver (the EGIS/SIGE protocol is stateless):
+#  1. fprintd keeps the device *claim* gnome-shell took before suspend and never
+#     releases it; the post-resume Claim is refused ("Device was already
+#     claimed") and libfprint is never reached -> lock screen offers only the
+#     password (upstream gnome-shell #7791 / Ubuntu #2067135, not EH576-specific).
+#  2. Across s2idle the USB device stays powered and is NOT re-enumerated, so the
+#     sensor keeps its pre-suspend exposure state and the first capture after
+#     resume can be badly exposed.
+# (The historic hard hang of the unlock screen is fixed inside the driver by the
+# bounded timeout on every bulk read -- not by this hook.)
 #
-# FIX: stop fprintd before suspend (cancels any in-flight operation cleanly) and
-# force a USB re-enumeration of the sensor after resume, so the driver performs a
-# fresh handshake on next use. Fingerprint stays enabled everywhere (login, sudo,
-# unlock).
+# FIX: stop fprintd before suspend so no stale claim survives (fprintd is
+# started again on demand on resume), and force a USB re-enumeration of the
+# sensor after resume so the driver re-opens it and re-runs the bring-up
+# (exposure reset) on next use. Fingerprint stays enabled everywhere (login,
+# sudo, unlock).
 #
 # Install: copy to /usr/lib/systemd/system-sleep/ (or /etc/systemd/system-sleep/)
 # and chmod 0755. Delete the file to revert. install.sh does this for you.
@@ -31,7 +38,8 @@ find_dev() {
 
 case "$1" in
     pre)
-        # cancel any in-flight verify so it can't survive into resume half-dead
+        # drop fprintd's stale device claim before we sleep (upstream
+        # gnome-shell/fprintd bug); also ends any in-flight operation cleanly
         systemctl stop fprintd.service 2>/dev/null
         ;;
     post)

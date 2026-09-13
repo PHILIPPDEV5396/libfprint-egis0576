@@ -4,11 +4,11 @@
  * A tiny press-type image sensor (70x57 px), driven with the vendor's own
  * plaintext EGIS/SIGE command protocol over the USB bulk endpoints — the same one
  * its Windows driver speaks. The transport, the vendor init/calibration replay and
- * GetFrame live in drivers/egis0576/egis0576_proto.c.
+ * GetFrame live in driver/egis0576/egis0576_proto.c.
  *
  * Captured 70x57 frames are matched host-side with Egis' own feature extractor +
  * matcher, reverse-engineered from the Windows driver and reimplemented as native
- * C (drivers/egis0576/egis_engine.*). Templates are stored as opaque blobs in
+ * C (driver/egis0576/egis_engine.*). Templates are stored as opaque blobs in
  * each print's fpi-data (plaintext, like every other libfprint driver).
  *
  * The transport is blocking USB (each transfer parks the calling thread for up
@@ -35,15 +35,16 @@
 
 #define EGIS0576_ENROLL_STAGES 12
 /* After the vendor init + exposure calibration the no-finger frame has a
- * fixed-pattern variance around ~163; a real finger pushes it well past 300.
- * Hysteresis: */
+ * fixed-pattern variance around ~140 (measured 140.4 at the shipped gain,
+ * docs/sensor-tuning.md; ~160 was the figure through the former TLS transport);
+ * a real finger pushes it well past 300. Hysteresis: */
 #define EGIS0576_FINGER_ON_VAR  250.0
 #define EGIS0576_FINGER_OFF_VAR 215.0
 #define EGIS0576_POLL_SLEEP_US  5000    /* small gap between captures */
 #define EGIS0576_BASELINE_FRAMES 8      /* no-finger frames averaged into the flat-field baseline */
 #define EGIS0576_BASELINE_MAX_VAR 210.0 /* stricter than FINGER_OFF but with headroom for the
                                           * calibrated-gain no-finger level; a hovering finger would
-                                          * otherwise contaminate the baseline (true no-finger ~163) */
+                                          * otherwise contaminate the baseline (true no-finger ~140) */
 
 typedef enum {
   PH_AWAIT_ON,     /* waiting for a finger */
@@ -64,11 +65,12 @@ struct _FpDeviceEgis0576
   /* Per-capture GCancellable the worker's transport polls at every transfer
    * boundary (egis0576_proto.c never hands it to gusb: aborting an in-flight
    * URB wedges this sensor at USB level, measured). Without it a cancel had to
-   * wait out whole *sequences* of transfers -- egis_wait_ready alone is
-   * 10 x 850 ms, the init replay ~25 x 800 ms, ~11 s on a sensor that has
-   * stopped answering; now it waits for at most the one SEQUENCE in flight
-   * (a getframe: ~2.6 s on a dead sensor; the init replay: ~0.3 s; one
-   * readiness-poll iteration: 850 ms).
+   * wait out whole *sequences* of transfers -- on a sensor that has stopped
+   * answering, a failed getframe (~2.6 s) followed by the re-init's readiness
+   * poll (10 x 850 ms) is ~11 s before a cancel was noticed, and a replay on a
+   * sensor that stops answering mid-way is 24 reads x 800 ms, ~19 s; now it
+   * waits for at most the one SEQUENCE in flight (a getframe: ~2.6 s on a dead
+   * sensor; the init replay: ~0.3 s; one readiness-poll iteration: 850 ms).
    *
    * OWNERSHIP: the main thread owns the one and only ref. It is created in
    * start_capture (fresh object per capture, never g_cancellable_reset) and
@@ -129,7 +131,7 @@ frame_variance (const guint8 *buf)
  * template enrolled in one capture session matches a probe from another. */
 
 /* Process-global per-boot flat-field baseline. The sensor's fixed-pattern noise
- * (~163 var, no finger) differs per power-cycle; subtracting it per-pixel makes
+ * (~140 var, no finger) differs per power-cycle; subtracting it per-pixel makes
  * frames comparable ACROSS boots (without it a template enrolled one boot scores
  * exactly 0 against a probe from another boot, though within-boot it matches
  * up to ~19000). It is collected OPPORTUNISTICALLY from no-finger frames during
@@ -367,10 +369,15 @@ post_msg (FpDevice *dev, Msg *m)
  *
  * Deliberately does NOT: re-claim the interface (still claimed -> EBUSY),
  * re-init the host match engine (host state, intact), re-run exposure calibration
- * (persists in the powered sensor; the init replay never writes reg 0x0f, and
- * calibration needs a no-finger window we can't guarantee on resume), or
- * recapture the flat-field baseline (exposure-tied, per-boot, still valid) — so
- * cross-boot matching is preserved.
+ * (it needs a no-finger window we can't guarantee on resume. NOTE: the replay's
+ * record 25 block-writes regs 0x09..0x13 and so puts reg 0x0f back to the baked
+ * 0x20 — see the register table above auto_expose_mm in egis0576_proto.c — and
+ * egis_dev_open re-reads that into the dc_c cache; on the reference unit the
+ * calibration lands on 0x20 itself (measured: baked 0x20 -> calibrated 0x20),
+ * on other units the calibrated exposure is lost until the next fprintd
+ * start -- a defect to fix in code, not here), or recapture the
+ * flat-field baseline (exposure-tied, per-boot, still valid to the extent that
+ * 0x20 equals the calibrated value) — so cross-boot matching is preserved.
  *
  * Passes reset_if_stuck=FALSE: a ForceResetDevice here would take the device off
  * the bus mid-recovery. If the sensor is unresponsive the flag stays set and the
@@ -386,8 +393,11 @@ worker_reinit (FpDeviceEgis0576 *self, GError **error)
   GUsbDevice *usb = fpi_device_get_usb_device (FP_DEVICE (self));
 
   /* Until the bring-up below has succeeded the sensor is in an unknown state
-   * (a cancel can stop the replay half-way), so the NEXT worker must re-init
-   * eagerly whichever path called us; cleared again on success. */
+   * (a cancel is only honoured before or after the replay, never inside it,
+   * but a failed record leaves a prefix of the vendor sequence and a cancel
+   * honoured before the replay leaves the sensor un-initialised), so the NEXT
+   * worker must re-init eagerly whichever path called us; cleared again on
+   * success. */
   g_atomic_int_set (&self->needs_reinit, TRUE);
   g_clear_pointer (&self->sensor, egis_dev_free);
   self->sensor = egis_dev_new (usb);
@@ -442,9 +452,12 @@ capture_thread (gpointer data)
       /* Eager fast-path: a suspend/resume since the last frame left the sensor
        * needing re-initialisation (flag set by the vfuncs). Re-init HERE (worker
        * thread, blocking-safe) before getframe so we don't burn a getframe
-       * timeout on a sensor that cannot answer. Honour a concurrent cancel first: suspend
-       * cancels the action, and we must not run ~1 s of USB in the fragile
-       * post-resume window when we're being torn down. */
+       * timeout on a sensor that cannot answer. Honour a concurrent cancel
+       * first: suspend cancels the action, and we must not run the re-init
+       * (~0.3 s of USB on a healthy sensor; on one that has stopped answering
+       * the readiness poll fails first, 10 x 850 ms, and a replay that goes
+       * silent mid-way costs up to 24 x 800 ms) in the fragile post-resume
+       * window when we're being torn down. */
       if (g_atomic_int_get (&self->needs_reinit) &&
           !g_atomic_int_get (&self->cancel))
         {
@@ -468,15 +481,17 @@ capture_thread (gpointer data)
         {
           /* Backstop that also covers the idle-at-suspend case (no vfunc fired,
            * so needs_reinit was FALSE and the eager path was skipped) and any
-           * unfreeze race: a dead session makes getframe return an error in
-           * bounded time (read_record now has a wall-clock deadline). If we were
-           * cancelled (suspend, VerifyStop, close) — flag up, or the transfer
-           * itself aborted with G_IO_ERROR_CANCELLED — leave with a clean cancel
-           * instead of running a re-handshake. Otherwise re-establish the
-           * session once, in this worker thread, and retry, re-checking for a
-           * cancel between the two steps. Give up — with the real device error
-           * -> password fallback — only if the re-handshake or the retry
-           * getframe also fails for a reason other than a cancel. */
+           * unfreeze race: on a dead or silent sensor getframe returns an error
+           * in bounded time (its bulk reads time out — 300 ms per preamble
+           * reply, 800 ms per frame chunk — ~2.6 s worst case). If we were
+           * cancelled (suspend, VerifyStop, close) — flag up, or a check between
+           * transfers saw the cancel — leave with a clean cancel instead of
+           * running a re-init. Otherwise re-initialise the sensor once via
+           * worker_reinit (readiness poll + vendor replay, reset_if_stuck=FALSE),
+           * in this worker thread, and retry, re-checking for a cancel between
+           * the two steps. Give up — with the real device error -> password
+           * fallback — only if the re-init or the retry getframe also fails for
+           * a reason other than a cancel. */
           if (worker_cancelled (self, &error))
             {
               cancelled = TRUE;
@@ -884,15 +899,21 @@ egis0576_cancel (FpDevice *dev)
   fp_dbg ("cancelling");
 
   /* Order matters: the flag goes up first, then the cancellable is triggered.
-   * The worker treats a G_IO_ERROR_CANCELLED transfer as "check the flag", and
-   * g_cancellable_cancel is a full barrier, so a worker woken by the cancel is
-   * guaranteed to also see the flag. Setting only the flag (as before) left the
-   * worker to wait out whole transfer SEQUENCES (wait_ready, init replay) --
-   * up to ~11 s on a sensor that stopped answering; the cancellable is polled
-   * at every transfer boundary, so now it waits for at most the one transfer
-   * in flight (it is never handed to gusb -- aborting a URB wedges this
-   * sensor, see egis0576_proto.c). NULL when no capture is running. Main
-   * thread only, like every other writer of these fields. */
+   * The worker's transport polls the cancellable between transfers (it is never
+   * handed to gusb, so nothing wakes the worker) and egis_dev_* then fail with
+   * G_IO_ERROR_CANCELLED, which worker_cancelled treats as "check the flag";
+   * g_cancellable_cancel is a full barrier, so a worker that sees the cancelled
+   * state is guaranteed to also see the flag. Setting only the flag (as before)
+   * left the worker to wait out whole transfer SEQUENCES -- on a sensor that
+   * stopped answering, a failed getframe plus the re-init's wait_ready is
+   * ~11 s, and a replay stalling mid-way is ~19 s (24 reads x 800 ms); the
+   * cancellable is polled at every transfer boundary, so now it waits for at
+   * most the one transfer SEQUENCE in flight (a getframe: ~2.6 s on a dead
+   * sensor; the init replay, which is one unit: ~0.3 s; one readiness-poll
+   * iteration: 850 ms -- see egis0576_proto.h; it is never handed to gusb --
+   * aborting a URB wedges this sensor, see egis0576_proto.c). NULL when no
+   * capture is running. Main thread only, like every other writer of these
+   * fields. */
   g_atomic_int_set (&self->cancel, TRUE);
   if (self->capture_cancellable)
     g_cancellable_cancel (self->capture_cancellable);
@@ -919,8 +940,8 @@ egis0576_suspend (FpDevice *dev)
    * survives (we are cancelling it), and NULL takes suspend_complete's immediate
    * return path (fpi-device.c:1815-1823) without libfprint ALSO cancelling with
    * its own FP_DEVICE_ERROR_BUSY. fprintd re-issues verify/identify on resume,
-   * which re-establishes the session in the worker thread. Do NO USB here — this
-   * is the fprintd main loop. */
+   * which re-initialises the sensor (worker_reinit) in the worker thread. Do NO
+   * USB here — this is the fprintd main loop. */
   egis0576_cancel (dev);
   g_cancellable_cancel (fpi_device_get_cancellable (dev));
   fpi_device_suspend_complete (dev, NULL);
@@ -933,10 +954,11 @@ egis0576_resume (FpDevice *dev)
 
   /* Defensive: also flag here in case an action somehow survived to resume
    * (keep-alive / unfreeze race). No USB — this is the main loop. The worker
-   * consumes the flag; if a worker is mid-getframe on the dead session, its
-   * bounded getframe-failure retry re-handshakes. In the normal flow suspend
-   * cancelled the action, so current_action == NONE and libfprint completes
-   * resume itself without ever calling this (fpi-device.c:1655-1666). */
+   * consumes the flag; if a worker is mid-getframe on a dead sensor, its
+   * bounded getframe-failure path re-initialises the sensor and retries. In
+   * the normal flow suspend cancelled the action, so current_action == NONE
+   * and libfprint completes resume itself without ever calling this
+   * (fpi-device.c:1655-1666). */
   g_atomic_int_set (&self->needs_reinit, TRUE);
   fpi_device_resume_complete (dev, NULL);
 }

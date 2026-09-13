@@ -1,7 +1,7 @@
 # libfprint driver for the EgisTec EH576 (`1c7a:0576`)
 
 A native Linux [libfprint](https://gitlab.freedesktop.org/libfprint/libfprint)
-driver for the **EgisTec (LighTuning) EH576** fingerprint sensor — a match-in-host
+driver for the **EgisTec (LighTuning) EH576** fingerprint sensor — a match-on-host
 image sensor that ships in a number of laptops but has **no vendor Linux driver**.
 
 With this driver the sensor works for real: `fprintd` enrollment, and fingerprint
@@ -62,11 +62,11 @@ dependency is handled at runtime rather than baked in:
   unit's calibration data is embedded.
 
 **Update:** originally all of this was validated on the author's single unit —
-that caveat is now retired. An independent tester ran the full stack on a second
-EH576 (different laptop, CPU vendor and USB host controller; same sensor revision,
-`bcdDevice` 15.72) with
-a 17-point PASS ([#2](https://github.com/PHILIPPDEV5396/libfprint-egis0576/issues/2)).
-More reports are still very welcome — success *or* failure.
+that caveat is now retired. Independent testers have run the full stack on other
+EH576 units (different laptops, CPU vendors and USB host controllers; same sensor
+revision, `bcdDevice` 15.72): the first with a 17-point PASS
+([#2](https://github.com/PHILIPPDEV5396/libfprint-egis0576/issues/2)), the rest
+in the table above. More reports are still very welcome — success *or* failure.
 
 ## Tested platforms
 
@@ -83,8 +83,11 @@ Got a different machine with an EH576? **Please open an issue with your results.
 
 > **Upgrading from a release before v0.4.0?** Those builds spoke a TLS-PSK
 > transport and left the sensor in a mode it keeps until something resets it — so
-> the **first** fingerprint attempt after the upgrade can fail once while the
-> driver resets the sensor and it re-enumerates (~0.5 s). The next attempt works.
+> the **first** fingerprint attempt after the upgrade can fail once: the driver
+> finds the sensor in that mode, issues `ForceResetDevice` and fails that open;
+> the sensor stays on the bus until the next transfer to it, then drops off and
+> re-enumerates (~0.4 s), after which attempts work normally. Details in
+> [`docs/sensor-tuning.md` §6](docs/sensor-tuning.md#6-forceresetdevice-takes-effect-on-the-next-transfer).
 > **No re-enrollment is needed**: existing prints keep matching, because the
 > exposure target and register are unchanged.
 >
@@ -141,9 +144,8 @@ rebased patch that keeps both.
 
 ## Building from source (any distro / development)
 
-A libfprint driver is compiled *into* `libfprint-2.so` (it is not a loadable
-module), so this builds a full libfprint that includes the driver. It does **not**
-rebuild `fprintd` — the stock daemon loads the new library through its unchanged ABI.
+As noted under [Install](#install), the driver is compiled *into* `libfprint-2.so`,
+so this builds a full libfprint that includes it; `fprintd` is not rebuilt.
 
 ### 1. Install build dependencies
 
@@ -152,10 +154,10 @@ upstream's own `uru4000` driver requires it (`meson.build`: `'uru4000' : [ 'open
 The egis0576 driver itself links no crypto at all; it speaks the sensor's plaintext
 protocol over gusb.
 
-- **Fedora:** `sudo dnf install git meson ninja-build gcc pkgconf-pkg-config glib2-devel libgusb-devel openssl-devel gobject-introspection-devel nss-devel systemd-devel libgudev-devel pixman-devel cairo-gobject-devel`
-- **Arch:** `sudo pacman -S --needed git meson ninja gcc pkgconf glib2 libgusb openssl gobject-introspection nss systemd-libs libgudev pixman cairo`
+- **Fedora:** `sudo dnf install git meson ninja-build gcc pkgconf-pkg-config glib2-devel libgusb-devel openssl-devel gobject-introspection-devel nss-devel systemd-devel libgudev-devel pixman-devel cairo-gobject-devel gtk-doc`
+- **Arch:** `sudo pacman -S --needed git meson ninja gcc pkgconf glib2 libgusb openssl gobject-introspection nss systemd-libs libgudev pixman cairo gtk-doc`
 - **Debian/Ubuntu:** `sudo apt install git meson ninja-build build-essential pkg-config libglib2.0-dev libgusb-dev libssl-dev libgirepository1.0-dev libnss3-dev libsystemd-dev systemd-dev libgudev-1.0-dev libpixman-1-dev libcairo2-dev gtk-doc-tools`
-- **openSUSE:** `sudo zypper install git meson ninja gcc pkgconf glib2-devel libgusb-devel libopenssl-devel gobject-introspection-devel mozilla-nss-devel systemd-devel libgudev-1_0-devel pixman-devel cairo-devel`
+- **openSUSE:** `sudo zypper install git meson ninja gcc pkgconf glib2-devel libgusb-devel libopenssl-devel gobject-introspection-devel mozilla-nss-devel systemd-devel libgudev-1_0-devel pixman-devel cairo-devel gtk-doc`
 
 ### 2. Build + install
 
@@ -195,7 +197,9 @@ matcher** ([`docs/matcher-comparison.md`](docs/matcher-comparison.md)): at its
 published threshold it rejects 35 % of genuine presses (vendor: 0 %), and its
 genuine and impostor scores overlap (EER 15 %), so it is not yet a drop-in
 replacement — it is the starting point for one. Details in
-[`driver/egis0576/egis_engine_cleanroom.c`](driver/egis0576/egis_engine_cleanroom.c).
+[`driver/egis0576/egis_engine_cleanroom.c`](driver/egis0576/egis_engine_cleanroom.c);
+reproduce the measurement on your own unit with
+[`tools/accuracy/`](tools/accuracy/README.md).
 
 ## Enrolling
 
@@ -346,9 +350,11 @@ driver shortcoming. Details and the full investigation:
 
 ## Troubleshooting
 
-- **The first verify after upgrading fails, the next one works.** Expected, once:
-  the driver found the sensor in the session mode an older release left behind,
-  reset it, and the device re-enumerated. See the note under [Install](#install).
+- **The first verify (or two) after upgrading fails, then it works.** Expected, once:
+  the driver found the sensor in the session mode an older release left behind
+  and issued a reset; the sensor re-enumerates on the next access
+  ([`docs/sensor-tuning.md` §6](docs/sensor-tuning.md#6-forceresetdevice-takes-effect-on-the-next-transfer)).
+  See the note under [Install](#install).
 
 - **`fprintd` still uses the old driver / device not found:** confirm
   `ldconfig -p | grep libfprint-2` points at your `PREFIX`, then
@@ -368,7 +374,15 @@ Most wanted, in order:
    ["Why the reverse-engineered matcher (and not a clean-room one)?"](PROVENANCE.md#why-the-reverse-engineered-matcher-and-not-a-clean-room-one)
    in `PROVENANCE.md`.
 2. **Test reports from other physical EH576 units** (see "Universality").
-3. Packaging (AUR, .deb, DKMS-style), other distro build recipes.
+3. **Accuracy reports from your own fingers** — run the
+   [`tools/accuracy/`](tools/accuracy/README.md) kit (about 15 minutes; only the
+   `results.json` summary is shared, never frames) and open an issue titled
+   `accuracy: <laptop model>` as its README asks — collected under
+   [#5](https://github.com/PHILIPPDEV5396/libfprint-egis0576/issues/5).
+4. **Packaging** — AUR, Debian/Ubuntu `.deb` and release CI (coordinated in
+   [#6](https://github.com/PHILIPPDEV5396/libfprint-egis0576/issues/6)), a way
+   to rebuild automatically when the distro updates libfprint, other distro
+   build recipes.
 
 ## License & legal
 
@@ -380,5 +394,10 @@ decompilation are **not** included and must not be committed here.
 ## Credits
 
 Reverse-engineered and ported to libfprint by the repository author, with the goal
-of making already-owned hardware usable on Linux. Built on the excellent
-[libfprint](https://gitlab.freedesktop.org/libfprint/libfprint) and `fprintd`.
+of making already-owned hardware usable on Linux. The optional clean-room
+correlation matcher (`driver/egis0576/tsteppy/`, LGPL-2.1-or-later) is the work of
+Thaddeus Stepanovich. Prior art this project started from is listed in
+[PROVENANCE.md §3](PROVENANCE.md#3-prior-art-by-others); the people who tested the
+driver on their hardware are named in the "Tested platforms" table above. Built on
+the excellent [libfprint](https://gitlab.freedesktop.org/libfprint/libfprint) and
+`fprintd`.

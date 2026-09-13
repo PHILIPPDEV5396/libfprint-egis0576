@@ -15,10 +15,13 @@
 
 Name:           libfprint
 Version:        1.94.10
-# Release sorts ABOVE Fedora's current 5.fcNN so `dnf upgrade` prefers this build.
-# The robust backstop is a COPR repo *priority* (see README) which wins regardless
-# of version. When Fedora ships a NEWER libfprint VERSION, rebase onto it (Fedora
-# then legitimately wins and you bump this spec's Version).
+# NOTE: Fedora 44 and rawhide now ship libfprint 1.94.100-1, which outranks this
+# 1.94.10-99.egis8 build on Version (rpm compares Version before Release), so
+# `dnf upgrade` would pull Fedora's package. What keeps this build installed is
+# the COPR repo *priority* (see ../README.md, e.g. priority=90), which wins
+# regardless of version. The 99 Release only sorts above Fedora's NN.fcNN for
+# the SAME Version. TODO: rebase the driver onto libfprint 1.94.100 and bump
+# Version here.
 Release:        99%{?dist}.egis8
 Summary:        Toolkit for fingerprint scanner (rebuilt with the EgisTec EH576 / 1c7a:0576 driver)
 

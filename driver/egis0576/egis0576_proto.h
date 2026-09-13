@@ -51,9 +51,12 @@ void     egis_dev_set_cancellable (EgisDev *d, GCancellable *cancellable);
  * Fails with G_IO_ERROR_NOT_INITIALIZED if the sensor does not answer the
  * plaintext readiness poll. The one case that happens in practice is a sensor
  * left in TLS session mode by a pre-plaintext build of this driver; pass
- * reset_if_stuck=TRUE to issue a ForceResetDevice for it. That takes the device
- * off the bus for ~530 ms, so this open still fails — the caller gets a fresh
- * device object from the hotplug and the next open succeeds. */
+ * reset_if_stuck=TRUE to issue a ForceResetDevice for it. The request itself
+ * is accepted immediately and the sensor stays on the bus; it drops off (and
+ * re-enumerates ~0.4 s later) on the NEXT transfer to it, whoever makes it
+ * (docs/sensor-tuning.md §6). So this open fails, that next access takes the
+ * ENODEV, and the caller gets a fresh device object from the hotplug on which
+ * the open then succeeds. */
 gboolean egis_dev_open (EgisDev *d, gboolean reset_if_stuck, GError **error);
 
 /* Capture one EGIS_IMG-byte frame: per-frame trigger sequence, then GetFrame.
@@ -68,9 +71,11 @@ gboolean egis_dev_getframe (EgisDev *d, guint8 *img, GError **error);
 gboolean egis_dev_calibrate (EgisDev *d, GError **error);
 
 /* One auto-exposure step from a frame's min/max; TRUE iff the exposure changed,
- * so the caller can re-take its flat-field baseline. Unlike the TLS transport,
- * plaintext lets register reads interleave with capture, so this is usable
- * per-frame the way the vendor uses it. */
+ * so the caller can re-take its flat-field baseline. Mechanically possible
+ * since the plaintext migration (register reads may interleave with capture),
+ * but deliberately NOT wired into the capture loop: its step-table jumps would
+ * overshoot reg 0x0f's ~8-count usable window into saturation. See the comment
+ * on the definition in egis0576_proto.c and docs/sensor-tuning.md. */
 gboolean egis_dev_autoexpose (EgisDev *d, int frame_min, int frame_max);
 
 #endif

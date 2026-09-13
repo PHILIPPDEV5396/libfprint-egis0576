@@ -4,7 +4,8 @@
 fingerprint and drops straight to the password. This is **not** a bug in this
 driver — it is a well-known, still-unfixed **gnome-shell/fprintd** bug where the
 fingerprint device's *claim* is not released across suspend (`"Device was already
-claimed"`). The driver is never even invoked at the failing moment. The reliable,
+claimed"`; the same message could also come from a driver hang fixed in v0.4.3 —
+see below). The driver is never even invoked at the failing moment. The reliable,
 community-standard fix is to **restart `fprintd` around suspend**, which is exactly
 what the [`integration/`](../integration/) systemd-sleep hook does. Keep it
 installed. This document records the investigation so nobody (the author included)
@@ -41,6 +42,19 @@ No `open`, no `identify`, **nothing from the driver** — libfprint is never
 reached. `fprintd` still holds a **stale claim** taken by gnome-shell's
 pre-suspend lock-screen verify, which is not released across the suspend. The new
 post-resume claim is therefore refused, and gnome-shell falls back to the password.
+
+Note (since v0.4.3): the line `Device was already claimed` on its own does not
+identify this bug. Builds v0.1.0–v0.4.2 could produce the same refusal from a
+driver-side hang — a verify that never completes because of a lost wakeup in
+gusb's synchronous transfer helpers, after which every Claim is refused until
+fprintd is restarted (see [`worker-thread.md`](worker-thread.md)). The two are
+told apart in the journal: the upstream stale-claim bug shows `Preparing devices
+for resume` followed directly by the Claim denial with no driver activity at all;
+the driver bug shows an earlier verify/identify that never finished, and it is
+not tied to suspend. Everything below concerns the upstream case; it was observed
+across several driver versions (the in-driver experiments date from the TLS era,
+the ForceReset measurements from 2026-09-09 and 2026-09-13) and does not depend
+on the driver version.
 
 This is an upstream **gnome-shell + fprintd** interaction bug, entirely above
 libfprint. It is widely reported and, as of mid-2026, **open / unfixed**:

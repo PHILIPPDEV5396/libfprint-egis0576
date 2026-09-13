@@ -51,6 +51,11 @@ verify never completed; from then on every `Claim` was refused with
 `"Device was already claimed"` until systemd eventually had to `SIGABRT`
 fprintd.
 
+The refusal text is the same one the upstream stale-claim-across-suspend bug
+produces (see [`suspend-resume.md`](suspend-resume.md)); the difference is that
+here a verify was in flight and never returned, whereas in the suspend case no
+driver call happens at all.
+
 Attaching gdb to the stuck fprintd showed the worker thread parked inside
 `g_main_loop_run`, in `g_main_context_wait_internal`, called from
 `g_usb_device_bulk_transfer` — the sync wrapper — for the 7-byte bulk OUT

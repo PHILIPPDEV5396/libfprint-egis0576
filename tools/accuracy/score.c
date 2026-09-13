@@ -9,7 +9,7 @@
  *
  * Frames are raw 70x57 = 3990-byte uint8 images, either as numpy .npy files
  * (what capture.py writes) or as bare 3990-byte files. Pipeline per frame,
- * exactly as drivers/egis0576.c does it:
+ * exactly as driver/egis0576.c does it:
  *   flat_field(raw, baseline) -> egis_preprocess() -> engine
  * (the clean-room adapter's egis_preprocess is an identity copy, so calling it
  * unconditionally reproduces BOTH real pipelines.)
@@ -70,7 +70,7 @@ static int rd(const char *path, uint8_t *b)
   return ok ? 0 : -1;
 }
 
-/* drivers/egis0576.c flat_field(): out = clamp(raw - baseline + mean(baseline)) */
+/* driver/egis0576.c flat_field(): out = clamp(raw - baseline + mean(baseline)) */
 static void flat_field(const uint8_t *raw, const uint8_t *base, uint8_t *out)
 {
   long s = 0;

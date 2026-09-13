@@ -32,13 +32,14 @@ Written from scratch for libfprint:
 | `egis0576.c`, `egis0576.h` | The libfprint `FpDevice` driver: enroll/verify/identify state machines, capture worker thread, per-boot flat-field, software finger detection. |
 | `egis0576/egis0576_proto.c`, `.h` | The plaintext `EGIS`/`SIGE` transport over gusb, per-device exposure calibration, init orchestration. |
 | `egis0576/egis_rt.c`, `.h`, `egis_engine.c`, `.h` | The flat-memory runtime and the enroll/verify/gallery wrapper around the matcher. |
+| `egis0576/egis_engine_cleanroom.c` | Adapter that implements the `egis_engine.h` contract on top of Thaddeus Stepanovich's clean-room correlation matcher (see category 3); compiled only with `-Degis0576_matcher=cleanroom`. |
 
 These files are licensed **LGPL-2.1-or-later**, matching libfprint. See `LICENSE`.
 
 ### 2. Reverse-engineered for interoperability — no copyright claimed by the author
 
 Derived from Egis Technology's proprietary Windows driver and included because no
-clean-room equivalent proved viable (see below):
+clean-room equivalent has yet matched it (see below):
 
 | File | What it is |
 |------|-----------|
@@ -74,10 +75,25 @@ The plaintext `EGIS`/`SIGE` framing and the first working capture path were
 established by the third-party [`Pengu601/EgisTec-EH576`](https://github.com/Pengu601/EgisTec-EH576)
 project, which this work started from. Consult that repository for its own terms.
 
+`egis0576/tsteppy/egis_match.c`, `.h` — the clean-room correlation matcher,
+© 2026 Thaddeus Stepanovich, LGPL-2.1-or-later, copied byte-for-byte (license
+header intact) from
+[`tsteppy/egistec-eh576-libfprint`](https://github.com/tsteppy/egistec-eh576-libfprint)
+at commit `56ac424f` (`driver/egis_match.{c,h}` there). It is built only when the
+driver is configured with `-Degis0576_matcher=cleanroom` (default: `vendor`),
+together with the author's adapter `egis0576/egis_engine_cleanroom.c` (category
+1). Exactly one matcher flavour is compiled: in a `cleanroom` build none of the
+category-2 matcher sources (`egis_funcs.c`, `egis_coherence_map.c`,
+`egis_preprocess.c` and the headers they pull in) are compiled at all — of the
+reverse-engineered material only `egis_init.h` (the sensor bring-up sequence) and
+the `EGIS_STEP_TABLE` in `egis0576_proto.c` remain. Its measured accuracy is in
+[`docs/matcher-comparison.md`](docs/matcher-comparison.md).
+
 ### Everything outside `driver/`
 
-`patches/`, `packaging/`, `integration/`, `install.sh` and `docs/` are the author's
-own work and carry the repository's licence.
+`patches/`, `packaging/`, `integration/`, `tools/` (the FAR/FRR accuracy kit in
+`tools/accuracy/`), `install.sh` and `docs/` are the author's own work and carry
+the repository's licence.
 
 ## Legal basis and honest risk disclosure
 
@@ -115,3 +131,14 @@ A driver that any adjacent finger can unlock would be worse than no driver, so t
 reverse-engineered matcher is used. **A viable clean-room matcher is the single most
 valuable contribution this project could receive** — it would make the driver
 cleanly upstreamable to libfprint.
+
+Since v0.4.2 a clean-room correlation matcher by Thaddeus Stepanovich ships
+in-tree (`egis0576/tsteppy/egis_match.{c,h}`, adapter
+`egis0576/egis_engine_cleanroom.c`) and can be built instead of the vendor matcher
+with `-Degis0576_matcher=cleanroom` (see the README, "Experimental — clean-room
+matcher"). Measured on the same 714-frame / 60-press dataset as the vendor matcher
+([`docs/matcher-comparison.md`](docs/matcher-comparison.md)): the vendor matcher
+scored 0/60 false rejects and 0/480 false accepts; the clean-room matcher rejects
+35 % of genuine presses at its published threshold and its genuine/impostor scores
+overlap (EER 15 %), so it is not yet a drop-in replacement — which is why the
+vendor matcher remains the default. It is, however, the starting point for one.

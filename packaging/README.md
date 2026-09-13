@@ -17,8 +17,11 @@ Those builds spoke a TLS-PSK transport to the sensor and left it in a mode it ke
 until something resets it. Two consequences for anyone packaging or installing the
 upgrade:
 
-- **The first fingerprint attempt after the upgrade can fail once** while the driver
-  resets the sensor and it re-enumerates (~0.5 s). The next one works.
+- **The first fingerprint attempt after the upgrade can fail once.** The driver
+  finds the sensor in that mode, issues `ForceResetDevice` and fails that open;
+  the sensor stays on the bus until the next transfer to it, then drops off and
+  re-enumerates (~0.4 s), after which attempts work normally. Details in
+  [`../docs/sensor-tuning.md` §6](../docs/sensor-tuning.md#6-forceresetdevice-takes-effect-on-the-next-transfer).
 - **No re-enrollment is needed.** Existing prints keep matching — the exposure
   target and register are unchanged.
 
@@ -45,7 +48,10 @@ Needs a [Fedora account](https://accounts.fedoraproject.org/) (COPR login) and
 
 ```bash
 # 1. create the project (once)
-copr-cli create libfprint-egis0576 --chroot fedora-44-x86_64 --chroot fedora-rawhide-x86_64
+copr-cli create libfprint-egis0576 --chroot fedora-43-x86_64 --chroot fedora-44-x86_64 \
+    --chroot fedora-45-x86_64 --chroot fedora-rawhide-x86_64
+#    (the live project has these four chroots; enable "Follow Fedora branching"
+#    in the project settings so new releases are added automatically)
 
 # 2. IMPORTANT: set a repo priority so the COPR wins over Fedora's libfprint
 #    regardless of version (Settings → "Repo priority" in the web UI, e.g. 90),
@@ -80,7 +86,10 @@ coexist in one `libfprint-2.so`, verified).
 
 **Maintenance:** you are now forwarding libfprint updates for enabled users. When
 Fedora ships a **newer** libfprint version, bump `Version:` in the spec, re-test,
-and rebuild. (COPR can auto-rebuild.)
+and rebuild. (COPR can auto-rebuild.) *Status (September 2026):* Fedora 44 already
+ships libfprint 1.94.100-1.fc44 while this spec is still at 1.94.10; enabled users
+stay on the COPR build only because of the `priority=90` setting (step 2 above),
+and a rebase onto 1.94.100 is pending.
 
 ---
 
@@ -124,8 +133,10 @@ driver (at the release tag pinned in the PKGBUILD's `source=`), default driver s
 `provides/conflicts libfprint`. `pkgver` is pinned to the upstream tag the meson
 patch targets; if Arch's repo libfprint has moved past it, installing this package
 downgrades libfprint itself (the driver still works — but rebasing the patch onto
-the newer tag is the better move). As of September 2026 Arch's stock libfprint is also `1.94.10`, so this
-is a lateral rebuild, not a downgrade.
+the newer tag is the better move). As of September 2026 Arch's stock libfprint is
+`1.94.100` (extra, since 2026-07-26), so installing this package currently
+downgrades libfprint to `1.94.10` until the meson patch is rebased onto upstream
+tag `v1.94.100` and `pkgver` is bumped.
 
 ---
 

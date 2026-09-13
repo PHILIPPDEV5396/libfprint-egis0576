@@ -109,8 +109,9 @@ presses each, dataset in `~/egis-accuracy/<date_time>/` — *your* home, not
 root's, and every directory and file is handed to your user the moment it is
 created. Change with `--fingers a,b,c`, `--presses N` (even), `--out DIR`.
 `--out` must not exist yet or must be an empty directory: a non-empty one is
-refused, and only directories the tool created itself are ever chowned (a
-pre-existing parent is left alone).
+refused; a pre-existing empty `--out` is made 0700 and handed to your user only
+if that is actually needed, and beyond that only directories the tool created
+itself are ever chowned (a pre-existing parent is left alone).
 
 Running it without `sudo` (udev rule, section 1) works too: the tool then
 refreshes the sudo timestamp after every accepted press (`sudo -n -v`, never

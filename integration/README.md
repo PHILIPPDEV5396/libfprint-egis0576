@@ -35,9 +35,7 @@ Two independent problems, only one of which is even in this driver's reach:
 | File | Installs to | Effect |
 |---|---|---|
 | `50-egis0576-fp-resume.sh` | `/usr/lib/systemd/system-sleep/` | **`pre`: stops `fprintd` before sleep** so no stale claim survives — this is the fix for problem 2. **`post`: re-enumerates the sensor** (`authorized` 0→1) so its exposure is reset and the first post-resume capture is well-exposed. |
-| `60-egis0576-fp-nosuspend.rules` | `/etc/udev/rules.d/` | Keeps the sensor powered instead of letting it autosuspend while idle. There is no
-session state to protect — the protocol is stateless — but an interactively used
-reader should not have to come back from runtime PM on every press. |
+| `60-egis0576-fp-nosuspend.rules` | `/etc/udev/rules.d/` | Keeps the sensor powered instead of letting it autosuspend while idle. There is no session state to protect — the protocol is stateless — but an interactively used reader should not have to come back from runtime PM on every press. |
 
 Restarting `fprintd` around suspend is exactly the community-standard workaround
 for the upstream claim bug. Fingerprint stays enabled everywhere — login, `sudo`,

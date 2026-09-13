@@ -2,7 +2,7 @@
 """Capture a raw-frame fingerprint dataset from an EgisTec EH576 for the
 matcher accuracy evaluation (tools/accuracy/README.md).
 
-What it records, mirroring drivers/egis0576.c exactly:
+What it records, mirroring driver/egis0576.c exactly:
   * the driver's per-open exposure calibration (binary search over reg 0x0f
     until the no-finger frame mean is closest to 0x58) -- so a unit whose
     operating point differs from the reference unit's does not capture
@@ -341,7 +341,7 @@ def wait_lift(d, np, timeout=60):
 
 def take_baseline(d, np, timeout=45):
     """Per-pixel mean of 8 no-finger frames (var < 210), truncated to uint8 --
-    drivers/egis0576.c baseline_feed()."""
+    driver/egis0576.c baseline_feed()."""
     acc = np.zeros(eh.IMG, dtype=np.uint32)
     n = 0
     t0 = time.monotonic()
