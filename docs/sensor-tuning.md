@@ -153,6 +153,29 @@ finger scores 0.25–0.81 across presses; the separation his matcher reports
 comes from its enhancement and coherence mask, which this test deliberately
 did not use.)
 
+## 6. `ForceResetDevice` takes effect on the *next* transfer
+
+Found while smoke-testing `tools/accuracy/` (2026-09-13). `ForceResetDevice`
+(class request `0x21/9`, `wValue=0x00ff`) completes normally — libusb reports
+success — and the sensor then **stays on the bus at its old address**: 5 s of
+idle after the request, `lsusb` still showed device number 8 and `dmesg` had
+no event. The first bulk transfer after that failed with `ENODEV`, and only
+then did the kernel log `USB disconnect, device number 8` → `new high-speed
+USB device number 9` (~0.4 s apart); the next access answered the plaintext
+readiness poll. Two earlier tool runs confirmed it the other way round: two
+requests with nothing touching the sensor afterwards produced no
+re-enumeration at all for ~50 s, until the next run's first access.
+
+What this means: "the request returned" proves nothing about the reset having
+happened, and a tool that issues the request and exits leaves an *armed*
+reset for the next user of the sensor — fprintd's first claim would take the
+`ENODEV`. `egis_eh576.py reset` therefore sends one readiness probe after the
+request to trigger the drop itself and returns only when the re-enumerated
+device answers; `capture.py`'s cleanup relies on that. For the driver's own
+one-time migration reset (a sensor left in session mode by a pre-v0.4.0 build)
+nothing changes: `egis_dev_open` issues the request and fails that open, and
+the re-enumeration happens on whatever touches the sensor next.
+
 ## What this means
 
 The driver is at the sensor's operating point. The remaining limits are physical:

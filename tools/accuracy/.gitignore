@@ -1,0 +1,4 @@
+build/
+score-vendor
+score-cleanroom
+__pycache__/

@@ -179,7 +179,7 @@ EGIS0576_MESON_ARGS="-Degis0576_matcher=cleanroom" ./install.sh
 ```
 
 Templates enrolled under one matcher are rejected by the other, so switching
-means re-enrolling. **Measured on the same 715-frame dataset as the vendor
+means re-enrolling. **Measured on the same 714-frame dataset as the vendor
 matcher** ([`docs/matcher-comparison.md`](docs/matcher-comparison.md)): at its
 published threshold it rejects 35 % of genuine presses (vendor: 0 %), and its
 genuine and impostor scores overlap (EER 15 %), so it is not yet a drop-in

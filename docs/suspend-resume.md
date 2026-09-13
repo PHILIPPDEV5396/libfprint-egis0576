@@ -123,9 +123,17 @@ the call path** (fprintd hasn't opened/claimed the device yet, or refuses to).
 
    - **The reset DOES re-enumerate the device.** Earlier text here said it worked
      "without USB re-enumeration". That is wrong: the sensor drops off the bus and
-     comes back with a new device number after ~530 ms (`dmesg`: `USB disconnect`
-     → `new high-speed USB device`). Anything calling it has to cope with the
-     device object it holds becoming invalid.
+     comes back with a new device number (`dmesg`: `USB disconnect` → `new
+     high-speed USB device`, ~0.4 s apart). Anything calling it has to cope with
+     the device object it holds becoming invalid. Refined 2026-09-13 with the
+     accuracy kit ([`sensor-tuning.md` §6](sensor-tuning.md)): the drop happens
+     on the *next transfer to the device*, not on the request itself — after
+     `ForceResetDevice` the sensor sat on the bus for 5 s with its device number
+     unchanged; the first bulk access then failed with `ENODEV` and the kernel
+     re-enumerated it ~0.4 s later. The "~530 ms" measured earlier was that
+     access following the request immediately. `egis_dev_open` issues the
+     request and fails the open; the re-enumeration then happens on whatever
+     touches the sensor next.
    - **The name `CRealTekDeviceCtrlForET576WithTLS` does not come from this
      device's driver.** It appears in none of the three DLLs Lenovo ships for the
      EH576 (`EgisTouchFP0576.dll`, `EgisTouchFPEngine0576.dll`,

@@ -11,7 +11,7 @@ One person, one session, one flat-field baseline (mean of 8 no-finger frames,
 as the driver builds it at open). Five fingers — right thumb, right index, left
 index, right middle, left middle — 12 presses each. Every frame captured while
 the finger was down was kept, exactly as the driver's verify loop sees them
-(finger-on at raw variance ≥ 250, finger-off below 215): **715 frames, 60
+(finger-on at raw variance ≥ 250, finger-off below 215): **714 frames, 60
 presses.** Frames were stored raw; flat-fielding and preprocessing were applied
 offline, identically for both matchers, by a scorer linked against each
 flavour's engine behind the same `egis_engine.h` contract.
@@ -94,5 +94,17 @@ qualitative "genuine matches, adjacent rejected" the README carried before.
 It does not show a population error rate: n is one person and one session. The
 two obvious next measurements are a second person (different skin, different
 ridge spacing) and a second session after a reboot (the per-boot flat field is
-the thing most likely to move scores). The capture and scoring harness lives
-outside the repository; the procedure above is enough to reproduce it.
+the thing most likely to move scores).
+
+## Reproducing on your own hardware
+
+The capture and scoring harness ships in `tools/accuracy/` (see its README):
+`capture.py` records a dataset of your own fingers with the driver's exact
+finger-on/off gating and flat-field baseline, `make` builds a scorer against
+each matcher flavour straight from `driver/egis0576/`, and `evaluate.py` runs
+the two-fold protocol above and prints these tables. It writes a
+`results.json` of scores, counts and rates only — that file, and nothing else,
+is what to post in an issue. The frames are your biometric data: they stay in
+a private directory under your home and must never be sent to anyone,
+including the maintainers. Runs from other people and other sessions are
+exactly what this measurement is missing.
