@@ -27,6 +27,7 @@
 
 struct EgisDev {
   GUsbDevice   *usb;
+  GCancellable *cancellable; /* borrowed (see egis_dev_set_cancellable); NULL = uncancellable */
   unsigned char dc_c;      /* cached reg 0x0f */
   unsigned char gain;      /* cached reg 0x12 (indexes EGIS_STEP_TABLE) */
 };
@@ -39,6 +40,20 @@ static const int EGIS_STEP_TABLE[16] = {
 };
 
 /* ---------------------------------------------------------------- USB ---- */
+
+/* The cancellable is consulted BETWEEN transfers only -- it is never handed to
+ * gusb. Measured on the reference unit: aborting an in-flight bulk transfer
+ * (libusb_cancel_transfer, which is what gusb does with a cancelled
+ * GCancellable) wedged the sensor at USB level -- bulk OUT NAKed for 3 s
+ * timeouts, and afterwards even the EP0 ForceReset and a sysfs deauthorize
+ * timed out; only a port-level reset brought it back. A timeout never does that
+ * (it only fires when no data is flowing), a cancel can hit mid-frame. So a
+ * cancel costs at most one transfer timeout of latency (800 ms read, 3 s
+ * write) inside a sequence -- and the two sequences that must not be
+ * interrupted (the init replay, and getframe's preamble + read, which arms the
+ * sensor for a frame) are checked only at their boundaries: up to ~2.6 s for a
+ * getframe on a sensor that has stopped answering. Abandoning either half-way
+ * would be a new, untested sensor state; that is a deliberate trade. */
 
 static gboolean
 usb_out (EgisDev *d, const unsigned char *b, int n)
@@ -56,6 +71,14 @@ usb_in (EgisDev *d, unsigned char *b, int cap, int timeout)
   if (!g_usb_device_bulk_transfer (d->usb, EP_IN, b, cap, &act, timeout, NULL, NULL))
     return -1;
   return (int) act;
+}
+
+/* TRUE (and *error set to G_IO_ERROR_CANCELLED) iff the attached cancellable has
+ * been triggered. Safe with a NULL cancellable (never cancelled). */
+static gboolean
+egis_cancelled (EgisDev *d, GError **error)
+{
+  return g_cancellable_set_error_if_cancelled (d->cancellable, error);
 }
 
 /* Discard whatever a previous session left queued on the IN endpoint. */
@@ -117,8 +140,13 @@ egis_wait_ready (EgisDev *d)
 {
   for (int i = 0; i < 10; i++)
     {
-      int v = egis_readreg (d, 0x00);
+      int v;
 
+      /* Once cancelled, the remaining iterations (850 ms each on a silent
+       * sensor) are pointless -- stop at this boundary. */
+      if (g_cancellable_is_cancelled (d->cancellable))
+        return FALSE;
+      v = egis_readreg (d, 0x00);
       if (v >= 0 && (v & 0xfe) == 0xaa)
         return TRUE;
       g_usleep (50 * 1000);
@@ -131,10 +159,17 @@ egis_wait_ready (EgisDev *d)
 gboolean
 egis_dev_open (EgisDev *d, gboolean reset_if_stuck, GError **error)
 {
+  if (egis_cancelled (d, error))
+    return FALSE;
   flush_in (d);
 
   if (!egis_wait_ready (d))
     {
+      /* Cancelled while polling: report that, and above all do NOT fire the
+       * ForceReset — it takes the device off the bus, which is not what a
+       * cancel (or a close racing a worker) asked for. */
+      if (egis_cancelled (d, error))
+        return FALSE;
       if (reset_if_stuck)
         g_usb_device_control_transfer (d->usb,
                                        G_USB_DEVICE_DIRECTION_HOST_TO_DEVICE,
@@ -152,7 +187,17 @@ egis_dev_open (EgisDev *d, gboolean reset_if_stuck, GError **error)
   /* Replay the vendor bring-up. Record 15 ("EGIS 73 0f 96") is an upload: its
    * 3990-byte payload follows immediately in the next eight records and the
    * sensor answers only once that is complete, so nothing may be read in
-   * between — doing so stalls the upload and wedges the sensor. */
+   * between -- doing so stalls the upload and wedges the sensor. For the same
+   * reason the command and its eight payload records are sent as one unit.
+   *
+   * The WHOLE replay is treated as one unit for cancellation: a cancel is
+   * honoured before the first record and after the last, never in between.
+   * Stopping half-way would leave the sensor with a prefix of the vendor
+   * sequence, a state nobody has tested it in, and the entire replay takes
+   * ~0.3 s on a healthy sensor, so the latency gained would be negligible. */
+  if (egis_cancelled (d, error))
+    return FALSE;
+  int in_upload = 0;
   for (int i = 0; i < EGIS_INIT_RECORD_COUNT; i++)
     {
       const unsigned char *rec = egis_init_records[i].data;
@@ -167,10 +212,19 @@ egis_dev_open (EgisDev *d, gboolean reset_if_stuck, GError **error)
                        "EH576: init record %d failed", i);
           return FALSE;
         }
-      if (is_cmd && !is_upload)
-        usb_in (d, r, sizeof r, 800);      /* consume the SIGE reply */
+      if (is_upload)
+        in_upload = 8;                       /* the payload chunks that follow */
+      else if (in_upload > 0)
+        in_upload--;
+      else if (is_cmd)
+        usb_in (d, r, sizeof r, 800);        /* consume the SIGE reply */
     }
 
+  /* The sensor is fully initialised here; a cancel that landed during the
+   * replay is honoured now, before the two cache reads (800 ms each on a
+   * silent sensor) and before the caller clears its re-init flag. */
+  if (egis_cancelled (d, error))
+    return FALSE;
   d->dc_c = (unsigned char) MAX (egis_readreg (d, REG_DC_C), 0);
   d->gain = (unsigned char) MAX (egis_readreg (d, REG_GAIN), 0);
   return TRUE;
@@ -195,6 +249,8 @@ egis_dev_getframe (EgisDev *d, guint8 *img, GError **error)
   unsigned char o[4096];
   int got = 0;
 
+  if (egis_cancelled (d, error))
+    return FALSE;
   for (guint i = 0; i < G_N_ELEMENTS (FRAME_PREAMBLE); i++)
     {
       unsigned char r[64];
@@ -202,6 +258,8 @@ egis_dev_getframe (EgisDev *d, guint8 *img, GError **error)
     }
   if (egis_cmd (d, req, 3, NULL, 0, 0) < 0)
     {
+      if (egis_cancelled (d, error))
+        return FALSE;
       g_set_error (error, G_IO_ERROR, G_IO_ERROR_FAILED, "EH576: GetFrame failed");
       return FALSE;
     }
@@ -218,6 +276,10 @@ egis_dev_getframe (EgisDev *d, guint8 *img, GError **error)
     }
   if (got < EGIS_IMG)
     {
+      /* A cancelled read shows up here as a short frame; report it as the
+       * cancel it is so the caller does not mistake it for a dead sensor. */
+      if (egis_cancelled (d, error))
+        return FALSE;
       g_set_error (error, G_IO_ERROR, G_IO_ERROR_FAILED,
                    "EH576: short frame (%d of %d)", got, EGIS_IMG);
       return FALSE;
@@ -358,7 +420,13 @@ egis_dev_new (GUsbDevice *usb)
 }
 
 void
+egis_dev_set_cancellable (EgisDev *d, GCancellable *cancellable)
+{
+  d->cancellable = cancellable;         /* borrowed, see the header */
+}
+
+void
 egis_dev_free (EgisDev *d)
 {
-  g_free (d);
+  g_free (d);                           /* cancellable is not ours to unref */
 }

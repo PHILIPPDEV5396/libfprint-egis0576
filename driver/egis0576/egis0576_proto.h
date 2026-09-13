@@ -17,6 +17,7 @@
 #define EGIS0576_PROTO_H
 
 #include <glib.h>
+#include <gio/gio.h>
 #include <gusb.h>
 
 #define EGIS_IMG 3990                  /* 70 x 57, 8-bit */
@@ -26,6 +27,23 @@ typedef struct EgisDev EgisDev;
 /* Bind to an already-claimed GUsbDevice. */
 EgisDev *egis_dev_new (GUsbDevice *usb);
 void     egis_dev_free (EgisDev *d);
+
+/* Attach the capture's GCancellable. BORROWED: the caller keeps the only ref
+ * and must detach (NULL) or free it only after no egis_dev_* call can be in
+ * flight. Pass NULL to detach.
+ *
+ * It is a FLAG, consulted between transfers only -- it is never handed to
+ * gusb. Measured on hardware (2026-09-13): aborting an in-flight bulk transfer
+ * (what gusb does with a cancelled GCancellable) wedged the sensor at USB
+ * level until a board power cycle. So a cancel is honoured at the next transfer
+ * boundary: before/after the readiness poll's iterations, before and after the
+ * init replay (which is sent as one unit), at getframe entry. The latency bound
+ * is therefore one transfer *sequence*, not one URB: up to ~2.6 s inside a
+ * getframe on a sensor that has stopped answering (6 x 300 ms preamble reads +
+ * one 800 ms frame read), ~0.3 s for the init replay on a healthy sensor, and
+ * 850 ms per readiness-poll iteration. egis_dev_* then fail with
+ * G_IO_ERROR_CANCELLED. */
+void     egis_dev_set_cancellable (EgisDev *d, GCancellable *cancellable);
 
 /* Bring the sensor up: poll it ready (the vendor's check_and_recovery), then
  * replay the vendor init/calibration sequence. Blocks (~0.3 s).

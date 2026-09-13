@@ -82,6 +82,44 @@ saturation, and there is no unit available on which a badly-exposed starting poi
 could be tested. Shipping an untested behaviour change to other people's hardware
 is the mistake that produced the TLS transport.
 
+## 4. Cancelling an in-flight USB transfer — wedges the sensor, do not
+
+Measured 2026-09-13 while shortening the driver's cancel latency. A revision of
+`egis0576_proto.c` passed a `GCancellable` to every `g_usb_device_bulk_transfer`
+/ `g_usb_device_control_transfer`, so that a cancel would abort the URB the
+worker was blocked in instead of waiting out its timeout. The mechanism itself
+worked exactly as intended:
+
+| step | result |
+|---|---|
+| getframe with a pre-cancelled cancellable | returned `CANCELLED` in **0.0 ms** |
+| cancel from another thread mid-capture-loop | loop stopped after **30 ms** (a read timeout is 800 ms) |
+| **next** getframe, cancellable cleared | `GetFrame failed` after **18 s** — six bulk-OUT timeouts of 3 s |
+
+That last line is the finding. The sensor whose IN transfer was unlinked
+mid-frame stopped accepting bulk OUT altogether. It then ignored the EP0
+`ForceResetDevice`, a sysfs `authorized=0` timed out (`ETIMEDOUT`), a hub-port
+link reset made the kernel re-enumerate it and fail on the very first descriptor
+read (`device descriptor read/64, error -110`), and the device dropped off the
+bus. Only cutting board power brought it back.
+
+A transfer *timeout* never does this: it fires only when no data is flowing. A
+*cancel* can land in the middle of a frame's data, and this firmware does not
+survive that. So the rule for this sensor is: **never hand a `GCancellable` to
+gusb.** The driver instead consults the cancellable at every transfer boundary
+(between readiness-poll iterations, before and after the init replay, at
+getframe entry, in the recovery path). The init replay and a getframe's
+preamble-plus-read are each sent as one unit and checked only at their
+boundaries — abandoning either half-way would be an untested sensor state — so
+the cancel latency bound is one such sequence: up to ~2.6 s inside a getframe
+on a sensor that has stopped answering, against ~11 s before. That is the
+deliberate trade for never touching a URB in flight.
+
+The proof/regression harness for this lives outside the repository
+(`cancel-proof.c`: pre-cancelled → immediate; mid-loop cancel → stops at the next
+boundary; and, decisively, *the sensor is still usable afterwards*). It refuses
+to run against a build that passes a cancellable to gusb.
+
 ## What this means
 
 The driver is at the sensor's operating point. The remaining limits are physical:

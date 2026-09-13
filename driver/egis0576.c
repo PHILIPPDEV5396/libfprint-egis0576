@@ -55,6 +55,27 @@ struct _FpDeviceEgis0576
    * main loop); results are marshalled back with g_idle_add. */
   GThread      *thread;
   gint          cancel;         /* atomic; set on main thread, read by worker */
+
+  /* Per-capture GCancellable the worker's transport polls at every transfer
+   * boundary (egis0576_proto.c never hands it to gusb: aborting an in-flight
+   * URB wedges this sensor at USB level, measured). Without it a cancel had to
+   * wait out whole *sequences* of transfers -- egis_wait_ready alone is
+   * 10 x 850 ms, the init replay ~25 x 800 ms, ~11 s on a sensor that has
+   * stopped answering; now it waits for at most the one SEQUENCE in flight
+   * (a getframe: ~2.6 s on a dead sensor; the init replay: ~0.3 s; one
+   * readiness-poll iteration: 850 ms).
+   *
+   * OWNERSHIP: the main thread owns the one and only ref. It is created in
+   * start_capture (fresh object per capture, never g_cancellable_reset) and
+   * handed to the EgisDev as a borrowed pointer BEFORE g_thread_new, so the
+   * worker only ever sees a fully constructed object; it is cancelled from
+   * egis0576_cancel / egis0576_close on the main thread (GCancellable is
+   * thread-safe for that); and it is detached from the EgisDev and unreffed in
+   * finish_teardown / egis0576_close only AFTER g_thread_join has returned.
+   * The pointer therefore never changes while a worker exists, and the worker
+   * can never dereference a cancellable the main thread is freeing. */
+  GCancellable *capture_cancellable;
+
   gint          needs_reinit;   /* atomic; set by suspend/resume on the main
                                  * thread, consumed by the worker: the sensor
                                  * does not reliably keep its bring-up state
@@ -233,6 +254,11 @@ finish_teardown (FpDeviceEgis0576 *self, FpDevice *dev)
       g_thread_join (self->thread);
       self->thread = NULL;
     }
+  /* Worker is gone: nothing can be inside a transfer any more, so detach the
+   * borrowed pointer from the channel and drop our ref (see the struct). */
+  if (self->sensor)
+    egis_dev_set_cancellable (self->sensor, NULL);
+  g_clear_object (&self->capture_cancellable);
   g_clear_pointer (&self->gallery_prints, g_ptr_array_unref);
   fpi_device_report_finger_status (dev, FP_FINGER_STATUS_NONE);
 }
@@ -354,12 +380,37 @@ worker_reinit (FpDeviceEgis0576 *self, GError **error)
 {
   GUsbDevice *usb = fpi_device_get_usb_device (FP_DEVICE (self));
 
+  /* Until the bring-up below has succeeded the sensor is in an unknown state
+   * (a cancel can stop the replay half-way), so the NEXT worker must re-init
+   * eagerly whichever path called us; cleared again on success. */
+  g_atomic_int_set (&self->needs_reinit, TRUE);
   g_clear_pointer (&self->sensor, egis_dev_free);
   self->sensor = egis_dev_new (usb);
+  /* The fresh channel must carry this capture's cancellable, or the re-init's
+   * own ~25 x 800 ms of transfers would be uncancellable again. */
+  egis_dev_set_cancellable (self->sensor, self->capture_cancellable);
   if (!egis_dev_open (self->sensor, FALSE, error))
     return FALSE;                            /* leave needs_reinit TRUE */
   g_atomic_int_set (&self->needs_reinit, FALSE);
   return TRUE;
+}
+
+/* Worker-side cancel test for a failed egis_dev_* call: TRUE if the capture was
+ * cancelled — either the flag is up, or egis_dev_* reported
+ * G_IO_ERROR_CANCELLED from one of its between-transfer checks. Both are set
+ * from the same place (egis0576_cancel / close, flag first), so they agree in
+ * practice; checking both keeps a cancelled call from ever being mistaken for
+ * a sensor failure that warrants a re-init. Consumes *error when TRUE. */
+static gboolean
+worker_cancelled (FpDeviceEgis0576 *self, GError **error)
+{
+  if (g_atomic_int_get (&self->cancel) ||
+      g_error_matches (*error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
+    {
+      g_clear_error (error);
+      return TRUE;
+    }
+  return FALSE;
 }
 
 /* runs in the worker thread */
@@ -371,6 +422,7 @@ capture_thread (gpointer data)
   FpiDeviceAction action = fpi_device_get_current_action (dev);
   CapturePhase phase = PH_AWAIT_ON;
   gboolean finishing = FALSE;
+  gboolean cancelled = FALSE;    /* left the loop because the capture was cancelled */
   gboolean saw_finger = FALSE;   /* verify/identify: a press is in progress */
   int best_score = -1;           /* verify/identify: best score seen this press */
   guint8 ffframe[EGIS_IMG];  /* flat-fielded frame (baseline-subtracted) */
@@ -393,7 +445,13 @@ capture_thread (gpointer data)
         {
           if (!worker_reinit (self, &error))
             {
-              Msg *m = g_new0 (Msg, 1);
+              Msg *m;
+              if (worker_cancelled (self, &error))  /* cancel mid-re-init: not a sensor fault */
+                {
+                  cancelled = TRUE;
+                  break;
+                }
+              m = g_new0 (Msg, 1);
               m->kind = M_ERROR;
               m->error = error;              /* -> fpi_device_action_error -> password fallback */
               post_msg (dev, m);
@@ -407,24 +465,50 @@ capture_thread (gpointer data)
            * so needs_reinit was FALSE and the eager path was skipped) and any
            * unfreeze race: a dead session makes getframe return an error in
            * bounded time (read_record now has a wall-clock deadline). If we were
-           * cancelled (suspend), fall through so the loop exits with a clean
-           * cancel instead of running a re-handshake. Otherwise re-establish the
-           * session once, in this worker thread, and retry. Give up — with the
-           * real device error -> password fallback — only if the re-handshake or
-           * the retry getframe also fails. */
-          if (g_atomic_int_get (&self->cancel))
+           * cancelled (suspend, VerifyStop, close) — flag up, or the transfer
+           * itself aborted with G_IO_ERROR_CANCELLED — leave with a clean cancel
+           * instead of running a re-handshake. Otherwise re-establish the
+           * session once, in this worker thread, and retry, re-checking for a
+           * cancel between the two steps. Give up — with the real device error
+           * -> password fallback — only if the re-handshake or the retry
+           * getframe also fails for a reason other than a cancel. */
+          if (worker_cancelled (self, &error))
             {
-              g_clear_error (&error);
+              cancelled = TRUE;
               break;
             }
           fp_dbg ("getframe failed (%s); re-initialising the sensor and retrying",
                   error ? error->message : "?");
           g_clear_error (&error);
 
-          if (!worker_reinit (self, &error) ||
-              !egis_dev_getframe (self->sensor, self->frame, &error))
+          if (!worker_reinit (self, &error))
             {
-              Msg *m = g_new0 (Msg, 1);
+              Msg *m;
+              if (worker_cancelled (self, &error))
+                {
+                  cancelled = TRUE;
+                  break;
+                }
+              m = g_new0 (Msg, 1);
+              m->kind = M_ERROR;
+              m->error = error;
+              post_msg (dev, m);
+              return NULL;
+            }
+          if (g_atomic_int_get (&self->cancel))
+            {
+              cancelled = TRUE;
+              break;
+            }
+          if (!egis_dev_getframe (self->sensor, self->frame, &error))
+            {
+              Msg *m;
+              if (worker_cancelled (self, &error))
+                {
+                  cancelled = TRUE;
+                  break;
+                }
+              m = g_new0 (Msg, 1);
               m->kind = M_ERROR;
               m->error = error;
               post_msg (dev, m);
@@ -549,7 +633,7 @@ capture_thread (gpointer data)
       g_usleep (EGIS0576_POLL_SLEEP_US);
     }
 
-  if (g_atomic_int_get (&self->cancel))
+  if (cancelled || g_atomic_int_get (&self->cancel))
     {
       Msg *m = g_new0 (Msg, 1);
       m->kind = M_ERROR;
@@ -580,6 +664,27 @@ start_capture (FpDevice *dev)
   FpDeviceEgis0576 *self = FPI_DEVICE_EGIS0576 (dev);
 
   g_atomic_int_set (&self->cancel, FALSE);
+
+  /* Fresh cancellable per capture (see the struct for ownership). The previous
+   * one was released in finish_teardown after its worker was joined, so this
+   * can only be NULL here; a leftover would mean a worker is still running,
+   * which libfprint's one-action-at-a-time contract rules out. It is attached
+   * to the channel BEFORE the thread exists so the worker never observes it
+   * changing. */
+  if (G_UNLIKELY (self->capture_cancellable != NULL))
+    {
+      /* A leftover means a worker is (or was) still running: an invariant
+       * violation, not a state to continue from. But the action must not be
+       * abandoned either -- libfprint would keep it as current forever and
+       * every later call, close included, would fail BUSY. Fail it cleanly. */
+      g_warn_if_reached ();
+      fpi_device_action_error (dev, fpi_device_error_new_msg (FP_DEVICE_ERROR_BUSY,
+                                                              "EH576: a capture is already running"));
+      return;
+    }
+  self->capture_cancellable = g_cancellable_new ();
+  egis_dev_set_cancellable (self->sensor, self->capture_cancellable);
+
   fpi_device_report_finger_status_changes (dev,
                                            FP_FINGER_STATUS_NEEDED,
                                            FP_FINGER_STATUS_NONE);
@@ -589,6 +694,8 @@ start_capture (FpDevice *dev)
 /* ------------------------------------------------------------------ */
 /* Device vfuncs                                                      */
 /* ------------------------------------------------------------------ */
+
+static void egis0576_cancel (FpDevice *dev);   /* used by egis0576_close */
 
 static void
 egis0576_open (FpDevice *dev)
@@ -643,16 +750,32 @@ egis0576_close (FpDevice *dev)
   FpDeviceEgis0576 *self = FPI_DEVICE_EGIS0576 (dev);
   GError *error = NULL;
 
-  /* A capture worker may still be running (close racing a cancel/resume). It owns
-   * self->sensor, so stop and join it before freeing the session or it would touch
-   * freed memory. The join is bounded: the worker is at most one read_record
-   * deadline away from noticing self->cancel and returning. */
+  /* Normally unreachable: libfprint refuses close while an action is current,
+   * and the worker only exists between start_capture and the terminal message
+   * that completes the action (finish_teardown joins it first), so by the time
+   * close can run there is no thread. Kept as a defensive backstop should that
+   * ever change (a close racing a cancel/resume): the worker owns self->sensor,
+   * so it must be stopped and joined before the session is freed, or it would
+   * touch freed memory.
+   *
+   * If it ever IS reached while the worker sits inside a synchronous gusb
+   * transfer, this join DEADLOCKS: gusb's sync transfers complete through an
+   * idle on the default GMainContext, which this (main) thread owns and is
+   * not iterating while it blocks here. The cancel below shortens the wait to
+   * one transfer boundary in every case where the worker is not inside a
+   * transfer, and that is all it can do -- which is why the path must stay
+   * unreachable, and why it warns rather than pretending to be safe. */
   if (self->thread)
     {
-      g_atomic_int_set (&self->cancel, TRUE);
+      g_warn_if_reached ();              /* see above: must not happen */
+      egis0576_cancel (dev);
       g_thread_join (self->thread);
       self->thread = NULL;
     }
+  /* Joined (or never started): safe to detach and release the cancellable. */
+  if (self->sensor)
+    egis_dev_set_cancellable (self->sensor, NULL);
+  g_clear_object (&self->capture_cancellable);
   g_clear_pointer (&self->sensor, egis_dev_free);
   g_usb_device_release_interface (fpi_device_get_usb_device (dev),
                                   EGIS0576_INTF, 0, &error);
@@ -749,7 +872,20 @@ egis0576_cancel (FpDevice *dev)
   FpDeviceEgis0576 *self = FPI_DEVICE_EGIS0576 (dev);
 
   fp_dbg ("cancelling");
+
+  /* Order matters: the flag goes up first, then the cancellable is triggered.
+   * The worker treats a G_IO_ERROR_CANCELLED transfer as "check the flag", and
+   * g_cancellable_cancel is a full barrier, so a worker woken by the cancel is
+   * guaranteed to also see the flag. Setting only the flag (as before) left the
+   * worker to wait out whole transfer SEQUENCES (wait_ready, init replay) --
+   * up to ~11 s on a sensor that stopped answering; the cancellable is polled
+   * at every transfer boundary, so now it waits for at most the one transfer
+   * in flight (it is never handed to gusb -- aborting a URB wedges this
+   * sensor, see egis0576_proto.c). NULL when no capture is running. Main
+   * thread only, like every other writer of these fields. */
   g_atomic_int_set (&self->cancel, TRUE);
+  if (self->capture_cancellable)
+    g_cancellable_cancel (self->capture_cancellable);
 }
 
 static void
@@ -765,8 +901,10 @@ egis0576_suspend (FpDevice *dev)
   g_atomic_int_set (&self->needs_reinit, TRUE);
 
   /* Cancel the running action exactly as egismoc does (egismoc.c:1571-1578):
-   * stop our worker (sets self->cancel -> worker exits and posts a cancelled
-   * M_ERROR) and cancel the device cancellable so libfprint/fprintd sees the
+   * stop our worker via egis0576_cancel — which sets self->cancel AND cancels
+   * the per-capture cancellable, so the worker stops at the next transfer
+   * boundary instead of finishing a whole re-init sequence — and cancel the
+   * device cancellable so libfprint/fprintd sees the
    * action end. Complete with NULL: we are NOT promising the *current* action
    * survives (we are cancelling it), and NULL takes suspend_complete's immediate
    * return path (fpi-device.c:1815-1823) without libfprint ALSO cancelling with
