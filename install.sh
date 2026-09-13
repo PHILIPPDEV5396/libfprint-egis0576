@@ -54,7 +54,10 @@ echo ">>> applying the meson integration patch ..."
 git apply "$PATCH"
 
 echo ">>> configuring + building (full default driver set + egis0576) ..."
-meson setup builddir --prefix="$PREFIX" --buildtype=release
+# Extra meson options, e.g. the experimental clean-room matcher:
+#   EGIS0576_MESON_ARGS="-Degis0576_matcher=cleanroom" ./install.sh
+# (see driver/egis0576/egis_engine_cleanroom.c; switching flavours means re-enrolling)
+meson setup builddir --prefix="$PREFIX" --buildtype=release ${EGIS0576_MESON_ARGS:-}
 ninja -C builddir
 
 echo ">>> installing to $PREFIX (sudo) ..."

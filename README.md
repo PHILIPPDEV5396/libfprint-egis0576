@@ -168,6 +168,22 @@ If it still points at the distro copy, add `PREFIX/lib` (or `lib64`) to
 `PREFIX=/usr` replaces the distro library outright — simplest, but a distro update
 can overwrite it, so you'd re-run `install.sh` after libfprint updates.)
 
+**Experimental — clean-room matcher.** The driver's default matcher is the
+vendor's own, machine-translated from the Windows driver, which is what keeps
+this driver out of upstream libfprint. Thaddeus Stepanovich's LGPL clean-room
+correlation matcher can be selected at build time instead, so the two can be
+compared on the same captures:
+
+```bash
+EGIS0576_MESON_ARGS="-Degis0576_matcher=cleanroom" ./install.sh
+```
+
+Templates enrolled under one matcher are rejected by the other, so switching
+means re-enrolling. It builds and passes a synthetic contract test; the
+hardware comparison has not been done yet, so no accuracy claim is attached to
+it. Details in
+[`driver/egis0576/egis_engine_cleanroom.c`](driver/egis0576/egis_engine_cleanroom.c).
+
 ## Enrolling
 
 ```bash
