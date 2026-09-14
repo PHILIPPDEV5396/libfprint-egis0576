@@ -1,10 +1,14 @@
-libfprint-egis0576-tod (0.4.4-1) noble; urgency=medium
+libfprint-egis0576-tod (0.4.4-1) UNRELEASED; urgency=medium
 
   * Initial Ubuntu TOD module packaging. Builds the egis0576 driver as a
     standalone libfprint-2/tod-1 module against the stock Ubuntu
     libfprint-2-tod-dev headers. Does not replace libfprint-2-2.
-  * Build on the oldest supported series (noble): the TOD version script's
-    newest node carries a symbol catch-all, so a module built on a newer
-    series can fail to load on an older one. See packaging/README.md.
+  * Build one .deb per series with build-series.sh (noble, resolute): a
+    noble-built .deb's auto-generated libgusb2 dependency does not resolve
+    on 26.04, which renamed that runtime package to libgusb2a. The version
+    each series' build stamps (a ~24.04 or ~26.04 suffix, applied by the
+    script and not committed here) also keeps a release upgrade moving a
+    user onto the resolute build instead of leaving them on noble's. See
+    packaging/README.md.
 
  -- Philipp Oster <70714877+PHILIPPDEV5396@users.noreply.github.com>  Sun, 13 Sep 2026 00:00:00 +0000

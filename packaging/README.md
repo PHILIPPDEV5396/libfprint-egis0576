@@ -382,72 +382,139 @@ sudo systemctl restart fprintd
 `libfprint-2-2` is never replaced or held back by this package, so ordinary
 `apt upgrade` keeps applying Ubuntu's own libfprint security updates normally.
 
+### Supported series: one .deb each, not one .deb for both
+
+Two Ubuntu series are supported, and each gets its own build:
+
+| Series | Status |
+|---|---|
+| **resolute**, 26.04 LTS | tested — the maintainer's own machine |
+| **noble**, 24.04 LTS | best effort |
+
+A single `.deb` cannot serve both series, for a reason distinct from the
+symbol-versioning rule below: `dpkg-shlibdeps` bakes in the *exact* runtime
+package name that provides `libgusb.so.2` on the series it builds on, and
+Ubuntu renamed that package between the two series (`libgusb2` on noble,
+`libgusb2a` on resolute), with no transitional package bridging them, even
+though the `.so` itself is identical (`libgusb.so.2.0.10` on both). A
+noble-built `.deb` therefore depends on a package name that does not exist on
+resolute, and `apt install` of it on resolute refuses outright. The verbatim
+failure, `apt install`-ing a noble-built `.deb` on an `ubuntu:26.04` container:
+
+```
+Some packages could not be installed. This may mean that you have
+requested an impossible situation or if you are using the unstable
+distribution that some required packages have not yet been created
+or been moved out of Incoming.
+The following information may help to resolve the situation:
+
+The following packages have unmet dependencies:
+ libfprint-2-tod1-egis0576 : Depends: libgusb2 (>= 0.1.0) but it is not installable
+E: Unable to satisfy dependencies. Reached two conflicting assignments:
+   1. libfprint-2-tod1-egis0576:amd64=0.4.4-1~24.04 is selected for install
+   2. libfprint-2-tod1-egis0576:amd64 Depends libgusb2 (>= 0.1.0)
+      but none of the choices are installable:
+      [no choices]
+```
+
+(captured from `apt install ./libfprint-2-tod1-egis0576_0.4.4-1~24.04_amd64.deb`
+in an `ubuntu:26.04` container)
+
+Building each series in its own environment regenerates `${shlibs:Depends}`
+against that series' own package names, so this is the one clean fix — not a
+workaround applied after the fact.
+
 ### Maintainer: build the module
 
 ```bash
 sudo apt install build-essential devscripts debhelper meson pkgconf \
     libfprint-2-tod-dev libfprint-2-dev libgusb-dev libglib2.0-dev
 cd packaging/ubuntu-tod
-dpkg-buildpackage -us -uc -b
+./build-series.sh noble       # or: ./build-series.sh resolute
 ```
 
-This reads `../../driver/egis0576.c` and `../../driver/egis0576/` straight out
-of the repository tree — nothing under `driver/` is copied or patched for this
-build — links them against the headers `libfprint-2-tod-dev` installs, and
-produces `libfprint-2-tod1-egis0576_<version>_<arch>.deb`. The two
-[`../integration/`](../integration/) files (the systemd-sleep hook and the
-no-autosuspend udev rule) are installed by `debian/rules`, also read straight
-from the repository, not copied into `packaging/ubuntu-tod/`.
+`build-series.sh` reads the plain version already in `debian/changelog`,
+appends `~24.04` (noble) or `~26.04` (resolute), rewrites the changelog's top
+entry with that version and the matching distribution using `dch`, runs
+`dpkg-buildpackage -us -uc -b`, then restores `debian/changelog` with `git
+checkout` so the committed file names no series. A plain
+`dpkg-buildpackage -us -uc -b` from a clean checkout still works and simply
+omits the suffix — useful for a local one-off build, not for anything meant
+to be installed alongside the other series' package.
 
-### BUILD ON THE OLDEST SUPPORTED SERIES — this is not optional
+The build reads `../../driver/egis0576.c` and `../../driver/egis0576/`
+straight out of the repository tree — nothing under `driver/` is copied or
+patched for this build — links them against the headers
+`libfprint-2-tod-dev` installs, and produces
+`libfprint-2-tod1-egis0576_<version>_<arch>.deb`, where `<version>` carries
+the `~24.04` or `~26.04` suffix. The two [`../integration/`](../integration/)
+files (the systemd-sleep hook and the no-autosuspend udev rule) are installed
+by `debian/rules`, also read straight from the repository, not copied into
+`packaging/ubuntu-tod/`.
 
-Build the PPA (or any one-off `.deb`) on the **oldest** Ubuntu series you mean
-to support (currently **noble**, 24.04 LTS), never on a newer one. Ubuntu's TOD
-version script (`libfprint/tod/libfprint-tod.ver.in`) ends its **newest** symbol
-node with an `fpi_*;` catch-all, so a module built on a newer series can bind a
-symbol at a version node that an older series' `libfprint-2-tod.so.1` does not
-export — and it then fails to load there, silently as far as the running
-system is concerned (it just never registers the driver). A module built on
-the oldest supported series carries no symbol newer than that series exports,
-so it loads unmodified on every newer series too. This was verified in both
-directions: a module built in an `ubuntu:noble` container loads on `ubuntu:26.04`,
-and one built in `ubuntu:26.04` loads on `noble`, because this driver uses no
-symbol introduced after the `1.94` version node. A future driver version that
-starts using a newer libfprint-TOD symbol would lose that second direction —
-rebuild on the oldest series remains the rule regardless. If a PPA is used,
-this is close to free: Launchpad already builds each series in its own chroot.
+### Why the version needs a series suffix, and why `~24.04` / `~26.04`
+
+A user runs `do-release-upgrade` from 24.04 to 26.04 and then installs the
+resolute `.deb` without first removing the noble one. For that install to
+land as an upgrade rather than a downgrade `dpkg` refuses, the resolute
+version must sort above the noble version. dpkg sorts a `~`-tagged suffix
+below no suffix at all, and — where both sides of a `~` are digits — sorts
+that part numerically, the same rule that makes Ubuntu's own
+`~24.04.8`-style SRU suffixes work. Verified with `dpkg --compare-versions`,
+not reasoned about:
+
+```
+$ dpkg --compare-versions 0.4.4-1~24.04 '<<' 0.4.4-1~26.04 && echo yes
+yes
+$ dpkg --compare-versions 0.4.4-1 '>>' 0.4.4-1~26.04 && echo yes
+yes
+```
+
+A codename suffix (`~noble` / `~resolute`) was considered and rejected: it
+would sort alphabetically, which happens to put `noble` below `resolute`
+today but is not a rule a future series name is bound by. `~24.04` /
+`~26.04` sorts on the release number itself, so it stays correct regardless
+of what a future series is called.
+
+The filename carries the same suffix
+(`libfprint-2-tod1-egis0576_0.4.4-1~24.04_amd64.deb` vs.
+`libfprint-2-tod1-egis0576_0.4.4-1~26.04_amd64.deb`), so the series is
+visible on a GitHub Releases page without opening the file.
+
+### The old build-on-the-oldest-series rule, and why it is now moot
+
+Ubuntu's TOD version script (`libfprint/tod/libfprint-tod.ver.in`) ends its
+**newest** symbol node with an `fpi_*;` catch-all, so a module built on a
+newer series can bind a symbol at a version node that an older series'
+`libfprint-2-tod.so.1` does not export — and it then fails to load there,
+silently as far as the running system is concerned (it just never registers
+the driver). Building on the oldest supported series avoided this, because
+such a module carries no symbol newer than that series exports and so loads
+unmodified on every newer series too.
+
+That rule mattered only when one `.deb` had to serve every series. Now that
+each series gets its own build, from its own container, it is moot for this
+project regardless of which symbol version node a future driver release
+uses: the noble build is what noble gets, the resolute build is what
+resolute gets, and neither is ever asked to load on the other series. The
+underlying `fpi_*` catch-all behavior is still true of the TOD loader and
+still worth knowing if this project ever goes back to a single cross-series
+build.
 
 ### Verified
 
-Built and loaded (stock `libfprint-2-2`, `G_MESSAGES_DEBUG=all` showing
-`Loading driver egis0576`) as an installed `.deb`, on:
+Built and installed with `build-series.sh`, each on its own series
+(`ubuntu:noble` / `ubuntu:26.04` containers, linux/amd64):
 
-| Built on | Loaded on | amd64 | arm64 |
+| Series | `apt install` of its own `.deb` | `G_MESSAGES_DEBUG=all` shows `Loading driver egis0576` | `dpkg -V libfprint-2-2` |
 |---|---|---|---|
-| noble | noble | yes | yes |
-| noble | 26.04 | yes | yes |
+| noble | resolves cleanly, no workaround | yes | unchanged |
+| resolute | resolves cleanly, no workaround | yes | unchanged |
 
-`dpkg -V libfprint-2-2` was unchanged in every case (only pre-existing missing
-doc files from the base container image, no changed binary) — confirming this
-package never touches the archive `libfprint-2-2`.
-
-**A gap found during this build, not in the design it was based on:** on
-`ubuntu:26.04` (arm64 and amd64 both), `apt install` of a **noble-built** `.deb`
-fails outright — not from the TOD symbol-versioning concern above, but because
-`dpkg-shlibdeps` bakes in the *exact* runtime package name that provides
-`libgusb.so.2` on the **build** series, and Ubuntu renamed that package between
-noble and resolute (`libgusb2` → `libgusb2a`) with no transitional package
-bridging the two, even though the `.so` itself is identical
-(`libgusb.so.2.0.10` on both). `apt install ./libfprint-2-tod1-egis0576_*.deb`
-on a 26.04 machine that only has `libgusb2a` installed refuses the package
-outright with an unsatisfiable-dependency error. This was confirmed by
-`dpkg -L` on both series showing the same `.so` file under two different
-package names, and by installing with `dpkg -i --force-depends` to prove the
-TOD load itself is unaffected once the dependency check is bypassed. A PPA
-sidesteps this the same way it sidesteps the symbol-versioning issue — building
-each series in its own chroot regenerates `${shlibs:Depends}` against that
-series' own package names — so this is a build-hygiene note for anyone building
-a one-off `.deb` outside a PPA, not a defect in the module itself.
+Cross-series install was also confirmed to fail as expected: `apt install` of
+the noble `.deb` on `ubuntu:26.04` refuses with the unmet-dependency error
+quoted above, because of the `libgusb2` → `libgusb2a` rename — exactly the
+reason both series are built separately.
 
 ### What the package contains
 
