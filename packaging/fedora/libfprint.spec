@@ -137,7 +137,7 @@ install -Dm 0644 "$egisdir/integration/egis0576-fprintd-wait.conf" \
 %{_datadir}/installed-tests/libfprint-2/
 
 %changelog
-* Sun Sep 14 2026 PHILIPPDEV5396 - 1.94.100-99.egis10
+* Mon Sep 14 2026 PHILIPPDEV5396 - 1.94.100-99.egis10
 - Update egis0576 driver to v0.4.5.
   * integration: hold fprintd's start while the resume hook re-enumerates the
     sensor. The hook needs about a second for that, fprintd is D-Bus activated,
