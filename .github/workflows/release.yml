@@ -82,6 +82,14 @@ jobs:
             container: archlinux:latest
           - distro: debian
             container: debian:trixie
+          - distro: ubuntu-noble
+            container: ubuntu:noble
+            series: noble
+            series_version: '24.04'
+          - distro: ubuntu-resolute
+            container: ubuntu:26.04
+            series: resolute
+            series_version: '26.04'
     container:
       image: ${{ matrix.container }}
     steps:
@@ -102,6 +110,12 @@ jobs:
 
       - name: Install git (Debian)
         if: matrix.distro == 'debian'
+        run: |
+          apt-get update -qq
+          apt-get install -y --no-install-recommends git ca-certificates
+
+      - name: Install git (Ubuntu)
+        if: startsWith(matrix.distro, 'ubuntu-')
         run: |
           apt-get update -qq
           apt-get install -y --no-install-recommends git ca-certificates
@@ -409,6 +423,127 @@ jobs:
           }
 
           echo "Debian install verification passed."
+
+      # --- Ubuntu TOD module path ---
+      - name: Install Ubuntu build deps
+        if: startsWith(matrix.distro, 'ubuntu-')
+        run: |
+          apt-get update -qq
+          apt-get install -y --no-install-recommends build-essential devscripts \
+            debhelper meson pkgconf libfprint-2-tod-dev libfprint-2-dev \
+            libgusb-dev libglib2.0-dev
+
+      - name: Build Ubuntu package (${{ matrix.series }})
+        if: startsWith(matrix.distro, 'ubuntu-')
+        run: |
+          cd "$GITHUB_WORKSPACE/packaging/ubuntu-tod"
+          ./build-series.sh "${{ matrix.series }}"
+          mkdir -p "$GITHUB_WORKSPACE/dist"
+          # Prefixed with "ubuntu-<series>-" so a package for one series
+          # cannot be mistaken for the other series' package, or for the
+          # debian-trixie-prefixed Debian package on the same release, on
+          # the Releases page. The ~24.04 / ~26.04 in the version itself
+          # (see build-series.sh) is what actually keeps the two Ubuntu
+          # packages installable side by side and sorting correctly across
+          # a release upgrade; the filename prefix is only for a human
+          # scanning the release assets.
+          for f in build-output/*.deb \
+                   build-output/*.ddeb \
+                   build-output/*.changes \
+                   build-output/*.buildinfo; do
+            [ -e "$f" ] || continue
+            cp "$f" "$GITHUB_WORKSPACE/dist/ubuntu-${{ matrix.series }}-$(basename "$f")"
+          done
+
+      # Ubuntu ships its own libfprint-2-2 (which the TOD module never
+      # touches), so this step installs the stock package first. That way
+      # the later dpkg -V comparison has a real baseline to compare against,
+      # not just an empty container.
+      - name: Install stock Ubuntu libfprint-2-2 (${{ matrix.series }})
+        if: startsWith(matrix.distro, 'ubuntu-')
+        run: apt-get install -y libfprint-2-2
+
+      - name: Install and verify the Ubuntu package (${{ matrix.series }})
+        if: startsWith(matrix.distro, 'ubuntu-')
+        run: |
+          cd "$GITHUB_WORKSPACE"
+
+          deb=$(ls dist/ubuntu-${{ matrix.series }}-libfprint-2-tod1-egis0576_*.deb)
+
+          echo "== dpkg -V libfprint-2-2, before installing the TOD module =="
+          before=$(dpkg -V libfprint-2-2 || true)
+
+          # Plain apt install, no --allow-downgrades, no --force-depends: the
+          # .deb was built inside this same container image, so its
+          # auto-generated ${shlibs:Depends} (in particular libgusb2 vs.
+          # libgusb2a) already matches what this series ships.
+          apt-get install -y "./$deb"
+
+          echo "== installed package version =="
+          dpkg-query -W -f='${Version}\n' libfprint-2-tod1-egis0576
+          dpkg-query -W -f='${Version}\n' libfprint-2-tod1-egis0576 \
+            | grep -q -- "-1~${{ matrix.series_version }}\$" || {
+            echo "FAIL: installed version does not carry the ~${{ matrix.series_version }} series suffix"; exit 1;
+          }
+
+          echo "== module installed under the TOD drivers directory pkg-config reports =="
+          tod_dir=$(pkg-config --variable=tod_driversdir libfprint-2-tod-1)
+          test -n "$tod_dir" || { echo "FAIL: pkg-config reported no tod_driversdir"; exit 1; }
+          module="$tod_dir/libfprint-tod-egis0576.so"
+          test -e "$module" || { echo "FAIL: $module not installed"; exit 1; }
+
+          echo "== module file name satisfies the TOD loader's lib*.so rule =="
+          # tod-shared-loader.c only opens files that both start with "lib"
+          # and end in ".so" (see packaging/README.md). Checking the pattern,
+          # not just the one name this build happens to produce, so a future
+          # change to a versioned .so.N.N.N name would be caught here too.
+          base=$(basename "$module")
+          case "$base" in
+            lib*.so) ;;
+            *) echo "FAIL: $base does not match the loader's lib*.so naming rule"; exit 1 ;;
+          esac
+
+          echo "== dpkg -V libfprint-2-2, after installing the TOD module =="
+          after=$(dpkg -V libfprint-2-2 || true)
+          if [ "$before" != "$after" ]; then
+            echo "FAIL: dpkg -V libfprint-2-2 changed after installing the TOD module"
+            echo "-- before --"
+            echo "$before"
+            echo "-- after --"
+            echo "$after"
+            exit 1
+          fi
+          echo "dpkg -V libfprint-2-2 unchanged, as expected."
+
+          echo "== stock libfprint loads the module =="
+          # A five-line program that only creates an FpContext. libfprint-2-dev
+          # (a build dep above) provides the header and pkg-config file; no
+          # extra package is needed to compile it.
+          cat > /tmp/probe.c <<'PROBE_EOF'
+          #include <fprint.h>
+
+          int
+          main (void)
+          {
+            g_autoptr (FpContext) ctx = fp_context_new ();
+            GPtrArray *devs = fp_context_get_devices (ctx);
+
+            g_print ("context created, %u device(s) present\n", devs ? devs->len : 0);
+            return 0;
+          }
+          PROBE_EOF
+          # pkg-config's output is meant to be word-split into several
+          # separate flags, so it is deliberately left unquoted here.
+          # shellcheck disable=SC2046
+          gcc /tmp/probe.c -o /tmp/probe $(pkg-config --cflags --libs libfprint-2)
+
+          probe_output=$(G_MESSAGES_DEBUG=all /tmp/probe 2>&1)
+          echo "$probe_output"
+          grep -q 'Loading driver egis0576' <<<"$probe_output" || {
+            echo "FAIL: stock libfprint did not report loading driver egis0576"; exit 1;
+          }
+
+          echo "Ubuntu (${{ matrix.series }}) install verification passed."
 
       - name: Upload build artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

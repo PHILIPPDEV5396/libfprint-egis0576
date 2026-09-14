@@ -566,9 +566,10 @@ getting the old one:
 
 ## Release CI (GitHub Actions)
 
-`.github/workflows/release.yml` builds all three packages in containers and
+`.github/workflows/release.yml` builds all five packages in containers and
 attaches them to the GitHub Release for a tag, as a convenience alongside
-COPR, the AUR and a manual Debian build, not a replacement for any of them.
+COPR, the AUR and a manual Debian or Ubuntu build, not a replacement for any
+of them.
 
 **What it does:** on a push of a tag matching `v*`, a first job checks that
 `packaging/fedora/libfprint.spec` (`%global egis_tag`) and
@@ -576,26 +577,37 @@ COPR, the AUR and a manual Debian build, not a replacement for any of them.
 fails the run if either is stale. A matrix job then builds the Fedora RPM (in
 a `fedora:43` container, from the unmodified `packaging/fedora/libfprint.spec`),
 the Arch package (in an `archlinux:latest` container, from the unmodified
-`packaging/aur/PKGBUILD`), and the Debian package set (in a `debian:trixie`
+`packaging/aur/PKGBUILD`), the Debian package set (in a `debian:trixie`
 container, using `packaging/debian/build.sh` the same way "Users install
-with" above does), each on GitHub's native x86_64 runners with no aarch64
-leg. **The Fedora RPM is a Fedora 43 build only** (the container is
-`fedora:43`, so `%{?dist}` expands to `.fc43`); COPR remains the supported
-install path for other Fedora versions, since its project builds separate
-chroots for each one. Each leg then installs its own freshly built package on
-top of the distro's stock package (where one ships) inside the same
-container, and checks the installed files: the package version, the shared
-library's presence and size, the egis0576 driver symbols compiled into it,
-and (Fedora and Debian) the suspend/resume hook and udev rule. The produced
-`.deb` files are prefixed `debian-trixie-` so they read apart from a later
-leg's per-series Ubuntu packages on the Releases page. A failed check fails
-that leg's build, so a package this workflow does not verify never reaches
-the release. A final job then attaches every built package, plus a generated
-`SHA256SUMS` file, to the GitHub Release for that tag, creating the release
-if one does not already exist for it. The workflow uses only the built-in
-`GITHUB_TOKEN`, requests just the `contents` permission it needs, and never
-pushes to COPR or the AUR — publishing to those still follows the steps
-above.
+with" above does), and the Ubuntu TOD module, once per supported series (in
+`ubuntu:noble` and `ubuntu:26.04` containers, using
+`packaging/ubuntu-tod/build-series.sh` the same way the Ubuntu section above
+does), each on GitHub's native x86_64 runners with no aarch64 leg. **The
+Fedora RPM is a Fedora 43 build only** (the container is `fedora:43`, so
+`%{?dist}` expands to `.fc43`); COPR remains the supported install path for
+other Fedora versions, since its project builds separate chroots for each
+one. Each leg then installs its own freshly built package on top of the
+distro's stock package (where one ships) inside the same container, and
+checks the installed files: the package version, the shared library's
+presence and size, the egis0576 driver symbols compiled into it, and (Fedora
+and Debian) the suspend/resume hook and udev rule. Each Ubuntu leg installs
+its own series' `.deb` with a plain `apt install` (no `--allow-downgrades`,
+no `--force-depends`), checks the module landed under the `tod_driversdir`
+`pkg-config` reports and that its file name satisfies the TOD loader's
+`lib*.so` rule, asserts `dpkg -V libfprint-2-2` is byte-for-byte unchanged
+from before the install, and builds and runs the same `fp_context_new()`
+probe documented in the Ubuntu section above to confirm the stock library
+logs `Loading driver egis0576` under `G_MESSAGES_DEBUG=all` — a probe that
+does not print that line fails the job, it is not just logged. The produced
+`.deb` files are prefixed `debian-trixie-`, `ubuntu-noble-` or
+`ubuntu-resolute-` so all three read apart from each other on the Releases
+page. A failed check fails that leg's build, so a package this workflow does
+not verify never reaches the release. A final job then attaches every built
+package, plus a generated `SHA256SUMS` file, to the GitHub Release for that
+tag, creating the release if one does not already exist for it. The
+workflow uses only the built-in `GITHUB_TOKEN`, requests just the `contents`
+permission it needs, and never pushes to COPR or the AUR — publishing to
+those still follows the steps above.
 
 If the tagged commit is not an ancestor of the repository's default branch,
 the release is created as a draft instead of published, and the job output
@@ -615,13 +627,14 @@ git tag v0.4.5
 git push origin v0.4.5
 ```
 
-The workflow picks up the tag push, builds all three packages, and attaches
+The workflow picks up the tag push, builds all five packages, and attaches
 them to the `v0.4.5` GitHub Release once the build jobs finish.
 
 `packaging/ubuntu-tod/` builds directly from the repository tree it lives in —
 there is no tag to bump — so a driver release only needs a version bump in
-`packaging/ubuntu-tod/debian/changelog` (and a rebuild on the oldest supported
-series; see above).
+`packaging/ubuntu-tod/debian/changelog` (the two series' `~24.04` / `~26.04`
+suffixes are stamped on top by `build-series.sh` at build time, see the
+Ubuntu section above).
 
 ## Common notes
 
