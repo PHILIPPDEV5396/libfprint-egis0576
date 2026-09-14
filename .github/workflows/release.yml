@@ -5,7 +5,8 @@ on:
     tags:
       - 'v*'
 
-# Minimum permissions: only contents write, only to attach release assets.
+# Read-only by default. Only the publish job below elevates to contents:
+# write, scoped to that job alone, to attach release assets.
 permissions:
   contents: read
 
@@ -14,11 +15,45 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  verify-tag:
+    name: Verify tag matches package pins
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout (tag)
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Confirm the spec and PKGBUILD are pinned to this tag
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+
+          spec_tag=$(grep -oP '(?<=%global egis_tag )\S+' packaging/fedora/libfprint.spec)
+          pkgbuild_tag=$(grep -oP '(?<=#tag=)[^"]+' packaging/aur/PKGBUILD)
+
+          fail=0
+          if [ "$spec_tag" != "$TAG" ]; then
+            echo "FAIL: packaging/fedora/libfprint.spec sets %global egis_tag $spec_tag, but the pushed tag is $TAG"
+            fail=1
+          fi
+          if [ "$pkgbuild_tag" != "$TAG" ]; then
+            echo "FAIL: packaging/aur/PKGBUILD pins #tag=$pkgbuild_tag, but the pushed tag is $TAG"
+            fail=1
+          fi
+          [ "$fail" -eq 0 ] || exit 1
+
+          echo "Both packaging pins match tag $TAG."
+
   build:
     name: Build (${{ matrix.distro }})
+    needs: verify-tag
     runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
+      # Container images stay pinned by tag, not by digest, unlike the
+      # actions below. Digest-pinning fedora:43 or archlinux:latest would
+      # freeze out routine distro package updates (security fixes included)
+      # between releases; the tradeoff is that a compromised upstream image
+      # could run here, which the actions/* pins below guard against for
+      # the one job that holds contents: write.
       matrix:
         include:
           - distro: fedora
@@ -44,7 +79,7 @@ jobs:
         run: pacman -Sy --noconfirm git
 
       - name: Checkout (tag)
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       # --- Fedora path ---
       - name: Install Fedora build deps
@@ -89,8 +124,16 @@ jobs:
 
           echo "== installed package version =="
           rpm -q libfprint
-          rpm -q libfprint | grep -q '\.egis9\.' || {
-            echo "FAIL: installed libfprint is not the egis0576 build"; exit 1;
+
+          # Read the expected Release suffix (e.g. ".egis9") out of the spec
+          # instead of hardcoding it here, so this check tracks the spec
+          # instead of drifting from it on every driver release.
+          expected_suffix=$(grep -oP '\.egis[0-9]+' packaging/fedora/libfprint.spec | head -1)
+          test -n "$expected_suffix" || {
+            echo "FAIL: could not read an .egisN suffix out of packaging/fedora/libfprint.spec"; exit 1;
+          }
+          rpm -q libfprint | grep -qF "${expected_suffix}." || {
+            echo "FAIL: installed libfprint does not carry the spec's Release suffix ($expected_suffix)"; exit 1;
           }
 
           echo "== libfprint-2.so.2 at the Fedora library path =="
@@ -106,7 +149,7 @@ jobs:
           # A driver name string could appear from an unrelated source string
           # table, so require several distinct egis0576 symbol names, not one
           # substring match.
-          hits=$(strings "$soname_target" | grep -c 'egis0576')
+          hits=$(strings "$soname_target" | grep -c 'egis0576' || true)
           test "$hits" -ge 5 || {
             echo "FAIL: only $hits egis0576 references in the installed .so, expected several"; exit 1;
           }
@@ -117,15 +160,15 @@ jobs:
           echo "== systemd-sleep hook =="
           hook=/usr/lib/systemd/system-sleep/50-egis0576-fp-resume.sh
           test -x "$hook" || { echo "FAIL: $hook missing or not executable"; exit 1; }
-          grep -q 'fprintd' "$hook" || {
-            echo "FAIL: $hook does not mention fprintd, wrong file installed"; exit 1;
+          grep -q 'systemctl.*fprintd' "$hook" || {
+            echo "FAIL: $hook does not stop/start fprintd, wrong file installed"; exit 1;
           }
 
           echo "== udev rule =="
           rule=/usr/lib/udev/rules.d/60-egis0576-fp-nosuspend.rules
           test -s "$rule" || { echo "FAIL: $rule missing or empty"; exit 1; }
-          grep -q '1c7a.*0576' "$rule" || {
-            echo "FAIL: $rule does not match the 1c7a:0576 USB ID"; exit 1;
+          grep -q '^ACTION==.*1c7a.*0576' "$rule" || {
+            echo "FAIL: $rule has no ACTION rule matching the 1c7a:0576 USB ID"; exit 1;
           }
 
           echo "Fedora install verification passed."
@@ -141,10 +184,10 @@ jobs:
           # earlier draft of this job disabled it with `DisableSandbox` in
           # /etc/pacman.conf. This job runs archlinux:latest natively on a
           # GitHub-hosted x86_64 runner, with no emulation layer, so that
-          # failure mode should not apply here. This has not yet been
-          # confirmed on a real GitHub-hosted run (no tag has triggered
-          # this workflow yet) -- if a future run fails with
-          # "error restricting syscalls via seccomp", add back:
+          # failure mode should not apply here. Confirmed: a tag pushed to
+          # a fork ran this job end to end and both the Fedora and Arch
+          # legs passed with the sandbox left enabled -- if a future run
+          # fails with "error restricting syscalls via seccomp", add back:
           #   sed -i '/^\[options\]/a DisableSandbox' /etc/pacman.conf
           pacman -Syu --noconfirm
           pacman -S --noconfirm --needed base-devel meson glib2 glib2-devel \
@@ -160,6 +203,14 @@ jobs:
           mkdir -p "$GITHUB_WORKSPACE/dist"
           cp packaging/aur/*.pkg.tar.* "$GITHUB_WORKSPACE/dist/"
 
+      # Arch ships its own libfprint, so this step installs the stock package
+      # first, the same way the Fedora leg does above. That way the next step
+      # proves a real replacement (exercising the PKGBUILD's `conflicts` and
+      # `provides` handling), not just a first install into an empty container.
+      - name: Install stock Arch libfprint
+        if: matrix.distro == 'archlinux'
+        run: pacman -S --noconfirm libfprint
+
       - name: Install and verify the Arch package
         if: matrix.distro == 'archlinux'
         run: |
@@ -168,8 +219,16 @@ jobs:
           # The main package file only (excludes the *-debug package).
           pkg_file=$(ls dist/libfprint-egis0576-[0-9]*.pkg.tar.*)
 
-          # pacman -U resolves and installs runtime deps from the sync
-          # databases refreshed by the build-deps step above.
+          # pacman -U --noconfirm does NOT auto-answer the "in conflict,
+          # remove libfprint? [y/N]" question -- that prompt defaults to
+          # No even under --noconfirm, so a plain -U here fails with
+          # "unresolvable package conflicts detected" (confirmed while
+          # proving this workflow). Remove the stock package first, then
+          # install the replacement; this still proves the `conflicts` and
+          # `provides` fields in the PKGBUILD produce an installable
+          # replacement, since pacman resolves the runtime deps for it from
+          # the sync databases refreshed by the build-deps step above.
+          pacman -R --noconfirm libfprint
           pacman -U --noconfirm "$pkg_file"
 
           echo "== installed package version =="
@@ -185,7 +244,7 @@ jobs:
           }
 
           echo "== egis0576 driver compiled into the installed library =="
-          hits=$(strings "$soname_target" | grep -c 'egis0576')
+          hits=$(strings "$soname_target" | grep -c 'egis0576' || true)
           test "$hits" -ge 5 || {
             echo "FAIL: only $hits egis0576 references in the installed .so, expected several"; exit 1;
           }
@@ -208,7 +267,7 @@ jobs:
           echo "Arch install verification passed."
 
       - name: Upload build artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: packages-${{ matrix.distro }}
           path: dist/*
@@ -222,20 +281,55 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      # Full history, so the ancestor check below can see the default branch.
+      - name: Checkout (for the default-branch ancestor check)
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+
+      - name: Determine whether to publish or draft
+        id: draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          default_branch=$(gh api "repos/$GITHUB_REPOSITORY" --jq .default_branch)
+          git fetch --no-tags origin "$default_branch"
+
+          if git merge-base --is-ancestor "$GITHUB_SHA" "origin/$default_branch"; then
+            echo "draft=false" >> "$GITHUB_OUTPUT"
+            echo "Tag $GITHUB_REF_NAME points at a commit on $default_branch. Publishing normally."
+          else
+            echo "draft=true" >> "$GITHUB_OUTPUT"
+            echo "Tag $GITHUB_REF_NAME points at a commit not on $default_branch. Creating a draft release, not a published one."
+          fi
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           path: dist
           pattern: packages-*
           merge-multiple: true
 
+      - name: Generate checksums
+        run: |
+          cd dist
+          sha256sum -- * > SHA256SUMS
+
       - name: Create or update release and upload assets
         env:
           GH_TOKEN: ${{ github.token }}
+          IS_DRAFT: ${{ steps.draft.outputs.draft }}
         run: |
           TAG="${GITHUB_REF_NAME}"
+
+          draft_flag=()
+          if [ "$IS_DRAFT" = "true" ]; then
+            draft_flag=(--draft)
+          fi
+
           if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --clobber
           else
             gh release create "$TAG" dist/* --repo "$GITHUB_REPOSITORY" \
-              --title "$TAG" --generate-notes
+              --title "$TAG" --generate-notes "${draft_flag[@]}"
           fi
