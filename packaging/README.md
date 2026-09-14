@@ -147,9 +147,10 @@ Not published to a repository — build the `.deb` files from this repo:
 ```bash
 git clone https://github.com/PHILIPPDEV5396/libfprint-egis0576.git
 cd libfprint-egis0576
-sudo apt-get build-dep ./packaging/debian   # or install Build-Depends by hand, see below
+sudo apt-get build-dep ./packaging   # or install Build-Depends by hand, see below
 bash packaging/debian/build.sh
-sudo apt install ./packaging/debian/build-output/libfprint-2-2_*.deb \
+sudo apt install --allow-downgrades \
+                  ./packaging/debian/build-output/libfprint-2-2_*.deb \
                   ./packaging/debian/build-output/libfprint-2-dev_*.deb \
                   ./packaging/debian/build-output/gir1.2-fprint-2.0_*.deb
 sudo systemctl restart fprintd
@@ -159,18 +160,24 @@ sudo systemctl restart fprintd
 package `packaging/debian/control`'s `Build-Depends` lists (`debhelper-compat`,
 `meson`, `libglib2.0-dev`, `libgirepository1.0-dev`, `libgusb-dev`,
 `libgudev-1.0-dev`, `libpixman-1-dev`, `libssl-dev`, `libcairo2-dev`,
-`systemd-dev`, `gobject-introspection` and the two `gir1.2-*-dev` packages);
-`apt-get build-dep` reads that list straight from the file. The script clones
-pristine upstream libfprint at the version pinned inside it, stages
-`packaging/debian/` on top, and runs `dpkg-buildpackage -us -uc -b`. The
-`.deb` files (`libfprint-2-2`, `libfprint-2-dev`, `gir1.2-fprint-2.0`, plus a
-`-dbgsym`) land in `packaging/debian/build-output/`.
+`systemd-dev`, `gobject-introspection` and the two `gir1.2-*-dev` packages).
+`apt-get build-dep` reads that list from `packaging/debian/control`, but it
+expects `<dir>/debian/control`, so it is pointed at `packaging/`, the parent
+of `packaging/debian`, which plays the role of that `debian/` subdirectory.
+The script clones pristine upstream libfprint at the version pinned inside
+it, stages `packaging/debian/` on top, and runs `dpkg-buildpackage -us -uc
+-b`. The `.deb` files (`libfprint-2-2`, `libfprint-2-dev`,
+`gir1.2-fprint-2.0`, plus a `-dbgsym`) land in
+`packaging/debian/build-output/`.
 
 Since this keeps Debian's own package names, `apt install ./*.deb` replaces
 the stock `libfprint-2-2` in place — no `Provides`/`Conflicts` dance needed
-(see "Maintainer" below for why). `apt upgrade` later can offer to replace it
-back with Debian's own build; reject that, or rerun `build.sh` after a driver
-update.
+(see "Maintainer" below for why). `--allow-downgrades` is needed because
+Debian trixie's stock `libfprint-2-2` carries epoch `1:` (confirmed
+`1:1.94.9-1`), and this build's version carries no epoch, so apt reads it as
+a downgrade on epoch alone even though the upstream version (`1.94.100`) is
+newer. `apt upgrade` later can offer to replace it back with Debian's own
+build; reject that, or rerun `build.sh` after a driver update.
 
 ### Maintainer: what `packaging/debian/` builds and why
 
@@ -204,9 +211,14 @@ keep Debian's own names (`libfprint-2-2`, `libfprint-2-dev`,
 package with no `Provides`/`Conflicts`/`Replaces` needed. The changelog's
 `-99egis1` revision mirrors the Fedora spec's `Release: 99...egis9` comment:
 the numeric `99` sorts above any plausible normal Debian revision at the same
-upstream `Version`, so this package wins on version alone even without a repo
-pin — a robust backstop like the COPR `priority=90` step below is worth
-adding if this is ever published to a real apt repository.
+upstream `Version`, so this package wins on version alone against a stock
+build at the **same epoch** — a robust backstop like the COPR `priority=90`
+step below is worth adding if this is ever published to a real apt
+repository. Trixie's own `libfprint-2-2` in fact carries epoch `1:`
+(`1:1.94.9-1`), one higher than this build's implicit epoch `0`, so `apt`
+reads installing this build over it as a downgrade regardless of the
+`-99egis1` revision or the newer upstream `Version`; "Users install with"
+above passes `--allow-downgrades` for that reason.
 
 **Integration files installed automatically, unlike the AUR build:** the
 suspend/resume sleep hook and no-autosuspend udev rule are in
@@ -269,31 +281,36 @@ one:
 
 ## Release CI (GitHub Actions)
 
-`.github/workflows/release.yml` builds both packages in containers and
+`.github/workflows/release.yml` builds all three packages in containers and
 attaches them to the GitHub Release for a tag, as a convenience alongside
-COPR and the AUR, not a replacement for either.
+COPR, the AUR and a manual Debian build, not a replacement for any of them.
 
 **What it does:** on a push of a tag matching `v*`, a first job checks that
 `packaging/fedora/libfprint.spec` (`%global egis_tag`) and
 `packaging/aur/PKGBUILD` (the `#tag=` pin) both point at the pushed tag, and
 fails the run if either is stale. A matrix job then builds the Fedora RPM (in
-a `fedora:43` container, from the unmodified `packaging/fedora/libfprint.spec`)
-and the Arch package (in an `archlinux:latest` container, from the unmodified
-`packaging/aur/PKGBUILD`), each on GitHub's native x86_64 runners with no
-aarch64 leg. **The Fedora RPM is a Fedora 43 build only** (the container is
+a `fedora:43` container, from the unmodified `packaging/fedora/libfprint.spec`),
+the Arch package (in an `archlinux:latest` container, from the unmodified
+`packaging/aur/PKGBUILD`), and the Debian package set (in a `debian:trixie`
+container, using `packaging/debian/build.sh` the same way "Users install
+with" above does), each on GitHub's native x86_64 runners with no aarch64
+leg. **The Fedora RPM is a Fedora 43 build only** (the container is
 `fedora:43`, so `%{?dist}` expands to `.fc43`); COPR remains the supported
 install path for other Fedora versions, since its project builds separate
 chroots for each one. Each leg then installs its own freshly built package on
-top of the distro's stock `libfprint` inside the same container, and checks
-the installed files: the package version, the shared library's presence and
-size, the egis0576 driver symbols compiled into it, and (Fedora only) the
-suspend/resume hook and udev rule. A failed check fails that leg's build, so
-a package this workflow does not verify never reaches the release. A final
-job then attaches every built package, plus a generated `SHA256SUMS` file, to
-the GitHub Release for that tag, creating the release if one does not already
-exist for it. The workflow uses only the built-in `GITHUB_TOKEN`, requests
-just the `contents` permission it needs, and never pushes to COPR or the AUR
-— publishing to those still follows the steps above.
+top of the distro's stock package (where one ships) inside the same
+container, and checks the installed files: the package version, the shared
+library's presence and size, the egis0576 driver symbols compiled into it,
+and (Fedora and Debian) the suspend/resume hook and udev rule. The produced
+`.deb` files are prefixed `debian-trixie-` so they read apart from a later
+leg's per-series Ubuntu packages on the Releases page. A failed check fails
+that leg's build, so a package this workflow does not verify never reaches
+the release. A final job then attaches every built package, plus a generated
+`SHA256SUMS` file, to the GitHub Release for that tag, creating the release
+if one does not already exist for it. The workflow uses only the built-in
+`GITHUB_TOKEN`, requests just the `contents` permission it needs, and never
+pushes to COPR or the AUR — publishing to those still follows the steps
+above.
 
 If the tagged commit is not an ancestor of the repository's default branch,
 the release is created as a draft instead of published, and the job output
@@ -313,8 +330,8 @@ git tag v0.4.5
 git push origin v0.4.5
 ```
 
-The workflow picks up the tag push, builds both packages, and attaches them
-to the `v0.4.5` GitHub Release once the build jobs finish.
+The workflow picks up the tag push, builds all three packages, and attaches
+them to the `v0.4.5` GitHub Release once the build jobs finish.
 
 ## Common notes
 
