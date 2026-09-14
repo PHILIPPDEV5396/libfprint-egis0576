@@ -19,7 +19,7 @@ login / `sudo` / screen-unlock through PAM, on stock GNOME/KDE.
 | Enroll / verify / identify | ✅ works via `fprintd` |
 | PAM login, `sudo`, unlock | ✅ works (`sufficient`, password fallback intact) |
 | Cross-reboot matching | ✅ (per-boot flat-field) |
-| Security | measured on one person, one session, 5 fingers × 12 presses, impostors = own adjacent fingers: **0 / 60 false rejects, 0 / 480 false accepts** at the shipped threshold, every impostor scoring exactly 0 ([how, and what that does and does not show](docs/matcher-comparison.md)) |
+| Accuracy | measured on **three units, one person each** (5 fingers × 12 presses per run, impostors = own adjacent fingers). False rejects at the shipped threshold: **0 / 60, 2 / 60 and 37 / 60 presses** — genuine acceptance is strongly run-dependent and no single figure stands for the driver. False accepts: **0 / 480 on each of the three** — no impostor comparison produced a non-zero vendor score in any run (480 comparisons per run, but only 60 distinct presses, each scored against the 8 templates not built from its own finger, so they are not 480 independent trials). ([all three runs, and what they do and do not show](docs/matcher-comparison.md)) |
 | Validated on | **four** laptop models (AMD + Intel; Fedora, Arch and Ubuntu); one of the four is a partial pass. See "Tested platforms" below. |
 
 ## The sensor, briefly
@@ -62,12 +62,33 @@ dependency is handled at runtime rather than baked in:
 - **On-chip background/vdm** — neutralized to a model-level constant so no single
   unit's calibration data is embedded.
 
-**Update:** originally all of this was validated on the author's single unit —
-that caveat is now retired. Independent testers have run the full stack on other
-EH576 units (different laptops, CPU vendors and USB host controllers; same sensor
-revision, `bcdDevice` 15.72): the first with a 17-point PASS
+**Update — it works on other units.** Originally all of this was validated on
+the author's single unit; for *functional* operation that caveat is retired.
+Independent testers have run the full stack on other EH576 units (different
+laptops, CPU vendors and USB host controllers; same sensor revision,
+`bcdDevice` 15.72): the first with a 17-point PASS
 ([#2](https://github.com/PHILIPPDEV5396/libfprint-egis0576/issues/2)), the rest
 in the table above. More reports are still very welcome — success *or* failure.
+
+**Accuracy is a separate axis, and there the caveat stands.** Three accuracy
+runs now exist — the author's plus sam-dant's and irvingpop's in
+[#5](https://github.com/PHILIPPDEV5396/libfprint-egis0576/issues/5) — and they
+disagree sharply: with the vendor matcher, 0, 2 and 37 of 60 genuine presses
+were rejected at the shipped threshold (on the worst run 33 of those 37 scored
+exactly 0). Each run is one person on one unit in one session, so person and
+unit change together and nothing in the data says which of the two the spread
+comes from. Exposure calibration and template size both order the runs the
+*wrong* way; the one measurement that does track the failure is how often the
+matcher found an enrolment frame already covered by the template — 19, 10 and
+none across the three runs — which is suggestive and nothing more. What this means practically: the driver working on your machine does not
+imply the accuracy figures from another machine, so **if you are going to rely
+on fingerprint login, try it before you do** — and please
+[run the kit](tools/accuracy/README.md) and post the result. Detail and all
+three tables: [`docs/matcher-comparison.md`](docs/matcher-comparison.md).
+Note that the worst of the three runs is on a unit whose *functional* report in
+the table below is a pass, though a qualified one (GDM login not tested there);
+the kit measures an offline protocol with thinner enrolment than the driver's,
+not the driver's own login success rate.
 
 ## Tested platforms
 
@@ -77,6 +98,7 @@ in the table above. More reports are still very welcome — success *or* failure
 | Lenovo Yoga 7 15ITL5 | Intel Core i5-1135G7 | 15.72 | Fedora 44 | ✅ full stack, 17-point PASS incl. 3× suspend/resume | [#2](https://github.com/PHILIPPDEV5396/libfprint-egis0576/issues/2) |
 | Lenovo IdeaPad Flex 5 16IRU8 | Intel Core i7-1355U | 15.72 | Arch Linux (Omarchy 4.0.2) | ✅ full stack (enroll, verify, sudo/PAM, polkit, lock screen, reboot, 3× suspend/resume); one long-lock stale-claim limitation, see report | [#3](https://github.com/PHILIPPDEV5396/libfprint-egis0576/issues/3) |
 | Lenovo Yoga 6 13ALC6 | AMD Ryzen 7 5700U | 15.72 | Ubuntu 26.04 | ✅ enroll, verify, sudo/PAM, polkit, unlock, suspend/resume (GDM login not tested) | [#4](https://github.com/PHILIPPDEV5396/libfprint-egis0576/pull/4) |
+| Lenovo IdeaPad Flex 5 14ITL05 | Intel (11th gen) | 15.72 | Zorin OS 18.1 | ⚠️ enroll, verify and screen-lock unlock work; unlock after suspend needs an extra activation gate on top of the shipped hook, see report | [#3](https://github.com/PHILIPPDEV5396/libfprint-egis0576/issues/3) |
 
 Got a different machine with an EH576? **Please open an issue with your results.**
 
@@ -193,11 +215,15 @@ EGIS0576_MESON_ARGS="-Degis0576_matcher=cleanroom" ./install.sh
 ```
 
 Templates enrolled under one matcher are rejected by the other, so switching
-means re-enrolling. **Measured on the same 714-frame dataset as the vendor
-matcher** ([`docs/matcher-comparison.md`](docs/matcher-comparison.md)): at its
-published threshold it rejects 35 % of genuine presses (vendor: 0 %), and its
-genuine and impostor scores overlap (EER 15 %), so it is not yet a drop-in
-replacement — it is the starting point for one. Details in
+means re-enrolling. **Measured on the same captures as the vendor matcher, on
+all three accuracy-tested units**
+([`docs/matcher-comparison.md`](docs/matcher-comparison.md)): at its published
+threshold it rejects **35 %, 73.3 % and 93.3 %** of genuine presses (the vendor
+matcher on the same captures: 0 %, 3.33 %, 61.7 %), its genuine and impostor
+scores overlap on every run (EER 15 %, 35 %, 45 %), and on one of the three it
+produced the project's first measured false accepts — 5 of 480 impostor
+comparisons at or above the threshold, where the vendor matcher scored 0 on all
+480. It is not a drop-in replacement — it is the starting point for one. Details in
 [`driver/egis0576/egis_engine_cleanroom.c`](driver/egis0576/egis_engine_cleanroom.c);
 reproduce the measurement on your own unit with
 [`tools/accuracy/`](tools/accuracy/README.md).
@@ -341,9 +367,13 @@ driver shortcoming. Details and the full investigation:
 
 - **Press firmly, flat, centred, and hold ~2 s.** Verification scores every frame
   while the finger is down and takes the best; light or brief taps on a 70×57 sensor
-  can score zero.
+  can score zero. How much this matters clearly differs between people and units:
+  in one of the three accuracy runs 33 of 60 genuine presses scored exactly 0
+  ([`docs/matcher-comparison.md`](docs/matcher-comparison.md)).
 - The match **threshold is strict** and not user-tunable by design — the priority is
   rejecting impostors (including adjacent same-hand fingers), not maximum convenience.
+  Lowering it would not have rescued that run either: 33 of its 37 failing presses
+  scored 0, which no threshold recovers.
 - Templates are stored by fprintd under `/var/lib/fprint/`, protected by filesystem
   permissions (as with every libfprint driver).
 - Re-enroll after anything that changes capture conditions materially (the exposure
@@ -375,7 +405,9 @@ Most wanted, in order:
    ["Why the reverse-engineered matcher (and not a clean-room one)?"](PROVENANCE.md#why-the-reverse-engineered-matcher-and-not-a-clean-room-one)
    in `PROVENANCE.md`.
 2. **Test reports from other physical EH576 units** (see "Universality").
-3. **Accuracy reports from your own fingers** — run the
+3. **Accuracy reports from your own fingers** — especially if the result is
+   poor; the three runs collected so far disagree sharply and more points are
+   the only way to understand that. Run the
    [`tools/accuracy/`](tools/accuracy/README.md) kit (about 15 minutes; only the
    `results.json` summary is shared, never frames) and open an issue titled
    `accuracy: <laptop model>` as its README asks — collected under

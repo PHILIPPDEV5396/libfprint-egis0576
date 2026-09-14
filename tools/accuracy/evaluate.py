@@ -175,6 +175,14 @@ def failure_info(r):
 
 def evaluate(flavour, binary, fingers, presses, base, thr, best_frame, var, ddir):
     gen, imp, diags, fails = [], [], [], []
+    # Per-press extraction bookkeeping. The engine returns -1 for a frame whose
+    # feature extraction failed (too few minutiae) and >= 0 for one it compared,
+    # so a press score of 0 means "compared, no match" while a press where every
+    # frame came back -1 means "nothing extractable". max() alone cannot tell
+    # those apart, and that distinction is what a run with many zero-scoring
+    # genuine presses needs in order to be diagnosable at all.
+    frames_total = frames_nofeat = 0
+    gen_nofeat = imp_nofeat = 0
     sc = Scorer(binary, base, ddir)
     try:
         for f in fingers:
@@ -193,15 +201,31 @@ def evaluate(flavour, binary, fingers, presses, base, thr, best_frame, var, ddir
                     continue
                 diags.append({"finger": f, "fold": fold, "enrolled": diag["enrolled"], "codes": diag["codes"]})
                 for p in T:
-                    gen.append(max(scores.get(x, -1) for x in p))
+                    s = [scores.get(x, -1) for x in p]
+                    frames_total += len(s)
+                    frames_nofeat += sum(1 for v in s if v < 0)
+                    if all(v < 0 for v in s):
+                        gen_nofeat += 1
+                    gen.append(max(s))
                 for _, p in others:
-                    imp.append(max(scores.get(x, -1) for x in p))
+                    s = [scores.get(x, -1) for x in p]
+                    frames_total += len(s)
+                    frames_nofeat += sum(1 for v in s if v < 0)
+                    if all(v < 0 for v in s):
+                        imp_nofeat += 1
+                    imp.append(max(s))
     finally:
         sc.close()
     if not gen:
         return {"flavour": flavour, "failures": fails, "n_genuine": 0, "n_impostor": 0}
     frr = sum(1 for s in gen if s < thr) / len(gen)
     far = (sum(1 for s in imp if s >= thr) / len(imp)) if imp else None
+    # Equal error rate, but ONLY where the two curves actually cross. When no
+    # impostor scores at all (the vendor matcher does this: every impostor
+    # comparison in all three published runs scored exactly 0), FAR is 0 at
+    # every threshold >= 1, the minimum of |FRR - FAR| is just the smallest
+    # non-zero genuine score, and (FRR + FAR) / 2 there is FRR/2 -- a number
+    # that looks like an error rate and is not one. Report null instead.
     best = None
     if imp:
         for t in sorted(set(gen) | set(imp)):
@@ -209,6 +233,8 @@ def evaluate(flavour, binary, fingers, presses, base, thr, best_frame, var, ddir
             fa = sum(1 for s in imp if s >= t) / len(imp)
             if best is None or abs(fr - fa) < best[0]:
                 best = (abs(fr - fa), t, fr, fa)
+        if best is not None and best[3] <= 0.0:
+            best = None          # no impostor reaches the best point: no equal-error point exists
     return {
         "flavour": flavour,
         "threshold": thr,
@@ -220,8 +246,19 @@ def evaluate(flavour, binary, fingers, presses, base, thr, best_frame, var, ddir
         "impostor_max": max(imp) if imp else None,
         "eer": (best[2] + best[3]) / 2.0 if best else None,
         "eer_threshold": best[1] if best else None,
+        # null when the FAR and FRR curves never cross, i.e. no threshold admits
+        # an impostor: there is no equal-error point to report.
+        "eer_defined": bool(best),
         "genuine_press_scores": gen, "impostor_press_scores": imp,
         "enrolment": diags,
+        # Extraction health, counts only: how many probe frames the engine could
+        # not extract features from, and how many presses had no extractable
+        # frame at all. A press that scored 0 with extraction_failed_presses not
+        # counting it was compared and did not match.
+        "frames_scored": frames_total,
+        "frames_no_features": frames_nofeat,
+        "genuine_presses_no_features": gen_nofeat,
+        "impostor_presses_no_features": imp_nofeat,
         "failures": fails,
     }
 

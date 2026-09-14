@@ -136,9 +136,14 @@ Since v0.4.2 a clean-room correlation matcher by Thaddeus Stepanovich ships
 in-tree (`egis0576/tsteppy/egis_match.{c,h}`, adapter
 `egis0576/egis_engine_cleanroom.c`) and can be built instead of the vendor matcher
 with `-Degis0576_matcher=cleanroom` (see the README, "Experimental — clean-room
-matcher"). Measured on the same 714-frame / 60-press dataset as the vendor matcher
+matcher"). Measured on identical captures from three units, one person each
 ([`docs/matcher-comparison.md`](docs/matcher-comparison.md)): the vendor matcher
-scored 0/60 false rejects and 0/480 false accepts; the clean-room matcher rejects
-35 % of genuine presses at its published threshold and its genuine/impostor scores
-overlap (EER 15 %), so it is not yet a drop-in replacement — which is why the
-vendor matcher remains the default. It is, however, the starting point for one.
+scored 0/60, 2/60 and 37/60 false rejects and 0/480 false accepts on each; the
+clean-room matcher rejected 35 %, 73.3 % and 93.3 % of genuine presses at its
+published threshold, its genuine/impostor scores overlap on every run (EER 15 %,
+35 %, 45 %), and on one of the three it admitted 5 of 480 impostor comparisons
+where the vendor matcher admitted none. So it is not a drop-in replacement —
+which is why the vendor matcher remains the default. It is, however, the
+starting point for one. (Genuine acceptance of the *vendor* matcher varies
+sharply between those runs too; that is a separate, unexplained finding, not an
+argument about the clean-room matcher.)

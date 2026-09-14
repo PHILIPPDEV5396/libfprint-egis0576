@@ -218,7 +218,9 @@ presses (or with a frame missing) are skipped with a warning and listed under
 a single evaluable finger there are no impostor trials, so FAR and EER are
 reported as `null`.
 
-For each flavour it prints the table `docs/matcher-comparison.md` uses:
+For each flavour it prints the table `docs/matcher-comparison.md` uses — this
+is the *format*, filled in with the reference unit's vendor numbers, and is not
+what your run should be expected to produce:
 
 ```
 | | genuine (n = 60) | impostor (n = 480) |
@@ -226,6 +228,27 @@ For each flavour it prints the table `docs/matcher-comparison.md` uses:
 | score min / median / max | 5609 / 8572 / 12436 | 0 / 0 / 0 |
 | at threshold 5000 | FRR 0.0 % | FAR 0.0 % |
 ```
+
+**There is no expected result.** The three runs published so far
+(`docs/matcher-comparison.md`) gave vendor FRRs of 0 %, 3.33 % and 61.7 % and
+clean-room FRRs of 35 %, 73.3 % and 93.3 % on the same protocol. A run that
+looks nothing like the table above is still a valid run and is exactly the kind
+worth posting.
+
+Four fields worth reading when a run looks bad: `frames_no_features` and
+`genuine_presses_no_features` say how often the engine could not extract
+features from a frame at all, as opposed to extracting them and finding no
+match. A genuine press that scored 0 while not being counted in
+`genuine_presses_no_features` was compared against the template and did not
+match; a press counted there had nothing extractable in any of its frames. The
+published runs predate these fields.
+
+One field to ignore for the vendor flavour: `eer`. Every vendor impostor
+comparison in all three runs scored exactly 0, so FAR is 0 at every threshold
+≥ 1, there is no FAR/FRR crossing, and the search in `evaluate.py` just returns
+FRR/2 at the lowest non-zero genuine score. Report the vendor result as the FRR
+at threshold 5000 plus the number of genuine presses that scored exactly 0. The
+clean-room `eer` is a real crossing.
 
 and writes `results.json` (by default into the dataset directory; `--out` to
 put it elsewhere). A fold that could not be scored is recorded under
@@ -246,10 +269,24 @@ of frames, or the dataset directory, and do not attach it to an e-mail either.
   people; the per-boot flat field is the thing most likely to move scores
   between sessions. Runs from more people and from a second session after a
   reboot are exactly what is missing.
+- **Runs disagree a lot, and nobody knows why yet.** Across the three published
+  runs the vendor FRR ranges from 0 % to 61.7 %. Because each run is a different
+  person on a different unit, person and unit cannot be told apart, and the two
+  per-unit values this file records (the exposure calibration and the enrolment
+  codes) both order those runs the wrong way. Treat your own number as one
+  point, not as a verdict on your hardware.
 - The impostor set is the **same person's other fingers, adjacent fingers
   included** — deliberately the hard case, and a stricter test than random
   strangers. A FAR of 0 % on 480 such trials says a lot; a FAR above 0 %
-  on this set is a real finding.
+  on this set is a real finding — and it has now happened once, for the
+  clean-room flavour (5 of 480 on irvingpop's unit, `docs/matcher-comparison.md`).
+  Note also that those 480 comparisons come from 60 distinct presses, each
+  scored against the 8 templates not built from its own finger, so they are not
+  480 independent trials.
+- **A vendor score of 0 is ambiguous**: it means "no match" *or* "the extractor
+  produced nothing usable", and the summary cannot tell them apart. When genuine
+  presses score 0 (it happened on two of the three published runs), a 0 on the
+  impostor side says correspondingly less.
 - Scores are not comparable between flavours except through the operating
   point: the vendor matcher's score is its own minutiae score; the clean-room
   score is an NCC scaled so that its published operating point 0.53 lands on
@@ -314,3 +351,10 @@ is intended: it is never killed.
 - A fold failure in `evaluate.py` (`enrolment failed`) means every enrolment
   frame of that fold was rejected by the engine (too little coherent ridge
   area); it is reported in `results.json` under `failures`.
+- Reading the per-fold `codes` in `results.json`: with the **vendor** matcher
+  `1` = need more frames, `2` = enrolment complete, and `4` or `-8` mean the
+  frame registered against the template but added nothing new (they differ only
+  in the stage counter) — `-8` is therefore a *success*, not a rejection. The
+  only vendor rejection code is `-1`, an image with fewer than 11 minutiae.
+  With the **clean-room** matcher, `-2` means the frame's coverage was below its
+  enrolment gate.

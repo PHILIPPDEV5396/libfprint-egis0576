@@ -12,7 +12,15 @@
 /* Accept threshold on the match score. The Windows default (660) assumes a
  * 20-view chip-calibrated enrollment; on our raw multi-view templates the
  * genuine/impostor operating point sits higher (measured: genuine up to 19328,
- * impostor <= 4657). ~5000 gives 0 false-accepts with high genuine acceptance. */
+ * impostor <= 4657). For the VENDOR matcher ~5000 has admitted nothing measured
+ * since: across the three accuracy runs in docs/matcher-comparison.md all 1440
+ * impostor comparisons scored exactly 0. That does NOT carry over to the
+ * clean-room flavour, which compiles this same threshold and admitted 5 of 480
+ * impostor comparisons on one of those runs (5238..5481) -- see
+ * egis_engine_cleanroom.c. Genuine acceptance is not uniformly high either:
+ * the three vendor runs rejected 0, 2 and 37 of 60 genuine presses, and on the
+ * worst run 33 of the 37 scored exactly 0, so lowering the threshold would not
+ * have recovered them. */
 #define EGIS_THRESHOLD 5000
 
 int egis_engine_init(void);            /* map + configure (mode 5). 0 = ok */

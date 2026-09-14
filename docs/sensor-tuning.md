@@ -197,12 +197,20 @@ genuine-accept rates but could not keep an adjacent same-hand finger out. That i
 why the vendor's own matcher is used; see
 [`PROVENANCE.md`](../PROVENANCE.md#why-the-reverse-engineered-matcher-and-not-a-clean-room-one).
 
-**Accuracy:** a first measured FAR/FRR exists now — see
-[`matcher-comparison.md`](matcher-comparison.md): one person, one session, 714
-frames; the vendor matcher separated 60 genuine from 480 adjacent-finger impostor
-presses with no error and a wide margin. That is a real number with a stated n,
-not a certification; a second person and a second session are the obvious next
-steps.
+**Accuracy:** measured FAR/FRR figures exist now, from three units with one
+person each — see [`matcher-comparison.md`](matcher-comparison.md). On the
+reference unit the vendor matcher separated 60 genuine from 480 adjacent-finger
+impostor presses with no error and a wide margin (genuine min 5609, every
+impostor 0). That result did **not** reproduce on the two independently reported
+units: 2 of 60 and 37 of 60 genuine presses fell below the shipped threshold
+there, while the impostor side stayed at 0 of 480 on both. So genuine acceptance
+is run-dependent in a way this document's operating-point analysis does not
+predict — notably, the unit whose exposure calibration landed closest to the
+target mean (87.36 against target 88, against 97.54 on the better-performing
+unit) is the one with 61.7 % FRR, so distance from the target does not order the
+runs and no cause can be assigned from three confounded points. These are real
+numbers with a stated n, not a certification; more people, and the same person
+on two units, are the next steps.
 
 ## Reproducing
 

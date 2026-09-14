@@ -19,7 +19,14 @@
  * against the enrolled template. Output, one line per probe on stdout:
  *   <probe-line-index> <score>      (score -1 = engine had nothing to score)
  * Enrolment diagnostics go to stderr in a fixed format evaluate.py parses:
- *   enroll <i> -> <code> (progress <p>)     code 1=need more 2=done 4=redundant <0 rejected
+ *   enroll <i> -> <code> (progress <p>)
+ *     vendor flavour (egis_funcs.c): 1 = need more, 2 = done, 4 and -8 = the
+ *     frame REGISTERED against the template but added nothing new ("redundant",
+ *     egis_funcs.c:9661/9698/9727; 4 vs -8 is only the stage counter), -1 = the
+ *     frame was rejected outright, fewer than 11 minutiae ("bad image",
+ *     egis_funcs.c:9621-9626). So -8 is a success code, not a rejection.
+ *     clean-room flavour (egis_engine_cleanroom.c:135): -2 = coverage below the
+ *     enrolment gate.
  *   enrolled <n> frames, template <bytes> bytes
  * No frame content ever reaches stdout or stderr. */
 #include <stdio.h>

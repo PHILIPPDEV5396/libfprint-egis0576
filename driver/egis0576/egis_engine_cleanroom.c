@@ -57,11 +57,27 @@
  *   on un-flat-fielded raw frames with ONE settled, ghost-checked frame per
  *   press; this driver scores EVERY frame while the finger is down and accepts
  *   on the first one over threshold. Measured on THIS pipeline (identical
- *   captures for both flavours, 714 frames / 60 presses, impostors = the same
- *   person's other fingers, docs/matcher-comparison.md): at the shipped
- *   threshold 5000 (NCC 0.53) this flavour gives FRR 35.0 % / FAR 0.0 %
- *   (genuine 1220 / 6961 / 9135, impostor 710 / 1638 / 4470; EER ~15 % at
- *   NCC 0.24), against the vendor flavour's 0 / 60 and 0 / 480. Reproduce
+ *   captures for both flavours, 60 presses per run, impostors = the same
+ *   person's other fingers) on THREE units, one person each
+ *   (docs/matcher-comparison.md). At the shipped threshold 5000 (NCC 0.53),
+ *   this flavour against the vendor flavour on the same captures:
+ *
+ *     reference unit (714 frames)  FRR 35.0 % / FAR 0.0 %   vendor  0 / 60, 0 / 480
+ *       genuine 1220 / 6961 / 9135, impostor 710 / 1638 / 4470; EER 15 % (NCC 0.24)
+ *     sam-dant       (720 frames)  FRR 73.3 % / FAR 0.0 %   vendor  2 / 60, 0 / 480
+ *       genuine 965 / 2425.5 / 8994, impostor 698 / 1697.5 / 4232; EER 35 %
+ *     irvingpop      (720 frames)  FRR 93.3 % / FAR 1.04 %  vendor 37 / 60, 0 / 480
+ *       genuine 1248 / 2865 / 7532, impostor 770 / 2517 / 5481; EER 45 %
+ *
+ *   So the 35 % / 0 % above is the BEST of the three runs, not this flavour's
+ *   error rate: on irvingpop's unit five of the 480 impostor comparisons reach
+ *   the threshold (5238..5481) while 57 of the 60 genuine presses score below
+ *   the largest impostor, i.e. the two populations are not separated there at
+ *   any threshold. The vendor flavour's impostor scores were 0 in all 1440
+ *   comparisons across the three units; its genuine side is run-dependent too
+ *   (0 / 2 / 37 rejects of 60). Each run is one person, one unit, one session,
+ *   and the kit enrols 6 presses per fold against the driver's 12 stages, so
+ *   none of these is a population rate or the shipped driver's rate. Reproduce
  *   with tools/accuracy/ (score-cleanroom / score-vendor + evaluate.py).
  *
  * SCORE MAPPING
