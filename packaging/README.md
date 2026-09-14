@@ -149,8 +149,7 @@ git clone https://github.com/PHILIPPDEV5396/libfprint-egis0576.git
 cd libfprint-egis0576
 sudo apt-get build-dep ./packaging   # or install Build-Depends by hand, see below
 bash packaging/debian/build.sh
-sudo apt install --allow-downgrades \
-                  ./packaging/debian/build-output/libfprint-2-2_*.deb \
+sudo apt install ./packaging/debian/build-output/libfprint-2-2_*.deb \
                   ./packaging/debian/build-output/libfprint-2-dev_*.deb \
                   ./packaging/debian/build-output/gir1.2-fprint-2.0_*.deb
 sudo systemctl restart fprintd
@@ -171,13 +170,12 @@ it, stages `packaging/debian/` on top, and runs `dpkg-buildpackage -us -uc
 `packaging/debian/build-output/`.
 
 Since this keeps Debian's own package names, `apt install ./*.deb` replaces
-the stock `libfprint-2-2` in place — no `Provides`/`Conflicts` dance needed
-(see "Maintainer" below for why). `--allow-downgrades` is needed because
-Debian trixie's stock `libfprint-2-2` carries epoch `1:` (confirmed
-`1:1.94.9-1`), and this build's version carries no epoch, so apt reads it as
-a downgrade on epoch alone even though the upstream version (`1.94.100`) is
-newer. `apt upgrade` later can offer to replace it back with Debian's own
-build; reject that, or rerun `build.sh` after a driver update.
+the stock `libfprint-2-2` in place, with no `Provides`/`Conflicts` dance and
+no install-time flag needed (see "Maintainer" below for why). `apt upgrade`
+later can still offer to replace it back with Debian's own build once
+Debian's own version moves past this build's `1.94.100`. When that happens,
+reject the upgrade, add the apt pin described below, or rerun `build.sh`
+after a driver update.
 
 ### Maintainer: what `packaging/debian/` builds and why
 
@@ -208,17 +206,65 @@ copy from the unpacked driver tarball.
 `libfprint-egis0576` (this repo's own identity), but the **binary** packages
 keep Debian's own names (`libfprint-2-2`, `libfprint-2-dev`,
 `gir1.2-fprint-2.0`), so `apt` treats this as a newer build of the same
-package with no `Provides`/`Conflicts`/`Replaces` needed. The changelog's
-`-99egis1` revision mirrors the Fedora spec's `Release: 99...egis9` comment:
-the numeric `99` sorts above any plausible normal Debian revision at the same
-upstream `Version`, so this package wins on version alone against a stock
-build at the **same epoch** — a robust backstop like the COPR `priority=90`
-step below is worth adding if this is ever published to a real apt
-repository. Trixie's own `libfprint-2-2` in fact carries epoch `1:`
-(`1:1.94.9-1`), one higher than this build's implicit epoch `0`, so `apt`
-reads installing this build over it as a downgrade regardless of the
-`-99egis1` revision or the newer upstream `Version`; "Users install with"
-above passes `--allow-downgrades` for that reason.
+package with no `Provides`/`Conflicts`/`Replaces` needed.
+
+An epoch outranks everything else in a Debian version comparison: `dpkg`
+compares epoch first, and only falls through to the upstream `Version` and
+then the revision when both sides carry the same epoch. Debian trixie's
+stock `libfprint-2-2` carries epoch `1:` (`1:1.94.9-1`), and sid/forky's
+carries the same epoch at a newer upstream version (`1:1.94.10-1`). A build
+with no epoch (epoch `0` implicitly) sorts below both of those regardless of
+its own upstream `Version` or revision, which is why the version scheme this
+package started with (`1.94.100-99egis1`, no epoch) lost to Debian's own
+package and needed `--allow-downgrades` to install at all, and would have
+been silently reverted on the next `apt upgrade`.
+
+This package's changelog therefore carries the same epoch Debian carries,
+`1:`, giving it version `1:1.94.100-99egis1`. With the epoch matched,
+comparison falls through to the upstream `Version`, and `1.94.100` beats
+both `1.94.9` (trixie) and `1.94.10` (sid/forky):
+
+```
+$ dpkg --compare-versions '1:1.94.100-99egis1' gt '1:1.94.9-1'  && echo true
+true
+$ dpkg --compare-versions '1:1.94.100-99egis1' gt '1:1.94.10-1' && echo true
+true
+```
+
+The `-99egis1` revision then mirrors the Fedora spec's `Release:
+99...egis9` comment: the numeric `99` sorts above any plausible normal
+Debian revision (`-1`, `-2`, ...) at the same epoch and the same upstream
+`Version`, including a hypothetical future Debian rebuild of `1.94.100`
+itself:
+
+```
+$ dpkg --compare-versions '1:1.94.100-99egis1' gt '1:1.94.100-1' && echo true
+true
+```
+
+No `Provides`/`Conflicts`/`Replaces` is needed, and neither is an
+install-time flag: "Users install with" above runs a plain `apt install`.
+
+**Backstop for when Debian moves past this upstream version:** the epoch
+and the `99` revision only win while this build's upstream `Version`
+(`1.94.100`) is at or above Debian's own. If Debian's own `libfprint`
+package later ships an upstream version above `1.94.100` (still at epoch
+`1:`), that Debian build wins the comparison again and `apt upgrade` reverts
+silently to it, the same failure mode `--allow-downgrades` created and this
+epoch fix closes for now. The robust backstop for that case is the same one
+the COPR section below documents for Fedora: an `apt` pin, added to
+`/etc/apt/preferences.d/libfprint-egis0576`:
+
+```
+Package: libfprint-2-2 libfprint-2-dev gir1.2-fprint-2.0
+Pin: version 1:1.94.100-99egis*
+Pin-Priority: 1001
+```
+
+A `Pin-Priority` above 1000 tells `apt` to accept this pin even to
+downgrade the installed version, which is exactly the property needed here:
+Debian's own newer build must lose to this pin on purpose until this
+package is rebuilt against a newer upstream tag.
 
 **Integration files installed automatically, unlike the AUR build:** the
 suspend/resume sleep hook and no-autosuspend udev rule are in
@@ -237,6 +283,9 @@ gives plain `${shlibs:Depends}` (soname + version floor) instead.
 tested here; an `linux/amd64` build was not run):
 
 ```
+$ dpkg-deb -f libfprint-2-2_1.94.100-99egis1_arm64.deb Version
+1:1.94.100-99egis1
+
 $ dpkg -c libfprint-2-2_1.94.100-99egis1_arm64.deb | grep -E "system-sleep|nosuspend|libfprint-2.so"
 -rw-r--r-- root/root   1208848 ... ./usr/lib/aarch64-linux-gnu/libfprint-2.so.2.0.0
 -rwxr-xr-x root/root      2344 ... ./usr/lib/systemd/system-sleep/50-egis0576-fp-resume.sh
@@ -245,14 +294,36 @@ lrwxrwxrwx root/root         0 ... ./usr/lib/aarch64-linux-gnu/libfprint-2.so.2 
 
 $ objdump -p usr/lib/aarch64-linux-gnu/libfprint-2.so.2.0.0 | grep SONAME
   SONAME               libfprint-2.so.2
+```
 
-$ strings usr/lib/aarch64-linux-gnu/libfprint-2.so.2.0.0 | grep -i egis0576
+Plain `apt-get install`, no `--allow-downgrades`, against a container with
+Debian's own stock package already installed:
+
+```
+$ dpkg-query -W -f='${Version}' libfprint-2-2
+1:1.94.9-1
+
+$ apt-get install -y ./libfprint-2-2_1.94.100-99egis1_arm64.deb \
+                     ./libfprint-2-dev_1.94.100-99egis1_arm64.deb \
+                     ./gir1.2-fprint-2.0_1.94.100-99egis1_arm64.deb
+...
+Setting up libfprint-2-2 (1:1.94.100-99egis1) ...
+...
+
+$ dpkg-query -W -f='${Version}' libfprint-2-2
+1:1.94.100-99egis1
+
+$ strings /usr/lib/aarch64-linux-gnu/libfprint-2.so.2.0.0 | grep -i egis0576
+FpDeviceEgis0576
 egis0576
 libfprint-egis0576
+EGIS0576_NO_CALIBRATE
+egis0576-capture
 ../libfprint/drivers/egis0576.c
+No valid egis0576 templates to match
+Stored print has no valid egis0576 template
 ../libfprint/drivers/egis0576/egis0576_proto.c
 egis0576_close
-... (driver id strings present; compiled in, not a loadable module)
 ```
 
 `lintian` on the built packages reports one warning, left as-is:

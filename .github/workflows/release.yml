@@ -329,14 +329,12 @@ jobs:
           # matching version. `apt install ./*.deb` resolves the remaining
           # runtime deps from the container's own repos.
           #
-          # --allow-downgrades, narrowly, for this one install: Debian
-          # trixie's stock libfprint-2-2 carries epoch "1:" (confirmed
-          # 1:1.94.9-1 in this leg), and our build's version has no epoch,
-          # so apt reads it as a downgrade on epoch alone even though the
-          # upstream version (1.94.100) is newer. Our changelog carries no
-          # epoch on purpose (see packaging/README.md, "Maintainer" section),
-          # so this flag, not a changelog change, is the fix.
-          apt-get install -y --allow-downgrades "./$lib_deb" "./$dev_deb" "./$gir_deb"
+          # No --allow-downgrades: the changelog carries epoch "1:", the
+          # same epoch Debian trixie's stock libfprint-2-2 (1:1.94.9-1)
+          # carries, so this build's version (1:1.94.100-99egis1) sorts
+          # above the stock package on version alone. See
+          # packaging/README.md, "Maintainer" section.
+          apt-get install -y "./$lib_deb" "./$dev_deb" "./$gir_deb"
 
           echo "== installed package version =="
           dpkg-query -W -f='${Version}\n' libfprint-2-2

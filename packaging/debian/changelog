@@ -1,14 +1,23 @@
-libfprint-egis0576 (1.94.100-99egis1) UNRELEASED; urgency=medium
+libfprint-egis0576 (1:1.94.100-99egis1) UNRELEASED; urgency=medium
 
   * Rebuild of upstream libfprint v1.94.100 with the out-of-tree egis0576
     (EgisTec EH576, USB 1c7a:0576) driver compiled in. Mirrors
     packaging/fedora/libfprint.spec: same upstream version, same meson
     integration patch, same suspend/resume sleep hook and udev rule.
-  * Debian revision "-99egis1" is chosen the same way the Fedora spec's
-    Release: 99...egis9 is: the numeric part (99) sorts above any plausible
-    normal Debian revision (-1, -2, ...) at the same upstream Version, so
-    this package wins on version alone against the stock libfprint-2-2,
-    libfprint-2-dev and gir1.2-fprint-2.0 it deliberately reuses the names
-    of. No epoch, Provides, Conflicts or Replaces is needed as a result.
+  * Epoch "1:" added. Debian trixie's stock libfprint-2-2 is 1:1.94.9-1 and
+    sid/forky's is 1:1.94.10-1. An epoch always outranks the upstream
+    version and the revision below it, so a build with no epoch sorts
+    below both of those even though its own upstream version (1.94.100) is
+    higher. Carrying the same epoch "1:" fixes that:
+      dpkg --compare-versions '1:1.94.100-99egis1' gt '1:1.94.9-1'   -> true
+      dpkg --compare-versions '1:1.94.100-99egis1' gt '1:1.94.10-1'  -> true
+    The "-99egis1" revision then does the same job the Fedora spec's
+    Release: 99...egis9 does within one upstream Version: the numeric 99
+    sorts above any plausible normal Debian revision (-1, -2, ...) at the
+    same epoch and upstream Version, including a hypothetical future
+    Debian rebuild of 1.94.100 itself:
+      dpkg --compare-versions '1:1.94.100-99egis1' gt '1:1.94.100-1'  -> true
+    No Provides, Conflicts or Replaces is needed as a result, and no
+    install-time flag is needed either.
 
  -- PHILIPPDEV5396 <noreply@example.invalid>  Sun, 13 Sep 2026 20:00:00 +0000
