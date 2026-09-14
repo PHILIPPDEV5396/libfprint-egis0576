@@ -1,0 +1,128 @@
+name: Release packages
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+# Minimum permissions: only contents write, only to attach release assets.
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build (${{ matrix.distro }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - distro: fedora
+            container: fedora:43
+          - distro: archlinux
+            container: archlinux:latest
+    container:
+      image: ${{ matrix.container }}
+    steps:
+      # actions/checkout@v4 needs `git` in the container. Neither fedora:43 nor
+      # archlinux:latest ships it, and without it checkout silently falls back
+      # to downloading a tarball of the ref through the REST API instead of
+      # running `git clone` (see actions/checkout's runtime fallback for
+      # environments with no git binary). That fallback would still produce a
+      # correct checkout of the tag, but it is undocumented behavior to rely
+      # on, so install git explicitly and get a real `git clone` instead.
+      - name: Install git (Fedora)
+        if: matrix.distro == 'fedora'
+        run: dnf install -y git
+
+      - name: Install git (Arch)
+        if: matrix.distro == 'archlinux'
+        run: pacman -Sy --noconfirm git
+
+      - name: Checkout (tag)
+        uses: actions/checkout@v4
+
+      # --- Fedora path ---
+      - name: Install Fedora build deps
+        if: matrix.distro == 'fedora'
+        run: |
+          dnf install -y rpmdevtools rpm-build 'dnf-command(builddep)' dnf-plugins-core
+          rpmdev-setuptree
+
+      - name: Build Fedora RPM
+        if: matrix.distro == 'fedora'
+        run: |
+          cp packaging/fedora/libfprint.spec ~/rpmbuild/SPECS/
+          cd ~/rpmbuild/SPECS
+          spectool -g -R libfprint.spec
+          dnf builddep -y libfprint.spec
+          rpmbuild -ba libfprint.spec
+          mkdir -p "$GITHUB_WORKSPACE/dist"
+          find ~/rpmbuild/RPMS ~/rpmbuild/SRPMS -type f -exec cp {} "$GITHUB_WORKSPACE/dist/" \;
+
+      # --- Arch path ---
+      - name: Install Arch build deps
+        if: matrix.distro == 'archlinux'
+        run: |
+          # NOTE on pacman's seccomp sandbox: pacman >= 7.0 runs its
+          # transaction hooks under a seccomp() sandbox. That sandbox call
+          # fails under qemu-x86_64 user-mode emulation (confirmed while
+          # proving this workflow on an arm64 Mac), which is why an
+          # earlier draft of this job disabled it with `DisableSandbox` in
+          # /etc/pacman.conf. This job runs archlinux:latest natively on a
+          # GitHub-hosted x86_64 runner, with no emulation layer, so that
+          # failure mode should not apply here. This has not yet been
+          # confirmed on a real GitHub-hosted run (no tag has triggered
+          # this workflow yet) -- if a future run fails with
+          # "error restricting syscalls via seccomp", add back:
+          #   sed -i '/^\[options\]/a DisableSandbox' /etc/pacman.conf
+          pacman -Syu --noconfirm
+          pacman -S --noconfirm --needed base-devel meson glib2 glib2-devel \
+            gobject-introspection python-gobject python-cairo systemd \
+            libgudev libgusb openssl pixman
+
+      - name: Build Arch package
+        if: matrix.distro == 'archlinux'
+        run: |
+          useradd -m builder
+          chown -R builder:builder "$GITHUB_WORKSPACE"
+          su builder -c "cd '$GITHUB_WORKSPACE/packaging/aur' && makepkg -s --noconfirm"
+          mkdir -p "$GITHUB_WORKSPACE/dist"
+          cp packaging/aur/*.pkg.tar.* "$GITHUB_WORKSPACE/dist/"
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: packages-${{ matrix.distro }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    name: Attach artifacts to release
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: packages-*
+          merge-multiple: true
+
+      - name: Create or update release and upload assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$TAG" dist/* --repo "$GITHUB_REPOSITORY" \
+              --title "$TAG" --generate-notes
+          fi

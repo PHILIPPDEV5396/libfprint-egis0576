@@ -148,6 +148,34 @@ release means bumping both, or users keep getting the old one:
 | `packaging/fedora/libfprint.spec` | `%global egis_tag` **and** the `Release:` suffix (`egisN`), plus a `%changelog` entry |
 | `packaging/aur/PKGBUILD` | the `#tag=` in `source=`, and reset `pkgrel=1` |
 
+## Release CI (GitHub Actions)
+
+`.github/workflows/release.yml` builds both packages in containers and
+attaches them to the GitHub Release for a tag, as a convenience alongside
+COPR and the AUR, not a replacement for either.
+
+**What it does:** on a push of a tag matching `v*`, a matrix job builds the
+Fedora RPM (in a `fedora:43` container, from the unmodified
+`packaging/fedora/libfprint.spec`) and the Arch package (in an
+`archlinux:latest` container, from the unmodified `packaging/aur/PKGBUILD`),
+each on GitHub's native x86_64 runners with no aarch64 leg. A second job then
+attaches every built package to the GitHub Release for that tag, creating the
+release first if the tag push did not already create one. The workflow uses
+only the built-in `GITHUB_TOKEN`, requests just the `contents` permission it
+needs, and never pushes to COPR or the AUR — publishing to those still
+follows the steps above.
+
+**Cutting a release with it:** bump the driver version per the table above,
+commit, then push a tag:
+
+```bash
+git tag v0.4.5
+git push origin v0.4.5
+```
+
+The workflow picks up the tag push, builds both packages, and attaches them
+to the `v0.4.5` GitHub Release once the build jobs finish.
+
 ## Common notes
 
 - **OpenSSL:** the egis0576 driver and its engine static library link **no** crypto
