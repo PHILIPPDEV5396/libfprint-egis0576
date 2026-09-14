@@ -1,0 +1,4 @@
+usr/include/libfprint-2/*.h
+usr/lib/*/libfprint-2.so
+usr/lib/*/pkgconfig/libfprint-2.pc
+usr/share/gir-1.0/FPrint-*.gir

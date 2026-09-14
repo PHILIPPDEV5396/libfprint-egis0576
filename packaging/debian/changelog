@@ -1,0 +1,14 @@
+libfprint-egis0576 (1.94.100-99egis1) UNRELEASED; urgency=medium
+
+  * Rebuild of upstream libfprint v1.94.100 with the out-of-tree egis0576
+    (EgisTec EH576, USB 1c7a:0576) driver compiled in. Mirrors
+    packaging/fedora/libfprint.spec: same upstream version, same meson
+    integration patch, same suspend/resume sleep hook and udev rule.
+  * Debian revision "-99egis1" is chosen the same way the Fedora spec's
+    Release: 99...egis9 is: the numeric part (99) sorts above any plausible
+    normal Debian revision (-1, -2, ...) at the same upstream Version, so
+    this package wins on version alone against the stock libfprint-2-2,
+    libfprint-2-dev and gir1.2-fprint-2.0 it deliberately reuses the names
+    of. No epoch, Provides, Conflicts or Replaces is needed as a result.
+
+ -- PHILIPPDEV5396 <noreply@example.invalid>  Sun, 13 Sep 2026 20:00:00 +0000

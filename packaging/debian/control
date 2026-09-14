@@ -1,0 +1,60 @@
+Source: libfprint-egis0576
+Priority: optional
+Section: libs
+Maintainer: PHILIPPDEV5396 <noreply@example.invalid>
+Build-Depends: debhelper-compat (= 13),
+               dh-sequence-gir,
+               meson,
+               ninja-build,
+               pkg-config,
+               libglib2.0-dev,
+               libgirepository1.0-dev,
+               gir1.2-gobject-2.0-dev,
+               gir1.2-gio-2.0-dev,
+               libgusb-dev,
+               libgudev-1.0-dev,
+               libpixman-1-dev,
+               libssl-dev,
+               libcairo2-dev,
+               systemd-dev,
+               gobject-introspection
+Standards-Version: 4.7.0
+Homepage: https://github.com/PHILIPPDEV5396/libfprint-egis0576
+Vcs-Browser: https://github.com/PHILIPPDEV5396/libfprint-egis0576
+Vcs-Git: https://github.com/PHILIPPDEV5396/libfprint-egis0576.git
+
+Package: libfprint-2-2
+Architecture: any
+Depends: ${misc:Depends}, ${shlibs:Depends}
+Pre-Depends: ${misc:Pre-Depends}
+Description: async fingerprint library of fprint project, shared libraries
+ This is a rebuild of upstream libfprint with the out-of-tree EgisTec EH576
+ (egis0576, USB 1c7a:0576) driver compiled in. It keeps the stock Debian
+ binary package name so it is a drop-in replacement: the unmodified system
+ fprintd loads it through the same libfprint-2.so.2 soname, no fprintd
+ rebuild needed.
+ .
+ Includes the egis0576 suspend/resume systemd-sleep hook and the
+ no-autosuspend udev rule for the sensor.
+
+Package: libfprint-2-dev
+Section: libdevel
+Architecture: any
+Multi-Arch: same
+Depends: gir1.2-fprint-2.0 (= ${binary:Version}),
+         libfprint-2-2 (= ${binary:Version}),
+         ${misc:Depends},
+         ${gir:Depends}
+Provides: ${gir:Provides}
+Description: async fingerprint library of fprint project, development headers
+ Development headers, pkg-config file and .gir for the egis0576-enabled
+ rebuild of libfprint. See libfprint-2-2.
+
+Package: gir1.2-fprint-2.0
+Architecture: any
+Multi-Arch: same
+Section: introspection
+Depends: ${gir:Depends}, ${misc:Depends}
+Description: async fingerprint library of fprint project, gir bindings
+ GObject-Introspection bindings for the egis0576-enabled rebuild of
+ libfprint. See libfprint-2-2.

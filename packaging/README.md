@@ -138,15 +138,134 @@ is a lateral rebuild, not a downgrade.
 
 ---
 
+## Debian / Ubuntu  →  `packaging/debian/`
+
+### Users install with
+
+Not published to a repository — build the `.deb` files from this repo:
+
+```bash
+git clone https://github.com/PHILIPPDEV5396/libfprint-egis0576.git
+cd libfprint-egis0576
+sudo apt-get build-dep ./packaging/debian   # or install Build-Depends by hand, see below
+bash packaging/debian/build.sh
+sudo apt install ./packaging/debian/build-output/libfprint-2-2_*.deb \
+                  ./packaging/debian/build-output/libfprint-2-dev_*.deb \
+                  ./packaging/debian/build-output/gir1.2-fprint-2.0_*.deb
+sudo systemctl restart fprintd
+```
+
+`packaging/debian/build.sh` needs `git` and `dpkg-dev` on the host, plus every
+package `packaging/debian/control`'s `Build-Depends` lists (`debhelper-compat`,
+`meson`, `libglib2.0-dev`, `libgirepository1.0-dev`, `libgusb-dev`,
+`libgudev-1.0-dev`, `libpixman-1-dev`, `libssl-dev`, `libcairo2-dev`,
+`systemd-dev`, `gobject-introspection` and the two `gir1.2-*-dev` packages);
+`apt-get build-dep` reads that list straight from the file. The script clones
+pristine upstream libfprint at the version pinned inside it, stages
+`packaging/debian/` on top, and runs `dpkg-buildpackage -us -uc -b`. The
+`.deb` files (`libfprint-2-2`, `libfprint-2-dev`, `gir1.2-fprint-2.0`, plus a
+`-dbgsym`) land in `packaging/debian/build-output/`.
+
+Since this keeps Debian's own package names, `apt install ./*.deb` replaces
+the stock `libfprint-2-2` in place — no `Provides`/`Conflicts` dance needed
+(see "Maintainer" below for why). `apt upgrade` later can offer to replace it
+back with Debian's own build; reject that, or rerun `build.sh` after a driver
+update.
+
+### Maintainer: what `packaging/debian/` builds and why
+
+**Strategy:** pristine upstream libfprint **v1.94.100** (the same tag the
+Fedora spec and the AUR `PKGBUILD` build) plus this repo's driver, patch and
+integration files, **not** a rebuild of Debian's own `libfprint` source
+package. Debian trixie ships 1.94.9 and sid/forky ship 1.94.10 — both predate
+the meson build refactor `patches/libfprint-1.94.100-egis0576.patch` targets,
+so that patch does not apply against Debian's source (confirmed: 2 of its 4
+hunks fail against trixie's tree). Rebuilding on top of a pristine, matching
+upstream tag is the same approach already proven for Fedora/COPR and Arch/AUR,
+and it means one patch to rebase per driver release instead of two.
+
+**No duplicated driver/patch/integration content.** `packaging/debian/`
+contains no copies of `driver/`, `patches/` or `integration/`.
+`packaging/debian/extra-driver` and `packaging/debian/extra-integration` are
+symlinks back to `../../driver` and `../../integration`, and
+`packaging/debian/patches/0001-egis0576-meson-integration.patch` is a symlink
+to `../../../patches/libfprint-1.94.100-egis0576.patch`. `build.sh` is the
+only place any of that content is copied, and only into a throwaway build
+tree (`cp -rL`, which follows the symlinks) — this repo's own files stay the
+single source of truth. `debian/rules`' `override_dh_auto_configure` and
+`override_dh_auto_install` then copy from `debian/extra-driver` and
+`debian/extra-integration` exactly the way the Fedora spec's `%prep`/`%install`
+copy from the unpacked driver tarball.
+
+**Package split, names and versioning:** the source package is
+`libfprint-egis0576` (this repo's own identity), but the **binary** packages
+keep Debian's own names (`libfprint-2-2`, `libfprint-2-dev`,
+`gir1.2-fprint-2.0`), so `apt` treats this as a newer build of the same
+package with no `Provides`/`Conflicts`/`Replaces` needed. The changelog's
+`-99egis1` revision mirrors the Fedora spec's `Release: 99...egis9` comment:
+the numeric `99` sorts above any plausible normal Debian revision at the same
+upstream `Version`, so this package wins on version alone even without a repo
+pin — a robust backstop like the COPR `priority=90` step below is worth
+adding if this is ever published to a real apt repository.
+
+**Integration files installed automatically, unlike the AUR build:** the
+suspend/resume sleep hook and no-autosuspend udev rule are in
+`libfprint-2-2`'s own `.install` file, the same way the Fedora spec's
+`%install` adds them — closing the gap the AUR section above documents for
+its own `package()`.
+
+**No `debian/*.symbols` file:** Debian's own `libfprint-2-2.symbols` is a
+hand-maintained, version-tagged export list tied to Debian's own upstream
+import lineage (`1:1.90.1`, `1:1.94.1`, ...), which this build does not
+follow — it tracks the tag pinned in `build.sh` instead. `dh_makeshlibs -- -c0`
+gives plain `${shlibs:Depends}` (soname + version floor) instead.
+
+**Verified with a real build** (`debian:trixie`, this session, `linux/arm64`
+— the packaging logic is architecture-neutral, but only arm64 was built and
+tested here; an `linux/amd64` build was not run):
+
+```
+$ dpkg -c libfprint-2-2_1.94.100-99egis1_arm64.deb | grep -E "system-sleep|nosuspend|libfprint-2.so"
+-rw-r--r-- root/root   1208848 ... ./usr/lib/aarch64-linux-gnu/libfprint-2.so.2.0.0
+-rwxr-xr-x root/root      2344 ... ./usr/lib/systemd/system-sleep/50-egis0576-fp-resume.sh
+-rw-r--r-- root/root       810 ... ./usr/lib/udev/rules.d/60-egis0576-fp-nosuspend.rules
+lrwxrwxrwx root/root         0 ... ./usr/lib/aarch64-linux-gnu/libfprint-2.so.2 -> libfprint-2.so.2.0.0
+
+$ objdump -p usr/lib/aarch64-linux-gnu/libfprint-2.so.2.0.0 | grep SONAME
+  SONAME               libfprint-2.so.2
+
+$ strings usr/lib/aarch64-linux-gnu/libfprint-2.so.2.0.0 | grep -i egis0576
+egis0576
+libfprint-egis0576
+../libfprint/drivers/egis0576.c
+../libfprint/drivers/egis0576/egis0576_proto.c
+egis0576_close
+... (driver id strings present; compiled in, not a loadable module)
+```
+
+`lintian` on the built packages reports one warning, left as-is:
+`appstream-metadata-missing-modalias-provide` for the udev rule's
+`usb:v1C7Ap0576d*` match — the package ships no AppStream metainfo advertising
+that modalias. Fedora's `.spec` has the same gap (no AppStream entry for the
+sensor either), so this is not a regression from packaging for Debian; adding
+one is a separate, independent piece of work if this ever needs an AppStream
+listing. Adding `gir1.2-gobject-2.0-dev` and `gir1.2-gio-2.0-dev` to
+`Build-Depends`, and dropping `${shlibs:Depends}` from `gir1.2-fprint-2.0`'s
+`Depends` (that package ships no ELF binary needing a shlibs substitution),
+fixed the three cosmetic build warnings an earlier trial run of this same
+strategy hit; the build above shows none of them.
+
 ## Releasing a new driver version
 
-Both recipes pin the driver by **tag** — neither follows `main` — so a driver
-release means bumping both, or users keep getting the old one:
+All three recipes pin the driver by **tag** — none follows `main` — so a
+driver release means bumping every one of them, or users keep getting the old
+one:
 
 | File | What to bump |
 |---|---|
 | `packaging/fedora/libfprint.spec` | `%global egis_tag` **and** the `Release:` suffix (`egisN`), plus a `%changelog` entry |
 | `packaging/aur/PKGBUILD` | the `#tag=` in `source=`, and reset `pkgrel=1` |
+| `packaging/debian/changelog` | a new entry at the top (`dch -i` or by hand), bumping the `-99egisN` revision |
 
 ## Release CI (GitHub Actions)
 
