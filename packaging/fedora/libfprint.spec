@@ -10,7 +10,7 @@
 # (Up to 1.94.10 that was not the case, and this directory carried a separately
 # rebased patch for Fedora's own tree; it is gone with the rebase.)
 
-%global egis_tag v0.4.4
+%global egis_tag v0.4.5
 
 Name:           libfprint
 Version:        1.94.100
@@ -19,7 +19,7 @@ Version:        1.94.100
 # ../README.md, e.g. priority=90), which wins regardless of version — keep it
 # set, because it is what saves enabled users when Fedora ships a version this
 # spec has not been rebased onto yet.
-Release:        99%{?dist}.egis9
+Release:        99%{?dist}.egis10
 Summary:        Toolkit for fingerprint scanner (rebuilt with the EgisTec EH576 / 1c7a:0576 driver)
 
 License:        LGPL-2.1-or-later AND NIST-PD
@@ -137,6 +137,20 @@ install -Dm 0644 "$egisdir/integration/egis0576-fprintd-wait.conf" \
 %{_datadir}/installed-tests/libfprint-2/
 
 %changelog
+* Sun Sep 14 2026 PHILIPPDEV5396 - 1.94.100-99.egis10
+- Update egis0576 driver to v0.4.5.
+  * integration: hold fprintd's start while the resume hook re-enumerates the
+    sensor. The hook needs about a second for that, fprintd is D-Bus activated,
+    and a claim landing in that window is refused with "Device was already
+    claimed". A marker in /run plus an ExecStartPre gate closes it; the gate is
+    fail-open after 15 s so a stale marker can never disable fingerprint
+    authentication. Diagnosed, built and tested by sam-dant.
+  * Ships two new files: %{_libexecdir}/egis0576-fp-wait and the
+    fprintd.service.d drop-in that runs it.
+  * Documentation: the accuracy claims now cover three units instead of one
+    (false rejects 0/60, 2/60 and 37/60 at the shipped threshold), the
+    enrolment code legend in the accuracy kit was wrong (-8 is a success, not a
+    rejection), and the kit no longer prints a vendor "EER" that is not one.
 * Sun Sep 13 2026 PHILIPPDEV5396 - 1.94.100-99.egis9
 - Rebase onto upstream libfprint 1.94.100 (Fedora 44 and rawhide ship it).
   * The meson integration patch moved with upstream's build refactor: drivers
