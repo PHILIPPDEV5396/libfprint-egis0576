@@ -96,6 +96,13 @@ install -Dm 0755 "$egisdir/integration/50-egis0576-fp-resume.sh" \
     %{buildroot}%{_prefix}/lib/systemd/system-sleep/50-egis0576-fp-resume.sh
 install -Dm 0644 "$egisdir/integration/60-egis0576-fp-nosuspend.rules" \
     %{buildroot}%{_udevrulesdir}/60-egis0576-fp-nosuspend.rules
+# Gate that holds fprintd's start while the hook's post phase re-enumerates the
+# sensor; fail-open after 15 s, so a stale marker cannot disable fingerprint
+# authentication. Diagnosed by sam-dant (see integration/README.md).
+install -Dm 0755 "$egisdir/integration/egis0576-fp-wait" \
+    %{buildroot}%{_libexecdir}/egis0576-fp-wait
+install -Dm 0644 "$egisdir/integration/egis0576-fprintd-wait.conf" \
+    %{buildroot}%{_prefix}/lib/systemd/system/fprintd.service.d/10-egis0576-resume-wait.conf
 
 %ldconfig_scriptlets
 
@@ -112,6 +119,9 @@ install -Dm 0644 "$egisdir/integration/60-egis0576-fp-nosuspend.rules" \
 %{_datadir}/metainfo/org.freedesktop.libfprint.metainfo.xml
 # egis0576 suspend/resume integration (see docs/suspend-resume.md)
 %{_prefix}/lib/systemd/system-sleep/50-egis0576-fp-resume.sh
+%{_libexecdir}/egis0576-fp-wait
+%dir %{_prefix}/lib/systemd/system/fprintd.service.d
+%{_prefix}/lib/systemd/system/fprintd.service.d/10-egis0576-resume-wait.conf
 %{_udevrulesdir}/60-egis0576-fp-nosuspend.rules
 
 %files devel

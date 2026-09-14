@@ -1,0 +1,48 @@
+#!/bin/bash
+# ExecStartPre gate for fprintd: hold its start until the resume hook has
+# finished re-enumerating the EgisTec EH576.
+#
+# WHY: 50-egis0576-fp-resume.sh takes the sensor off the USB bus and puts it
+# back (`authorized` 0 -> 1) in its `post` phase. That takes about a second, and
+# during it the device is either gone or freshly enumerated and not yet settled.
+# fprintd is D-Bus activated, so on resume the desktop can activate it inside
+# exactly that window; it then either finds no device or claims one that is
+# about to disappear, and the unlock screen falls back to the password with
+# "Device was already claimed" in the journal. Stopping fprintd before suspend
+# (the `pre` phase) does not close that race on its own, because the thing that
+# starts it again is outside our control.
+#
+# The hook therefore drops a marker file before it stops fprintd and removes it
+# once the sensor is back; this script waits for the marker to go away.
+#
+# Diagnosed and first implemented by Thaddeus "sam-dant" (see
+# https://github.com/sam-dant/egis0576-resume-workaround), who measured the race
+# on an IdeaPad Flex 5 14ITL05: fprintd started at 18:39:57, the hook finished
+# re-enumerating at 18:39:58, and the claim 46 s later was still refused.
+#
+# DELIBERATELY FAIL-OPEN: if the marker is still there after TIMEOUT this script
+# exits 0 anyway and lets fprintd start. A marker left behind by a hook that
+# died must never disable fingerprint authentication until the next reboot. The
+# marker lives in /run, so a reboot clears it in any case.
+#
+# Install: /usr/libexec/egis0576-fp-wait, mode 0755, together with the drop-in
+# egis0576-fprintd-wait.conf. install.sh does this for you.
+MARKER=/run/egis0576-fp-resume.pending
+TIMEOUT=15
+
+[ -e "$MARKER" ] || exit 0
+
+waited=0
+while [ -e "$MARKER" ] && [ "$waited" -lt "$((TIMEOUT * 10))" ]; do
+    sleep 0.1
+    waited=$((waited + 1))
+done
+
+if [ -e "$MARKER" ]; then
+    logger -t egis0576-fp-wait \
+        "resume marker still present after ${TIMEOUT}s -- starting fprintd anyway" 2>/dev/null
+else
+    logger -t egis0576-fp-wait \
+        "sensor ready after $((waited / 10)).$((waited % 10))s, starting fprintd" 2>/dev/null
+fi
+exit 0

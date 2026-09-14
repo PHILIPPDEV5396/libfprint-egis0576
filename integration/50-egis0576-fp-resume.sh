@@ -26,6 +26,8 @@ set +e
 
 VID=1c7a
 PID=0576
+# Consumed by /usr/libexec/egis0576-fp-wait (fprintd's ExecStartPre gate).
+MARKER=/run/egis0576-fp-resume.pending
 
 find_dev() {
     local v d
@@ -38,19 +40,32 @@ find_dev() {
 
 case "$1" in
     pre)
+        # Mark the sensor as not ready BEFORE stopping fprintd, so a D-Bus
+        # activation that lands in the resume window waits for `post` to finish
+        # instead of claiming a device that is about to leave the bus. The
+        # egis0576-fp-wait gate consumes this; without that gate installed the
+        # marker is simply ignored. /run is a tmpfs, so a reboot clears it.
+        : > "$MARKER" 2>/dev/null
         # drop fprintd's stale device claim before we sleep (upstream
         # gnome-shell/fprintd bug); also ends any in-flight operation cleanly
         systemctl stop fprintd.service 2>/dev/null
         ;;
     post)
+        # The marker is removed on EVERY exit path below, including the one
+        # where the sensor is not found: a marker that outlives its hook would
+        # cost every later fprintd start the gate's full timeout.
         dev=$(find_dev)
-        [ -n "$dev" ] || exit 0
-        # deauthorize + reauthorize = USB re-enumeration -> the driver re-opens
-        # the device and re-runs the sensor bring-up on next use
-        echo 0 > "$dev/authorized" 2>/dev/null
-        sleep 1
-        echo 1 > "$dev/authorized" 2>/dev/null
-        logger -t egis0576-fp-resume "EH576 re-enumerated after resume ($dev)" 2>/dev/null
+        if [ -n "$dev" ]; then
+            # deauthorize + reauthorize = USB re-enumeration -> the driver
+            # re-opens the device and re-runs the sensor bring-up on next use
+            echo 0 > "$dev/authorized" 2>/dev/null
+            sleep 1
+            echo 1 > "$dev/authorized" 2>/dev/null
+            logger -t egis0576-fp-resume "EH576 re-enumerated after resume ($dev)" 2>/dev/null
+        else
+            logger -t egis0576-fp-resume "EH576 not found after resume" 2>/dev/null
+        fi
+        rm -f "$MARKER" 2>/dev/null
         ;;
 esac
 exit 0

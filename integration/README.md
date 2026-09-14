@@ -35,6 +35,8 @@ Two independent problems, only one of which is even in this driver's reach:
 | File | Installs to | Effect |
 |---|---|---|
 | `50-egis0576-fp-resume.sh` | `/usr/lib/systemd/system-sleep/` | **`pre`: stops `fprintd` before sleep** so no stale claim survives — this is the fix for problem 2. **`post`: re-enumerates the sensor** (`authorized` 0→1) so its exposure is reset and the first post-resume capture is well-exposed. |
+| `egis0576-fp-wait` | `/usr/libexec/` | **Gate on `fprintd`'s start.** The hook's `post` phase takes about a second to re-enumerate the sensor, and `fprintd` is D-Bus activated, so the desktop can activate it inside exactly that window and claim a device that is about to leave the bus. This waits for the hook's marker to disappear, then lets `fprintd` start. Fail-open: after 15 s it starts it anyway, so a marker left by a hook that died cannot disable fingerprint authentication. |
+| `egis0576-fprintd-wait.conf` | `/usr/lib/systemd/system/fprintd.service.d/` (packages) or `/etc/systemd/system/fprintd.service.d/` (`install.sh`) | The `ExecStartPre=` drop-in that runs the gate above. |
 | `60-egis0576-fp-nosuspend.rules` | `/etc/udev/rules.d/` | Keeps the sensor powered instead of letting it autosuspend while idle. There is no session state to protect — the protocol is stateless — but an interactively used reader should not have to come back from runtime PM on every press. |
 
 Restarting `fprintd` around suspend is exactly the community-standard workaround
@@ -46,11 +48,23 @@ for the upstream claim bug. Fingerprint stays enabled everywhere — login, `sud
 ```bash
 sudo install -m 0755 50-egis0576-fp-resume.sh    /usr/lib/systemd/system-sleep/
 sudo install -m 0644 60-egis0576-fp-nosuspend.rules /etc/udev/rules.d/
+sudo install -Dm 0755 egis0576-fp-wait /usr/libexec/egis0576-fp-wait
+sudo install -Dm 0644 egis0576-fprintd-wait.conf \
+    /etc/systemd/system/fprintd.service.d/10-egis0576-resume-wait.conf
+sudo systemctl daemon-reload
 sudo udevadm control --reload-rules
 sudo udevadm trigger --attr-match=idVendor=1c7a
 ```
 
-Revert by deleting the two files and reloading udev rules.
+Revert by deleting the four files, then `sudo systemctl daemon-reload` and
+reloading udev rules.
+
+The gate is the one piece here that was not written for this repository first:
+the race it closes was diagnosed on an IdeaPad Flex 5 14ITL05 by
+[sam-dant](https://github.com/sam-dant/egis0576-resume-workaround), who measured
+`fprintd` starting one second before the hook finished and the claim still being
+refused 46 s later, and who built and tested the marker-plus-gate design this
+implements ([#3](https://github.com/PHILIPPDEV5396/libfprint-egis0576/issues/3)).
 
 ## Test it
 

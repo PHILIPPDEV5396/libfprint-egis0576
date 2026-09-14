@@ -75,9 +75,15 @@ echo ">>> installing suspend/resume integration (sleep hook + udev rule) ..."
 if [ -f "$REPO/integration/50-egis0576-fp-resume.sh" ]; then
     sudo install -m 0755 "$REPO/integration/50-egis0576-fp-resume.sh"    /usr/lib/systemd/system-sleep/
     sudo install -m 0644 "$REPO/integration/60-egis0576-fp-nosuspend.rules" /etc/udev/rules.d/
+    # Gate: hold fprintd's start while the resume hook re-enumerates the sensor
+    # (fail-open after 15 s). See integration/egis0576-fp-wait.
+    sudo install -Dm 0755 "$REPO/integration/egis0576-fp-wait" /usr/libexec/egis0576-fp-wait
+    sudo install -Dm 0644 "$REPO/integration/egis0576-fprintd-wait.conf" \
+        /etc/systemd/system/fprintd.service.d/10-egis0576-resume-wait.conf
+    sudo systemctl daemon-reload 2>/dev/null || true
     sudo udevadm control --reload-rules 2>/dev/null || true
     sudo udevadm trigger --attr-match=idVendor=1c7a 2>/dev/null || true
-    echo "    installed (see integration/README.md; delete the two files to revert)."
+    echo "    installed (see integration/README.md; delete the four files to revert)."
 fi
 
 echo

@@ -429,7 +429,10 @@ decompilation are **not** included and must not be committed here.
 Reverse-engineered and ported to libfprint by the repository author, with the goal
 of making already-owned hardware usable on Linux. The optional clean-room
 correlation matcher (`driver/egis0576/tsteppy/`, LGPL-2.1-or-later) is the work of
-Thaddeus Stepanovich. Prior art this project started from is listed in
+Thaddeus Stepanovich. The suspend/resume activation gate in
+[`integration/`](integration/) implements a design diagnosed, built and tested by
+[sam-dant](https://github.com/sam-dant/egis0576-resume-workaround). Prior art
+this project started from is listed in
 [PROVENANCE.md §3](PROVENANCE.md#3-prior-art-by-others); the people who tested the
 driver on their hardware are named in the "Tested platforms" table above. Built on
 the excellent [libfprint](https://gitlab.freedesktop.org/libfprint/libfprint) and
