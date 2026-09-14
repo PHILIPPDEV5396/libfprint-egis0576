@@ -1,0 +1,10 @@
+libfprint-egis0576-tod (0.4.4-1) noble; urgency=medium
+
+  * Initial Ubuntu TOD module packaging. Builds the egis0576 driver as a
+    standalone libfprint-2/tod-1 module against the stock Ubuntu
+    libfprint-2-tod-dev headers. Does not replace libfprint-2-2.
+  * Build on the oldest supported series (noble): the TOD version script's
+    newest node carries a symbol catch-all, so a module built on a newer
+    series can fail to load on an older one. See packaging/README.md.
+
+ -- Philipp Oster <70714877+PHILIPPDEV5396@users.noreply.github.com>  Sun, 13 Sep 2026 00:00:00 +0000

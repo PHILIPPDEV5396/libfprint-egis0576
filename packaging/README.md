@@ -139,7 +139,7 @@ is a lateral rebuild, not a downgrade.
 
 ---
 
-## Debian / Ubuntu  →  `packaging/debian/`
+## Debian  →  `packaging/debian/`
 
 **Ubuntu users: do not install this package.** It replaces Ubuntu's
 TOD-patched `libfprint-2-2`, which breaks every other TOD driver on the
@@ -357,6 +357,129 @@ listing. Adding `gir1.2-gobject-2.0-dev` and `gir1.2-gio-2.0-dev` to
 fixed the three cosmetic build warnings an earlier trial run of this same
 strategy hit; the build above shows none of them.
 
+---
+
+## Ubuntu / TOD module  →  `packaging/ubuntu-tod/`
+
+Ubuntu ships a different libfprint from Fedora and Arch: the **TOD** fork
+(`libfprint-2-2` depends on `libfprint-2-tod1`), whose whole purpose is loading
+out-of-tree drivers as separate `lib*.so` files from a fixed directory, instead
+of compiling them in. Because of this, Ubuntu does not need a rebuilt
+`libfprint-2-2` at all. This package builds **one file**,
+`libfprint-tod-egis0576.so`, and installs it next to the stock, unmodified
+`libfprint-2-2` and `libfprint-2-tod1` packages. Every other TOD driver on the
+machine (Goodix and others) keeps working, untouched.
+
+### Users install with
+
+```bash
+sudo add-apt-repository ppa:PHILIPPDEV5396/libfprint-egis0576   # once published
+sudo apt update
+sudo apt install libfprint-2-tod1-egis0576
+sudo systemctl restart fprintd
+```
+
+`libfprint-2-2` is never replaced or held back by this package, so ordinary
+`apt upgrade` keeps applying Ubuntu's own libfprint security updates normally.
+
+### Maintainer: build the module
+
+```bash
+sudo apt install build-essential devscripts debhelper meson pkgconf \
+    libfprint-2-tod-dev libfprint-2-dev libgusb-dev libglib2.0-dev
+cd packaging/ubuntu-tod
+dpkg-buildpackage -us -uc -b
+```
+
+This reads `../../driver/egis0576.c` and `../../driver/egis0576/` straight out
+of the repository tree — nothing under `driver/` is copied or patched for this
+build — links them against the headers `libfprint-2-tod-dev` installs, and
+produces `libfprint-2-tod1-egis0576_<version>_<arch>.deb`. The two
+[`../integration/`](../integration/) files (the systemd-sleep hook and the
+no-autosuspend udev rule) are installed by `debian/rules`, also read straight
+from the repository, not copied into `packaging/ubuntu-tod/`.
+
+### BUILD ON THE OLDEST SUPPORTED SERIES — this is not optional
+
+Build the PPA (or any one-off `.deb`) on the **oldest** Ubuntu series you mean
+to support (currently **noble**, 24.04 LTS), never on a newer one. Ubuntu's TOD
+version script (`libfprint/tod/libfprint-tod.ver.in`) ends its **newest** symbol
+node with an `fpi_*;` catch-all, so a module built on a newer series can bind a
+symbol at a version node that an older series' `libfprint-2-tod.so.1` does not
+export — and it then fails to load there, silently as far as the running
+system is concerned (it just never registers the driver). A module built on
+the oldest supported series carries no symbol newer than that series exports,
+so it loads unmodified on every newer series too. This was verified in both
+directions: a module built in an `ubuntu:noble` container loads on `ubuntu:26.04`,
+and one built in `ubuntu:26.04` loads on `noble`, because this driver uses no
+symbol introduced after the `1.94` version node. A future driver version that
+starts using a newer libfprint-TOD symbol would lose that second direction —
+rebuild on the oldest series remains the rule regardless. If a PPA is used,
+this is close to free: Launchpad already builds each series in its own chroot.
+
+### Verified
+
+Built and loaded (stock `libfprint-2-2`, `G_MESSAGES_DEBUG=all` showing
+`Loading driver egis0576`) as an installed `.deb`, on:
+
+| Built on | Loaded on | amd64 | arm64 |
+|---|---|---|---|
+| noble | noble | yes | yes |
+| noble | 26.04 | yes | yes |
+
+`dpkg -V libfprint-2-2` was unchanged in every case (only pre-existing missing
+doc files from the base container image, no changed binary) — confirming this
+package never touches the archive `libfprint-2-2`.
+
+**A gap found during this build, not in the design it was based on:** on
+`ubuntu:26.04` (arm64 and amd64 both), `apt install` of a **noble-built** `.deb`
+fails outright — not from the TOD symbol-versioning concern above, but because
+`dpkg-shlibdeps` bakes in the *exact* runtime package name that provides
+`libgusb.so.2` on the **build** series, and Ubuntu renamed that package between
+noble and resolute (`libgusb2` → `libgusb2a`) with no transitional package
+bridging the two, even though the `.so` itself is identical
+(`libgusb.so.2.0.10` on both). `apt install ./libfprint-2-tod1-egis0576_*.deb`
+on a 26.04 machine that only has `libgusb2a` installed refuses the package
+outright with an unsatisfiable-dependency error. This was confirmed by
+`dpkg -L` on both series showing the same `.so` file under two different
+package names, and by installing with `dpkg -i --force-depends` to prove the
+TOD load itself is unaffected once the dependency check is bypassed. A PPA
+sidesteps this the same way it sidesteps the symbol-versioning issue — building
+each series in its own chroot regenerates `${shlibs:Depends}` against that
+series' own package names — so this is a build-hygiene note for anyone building
+a one-off `.deb` outside a PPA, not a defect in the module itself.
+
+### What the package contains
+
+```
+Source: libfprint-egis0576-tod
+Build-Depends: debhelper-compat (= 13), meson, pkgconf,
+               libfprint-2-tod-dev, libfprint-2-dev,
+               libgusb-dev, libglib2.0-dev
+
+Package: libfprint-2-tod1-egis0576
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}
+```
+
+installing
+
+```
+/usr/lib/<triplet>/libfprint-2/tod-1/libfprint-tod-egis0576.so
+/usr/lib/systemd/system-sleep/50-egis0576-fp-resume.sh
+/etc/udev/rules.d/60-egis0576-fp-nosuspend.rules
+```
+
+The module file name matters: Ubuntu's TOD loader
+(`libfprint/tod/tod-shared-loader.c`) only looks at files that both start with
+`lib` and end in `.so` — anything else in the drivers directory, including a
+correctly-built module under the wrong name, is skipped with no error. The
+build here relies on meson's default shared-library naming (no `soversion` is
+set), which already produces exactly `libfprint-tod-egis0576.so`, not a
+symlink chain ending in `.so.0.0.0`.
+
+---
+
 ## Releasing a new driver version
 
 Fedora and Arch pin the driver by **tag**, downloading a tagged tarball at
@@ -427,6 +550,11 @@ git push origin v0.4.5
 
 The workflow picks up the tag push, builds all three packages, and attaches
 them to the `v0.4.5` GitHub Release once the build jobs finish.
+
+`packaging/ubuntu-tod/` builds directly from the repository tree it lives in —
+there is no tag to bump — so a driver release only needs a version bump in
+`packaging/ubuntu-tod/debian/changelog` (and a rebuild on the oldest supported
+series; see above).
 
 ## Common notes
 

@@ -1,0 +1,49 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: libfprint-egis0576-tod
+Source: https://github.com/PHILIPPDEV5396/libfprint-egis0576
+
+Comment:
+ This source package builds one file, driver/egis0576.c and its supporting
+ sources under driver/egis0576/, as a libfprint TOD module. The driver's
+ provenance, including which parts are original work and which are
+ reverse-engineered for interoperability, is documented in full in
+ ../../PROVENANCE.md at the top of the repository; this file summarizes it.
+
+Files: driver/egis0576.c
+       driver/egis0576.h
+       driver/egis0576/egis0576_proto.c
+       driver/egis0576/egis0576_proto.h
+       driver/egis0576/egis_rt.c
+       driver/egis0576/egis_rt.h
+       driver/egis0576/egis_engine.c
+       driver/egis0576/egis_engine.h
+Copyright: The author of libfprint-egis0576
+License: LGPL-2.1-or-later
+
+Files: driver/egis0576/egis_funcs.c
+       driver/egis0576/egis_preprocess.c
+       driver/egis0576/egis_coherence_map.c
+       driver/egis0576/egis_decls.h
+       driver/egis0576/egis_dat.h
+       driver/egis0576/egis_blobs.h
+       driver/egis0576/egis_intrin.h
+       driver/egis0576/egis_init.h
+Copyright: Reverse-engineered for interoperability; no copyright claimed by
+ the author. See ../../PROVENANCE.md.
+License: LGPL-2.1-or-later
+
+Files: packaging/ubuntu-tod/tod-entry.c
+       packaging/ubuntu-tod/meson.build
+       packaging/ubuntu-tod/debian/*
+Copyright: The author of libfprint-egis0576
+License: LGPL-2.1-or-later
+
+License: LGPL-2.1-or-later
+ This program is free software; you can redistribute it and/or modify it
+ under the terms of the GNU Lesser General Public License as published by
+ the Free Software Foundation; either version 2.1 of the License, or (at
+ your option) any later version.
+ .
+ On Debian systems, the complete text of the GNU Lesser General Public
+ License version 2.1 can be found in
+ "/usr/share/common-licenses/LGPL-2.1".
