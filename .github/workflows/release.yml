@@ -64,6 +64,72 @@ jobs:
           mkdir -p "$GITHUB_WORKSPACE/dist"
           find ~/rpmbuild/RPMS ~/rpmbuild/SRPMS -type f -exec cp {} "$GITHUB_WORKSPACE/dist/" \;
 
+      # Fedora ships its own libfprint, so this step installs the stock package
+      # first. That way the next step proves a real replacement of an existing
+      # package, not just a first install into an empty container.
+      - name: Install stock Fedora libfprint
+        if: matrix.distro == 'fedora'
+        run: dnf install -y libfprint
+
+      - name: Install and verify the rebuilt Fedora RPM
+        if: matrix.distro == 'fedora'
+        run: |
+          cd "$GITHUB_WORKSPACE"
+
+          # The main package file only (excludes -devel, -tests, -debuginfo,
+          # -debugsource and the .src.rpm, none of which this check needs).
+          rpm_file=$(ls dist/libfprint-[0-9]*.x86_64.rpm)
+
+          # Plain `dnf install` of the local RPM was tested against a
+          # container with Fedora's stock libfprint already installed, and it
+          # replaced it with no extra flag: our Release field
+          # (99<dist>.egis9) sorts above Fedora's own (1.fcNN), so dnf reads
+          # the local RPM as a normal upgrade. No --allowerasing needed.
+          dnf install -y "$rpm_file"
+
+          echo "== installed package version =="
+          rpm -q libfprint
+          rpm -q libfprint | grep -q '\.egis9\.' || {
+            echo "FAIL: installed libfprint is not the egis0576 build"; exit 1;
+          }
+
+          echo "== libfprint-2.so.2 at the Fedora library path =="
+          test -e /usr/lib64/libfprint-2.so.2 || {
+            echo "FAIL: /usr/lib64/libfprint-2.so.2 missing"; exit 1;
+          }
+          soname_target=$(readlink -f /usr/lib64/libfprint-2.so.2)
+          test -s "$soname_target" || {
+            echo "FAIL: $soname_target is missing or empty"; exit 1;
+          }
+
+          echo "== egis0576 driver compiled into the installed library =="
+          # A driver name string could appear from an unrelated source string
+          # table, so require several distinct egis0576 symbol names, not one
+          # substring match.
+          hits=$(strings "$soname_target" | grep -c 'egis0576')
+          test "$hits" -ge 5 || {
+            echo "FAIL: only $hits egis0576 references in the installed .so, expected several"; exit 1;
+          }
+          strings "$soname_target" | grep -q '^FpDeviceEgis0576$' || {
+            echo "FAIL: FpDeviceEgis0576 type name not found in the installed .so"; exit 1;
+          }
+
+          echo "== systemd-sleep hook =="
+          hook=/usr/lib/systemd/system-sleep/50-egis0576-fp-resume.sh
+          test -x "$hook" || { echo "FAIL: $hook missing or not executable"; exit 1; }
+          grep -q 'fprintd' "$hook" || {
+            echo "FAIL: $hook does not mention fprintd, wrong file installed"; exit 1;
+          }
+
+          echo "== udev rule =="
+          rule=/usr/lib/udev/rules.d/60-egis0576-fp-nosuspend.rules
+          test -s "$rule" || { echo "FAIL: $rule missing or empty"; exit 1; }
+          grep -q '1c7a.*0576' "$rule" || {
+            echo "FAIL: $rule does not match the 1c7a:0576 USB ID"; exit 1;
+          }
+
+          echo "Fedora install verification passed."
+
       # --- Arch path ---
       - name: Install Arch build deps
         if: matrix.distro == 'archlinux'
@@ -93,6 +159,53 @@ jobs:
           su builder -c "cd '$GITHUB_WORKSPACE/packaging/aur' && makepkg -s --noconfirm"
           mkdir -p "$GITHUB_WORKSPACE/dist"
           cp packaging/aur/*.pkg.tar.* "$GITHUB_WORKSPACE/dist/"
+
+      - name: Install and verify the Arch package
+        if: matrix.distro == 'archlinux'
+        run: |
+          cd "$GITHUB_WORKSPACE"
+
+          # The main package file only (excludes the *-debug package).
+          pkg_file=$(ls dist/libfprint-egis0576-[0-9]*.pkg.tar.*)
+
+          # pacman -U resolves and installs runtime deps from the sync
+          # databases refreshed by the build-deps step above.
+          pacman -U --noconfirm "$pkg_file"
+
+          echo "== installed package version =="
+          pacman -Q libfprint-egis0576
+
+          echo "== libfprint-2.so.2 at the Arch library path =="
+          test -e /usr/lib/libfprint-2.so.2 || {
+            echo "FAIL: /usr/lib/libfprint-2.so.2 missing"; exit 1;
+          }
+          soname_target=$(readlink -f /usr/lib/libfprint-2.so.2)
+          test -s "$soname_target" || {
+            echo "FAIL: $soname_target is missing or empty"; exit 1;
+          }
+
+          echo "== egis0576 driver compiled into the installed library =="
+          hits=$(strings "$soname_target" | grep -c 'egis0576')
+          test "$hits" -ge 5 || {
+            echo "FAIL: only $hits egis0576 references in the installed .so, expected several"; exit 1;
+          }
+          strings "$soname_target" | grep -q '^FpDeviceEgis0576$' || {
+            echo "FAIL: FpDeviceEgis0576 type name not found in the installed .so"; exit 1;
+          }
+
+          # The PKGBUILD deliberately ships no systemd-sleep hook and no
+          # egis0576 udev rule (see packaging/aur/PKGBUILD), unlike the
+          # Fedora spec. Confirm that stays true, so a future PKGBUILD change
+          # that starts shipping them does not go unnoticed here.
+          echo "== confirm the sleep hook and udev rule are absent, as intended =="
+          test ! -e /usr/lib/systemd/system-sleep/50-egis0576-fp-resume.sh || {
+            echo "FAIL: unexpected systemd-sleep hook in the Arch package"; exit 1;
+          }
+          test ! -e /usr/lib/udev/rules.d/60-egis0576-fp-nosuspend.rules || {
+            echo "FAIL: unexpected udev rule in the Arch package"; exit 1;
+          }
+
+          echo "Arch install verification passed."
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
