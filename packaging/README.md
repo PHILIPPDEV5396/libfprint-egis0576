@@ -148,6 +148,55 @@ release means bumping both, or users keep getting the old one:
 | `packaging/fedora/libfprint.spec` | `%global egis_tag` **and** the `Release:` suffix (`egisN`), plus a `%changelog` entry |
 | `packaging/aur/PKGBUILD` | the `#tag=` in `source=`, and reset `pkgrel=1` |
 
+## Release CI (GitHub Actions)
+
+`.github/workflows/release.yml` builds both packages in containers and
+attaches them to the GitHub Release for a tag, as a convenience alongside
+COPR and the AUR, not a replacement for either.
+
+**What it does:** on a push of a tag matching `v*`, a first job checks that
+`packaging/fedora/libfprint.spec` (`%global egis_tag`) and
+`packaging/aur/PKGBUILD` (the `#tag=` pin) both point at the pushed tag, and
+fails the run if either is stale. A matrix job then builds the Fedora RPM (in
+a `fedora:43` container, from the unmodified `packaging/fedora/libfprint.spec`)
+and the Arch package (in an `archlinux:latest` container, from the unmodified
+`packaging/aur/PKGBUILD`), each on GitHub's native x86_64 runners with no
+aarch64 leg. **The Fedora RPM is a Fedora 43 build only** (the container is
+`fedora:43`, so `%{?dist}` expands to `.fc43`); COPR remains the supported
+install path for other Fedora versions, since its project builds separate
+chroots for each one. Each leg then installs its own freshly built package on
+top of the distro's stock `libfprint` inside the same container, and checks
+the installed files: the package version, the shared library's presence and
+size, the egis0576 driver symbols compiled into it, and (Fedora only) the
+suspend/resume hook and udev rule. A failed check fails that leg's build, so
+a package this workflow does not verify never reaches the release. A final
+job then attaches every built package, plus a generated `SHA256SUMS` file, to
+the GitHub Release for that tag, creating the release if one does not already
+exist for it. The workflow uses only the built-in `GITHUB_TOKEN`, requests
+just the `contents` permission it needs, and never pushes to COPR or the AUR
+— publishing to those still follows the steps above.
+
+If the tagged commit is not an ancestor of the repository's default branch,
+the release is created as a draft instead of published, and the job output
+says so. A normal release, tagged from the default branch, still publishes
+as before.
+
+**Known behaviour:** if a tag is deleted and re-pushed at a different commit,
+re-running the workflow replaces the release's assets but leaves its body,
+generated notes, and recorded target commit at their original values. Delete
+the release itself first if you need those to match the new commit.
+
+**Cutting a release with it:** bump the driver version per the table above,
+commit, then push a tag:
+
+```bash
+git tag v0.4.5
+git push origin v0.4.5
+```
+
+The workflow picks up the tag push, builds both packages, and attaches them
+to the `v0.4.5` GitHub Release once the build jobs finish.
+
 ## Common notes
 
 - **OpenSSL:** the egis0576 driver and its engine static library link **no** crypto
