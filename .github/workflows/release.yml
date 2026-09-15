@@ -493,11 +493,17 @@ jobs:
           # libgusb2a) already matches what this series ships.
           apt-get install -y "./$deb"
 
+          # Expected version is the tag with its leading "v" stripped, plus
+          # this series' suffix, e.g. tag v0.4.5 on resolute -> 0.4.5~26.04.
+          # Read straight off the tag rather than hardcoding it here, the
+          # same way the Debian leg reads its expected version out of
+          # packaging/debian/changelog instead of hardcoding it.
+          expected_version="${GITHUB_REF_NAME#v}~${{ matrix.series_version }}"
+          installed_version=$(dpkg-query -W -f='${Version}\n' libfprint-2-tod1-egis0576)
           echo "== installed package version =="
-          dpkg-query -W -f='${Version}\n' libfprint-2-tod1-egis0576
-          dpkg-query -W -f='${Version}\n' libfprint-2-tod1-egis0576 \
-            | grep -q -- "~${{ matrix.series_version }}\$" || {
-            echo "FAIL: installed version does not carry the ~${{ matrix.series_version }} series suffix"; exit 1;
+          echo "$installed_version"
+          test "$installed_version" = "$expected_version" || {
+            echo "FAIL: installed libfprint-2-tod1-egis0576 is $installed_version, expected $expected_version (from tag $GITHUB_REF_NAME)"; exit 1;
           }
 
           echo "== module installed under the TOD drivers directory pkg-config reports =="
