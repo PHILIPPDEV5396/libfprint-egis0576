@@ -1,0 +1,7 @@
+usr/lib/*/libfprint-2.so.*
+usr/lib/udev/hwdb.d/
+usr/lib/udev/rules.d/
+usr/share/metainfo/org.freedesktop.libfprint.metainfo.xml
+usr/lib/systemd/system-sleep/50-egis0576-fp-resume.sh
+usr/libexec/egis0576-fp-wait
+usr/lib/systemd/system/fprintd.service.d/10-egis0576-resume-wait.conf

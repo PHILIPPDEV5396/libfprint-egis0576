@@ -1,0 +1,46 @@
+libfprint-egis0576 (1:1.94.100-99egis0.4.5) UNRELEASED; urgency=medium
+
+  * Install the two integration files v0.4.5 added, so the Debian package
+    ships the whole suspend/resume fix and not just half of it. Before
+    this, only the systemd-sleep hook (which writes a claim marker to
+    /run before fprintd stops) was installed, with nothing that reads the
+    marker back, so the "Device was already claimed" race v0.4.5 fixed
+    stayed open for Debian users. Mirrors packaging/fedora/libfprint.spec
+    lines 96-103: the gate to /usr/libexec/egis0576-fp-wait (mode 0755)
+    and the fprintd.service.d drop-in that runs it, to
+    /usr/lib/systemd/system/fprintd.service.d/10-egis0576-resume-wait.conf
+    (mode 0644).
+  * Revision now carries the egis0576 driver tag (99egis0.4.5, was a
+    hardcoded 99egis1), and .github/workflows/release.yml's verify-tag job
+    now checks it the same way it already checks packaging/fedora's
+    %global egis_tag and packaging/aur's #tag=. Before this change nothing
+    verified the changelog revision at all, so every future tag would have
+    kept shipping .debs stamped 99egis1: apt saw the same version on every
+    release and treated `apt install ./*.deb` as a no-op reinstall,
+    silently keeping users on whichever driver build they first installed.
+      dpkg --compare-versions '1:1.94.100-99egis0.4.5' gt '1:1.94.9-1'   -> true
+      dpkg --compare-versions '1:1.94.100-99egis0.4.5' gt '1:1.94.10-1'  -> true
+      dpkg --compare-versions '1:1.94.100-99egis0.4.5' gt '1:1.94.100-1' -> true
+      dpkg --compare-versions '...-99egis0.4.6' gt '...-99egis0.4.5'    -> true
+    The epoch and the leading 99 still do the same job documented below:
+    the epoch outranks Debian's own package, and 99 outranks any plausible
+    normal Debian revision at the same epoch and upstream Version.
+  * Maintainer address set to a working project mailbox. The previous value
+    used the RFC 2606 reserved .invalid TLD, which never resolves. This
+    field is carried by every .deb and .changes file, apt show displays it,
+    and Launchpad mails PPA build failures to it, so it has to reach
+    somebody. Upstream authorship stays credited in debian/copyright, which
+    is the normal Debian split between packaging and upstream.
+  * Rebuild of upstream libfprint v1.94.100 with the out-of-tree egis0576
+    (EgisTec EH576, USB 1c7a:0576) driver compiled in. Mirrors
+    packaging/fedora/libfprint.spec: same upstream version, same meson
+    integration patch, same suspend/resume sleep hook and udev rule.
+  * Epoch "1:" added. Debian trixie's stock libfprint-2-2 is 1:1.94.9-1 and
+    sid/forky's is 1:1.94.10-1. An epoch always outranks the upstream
+    version and the revision below it, so a build with no epoch sorts
+    below both of those even though its own upstream version (1.94.100) is
+    higher. Carrying the same epoch "1:" fixes that. No Provides, Conflicts
+    or Replaces is needed as a result, and no install-time flag is needed
+    either.
+
+ -- Irving Popovetsky <libfprint-egis0576@popovetsky.com>  Mon, 14 Sep 2026 09:00:00 +0000

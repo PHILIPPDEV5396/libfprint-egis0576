@@ -1,0 +1,80 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: libfprint
+Upstream-Contact: libfprint contributors <libfprint-devel@lists.freedesktop.org>
+Source: https://gitlab.freedesktop.org/libfprint/libfprint
+
+Files: *
+Copyright: libfprint contributors
+License: LGPL-2.1-or-later
+
+Files: libfprint/nbis/*
+Copyright: National Institute of Standards and Technology
+License: public-domain
+
+# PROVENANCE.md category 1: original work written from scratch for
+# libfprint, licensed the same as the rest of the tree. Exception:
+# egis0576_proto.c's EGIS_STEP_TABLE is a 16-entry table taken byte-exact
+# from the vendor DLL's .rdata, and PROVENANCE.md places it in category 2
+# (see the Files stanza below); dep5 has no way to license part of a file
+# separately, so this stanza covers the file as a whole and the exception
+# is recorded here in prose, matching PROVENANCE.md's own treatment of it.
+Files: debian/extra-driver/egis0576.c
+       debian/extra-driver/egis0576.h
+       debian/extra-driver/egis0576/egis0576_proto.c
+       debian/extra-driver/egis0576/egis0576_proto.h
+       debian/extra-driver/egis0576/egis_rt.c
+       debian/extra-driver/egis0576/egis_rt.h
+       debian/extra-driver/egis0576/egis_engine.c
+       debian/extra-driver/egis0576/egis_engine.h
+       debian/extra-driver/egis0576/egis_engine_cleanroom.c
+Copyright: PHILIPPDEV5396
+License: LGPL-2.1-or-later
+
+# PROVENANCE.md category 2: reverse-engineered from Egis Technology's
+# proprietary Windows driver for interoperability. PROVENANCE.md, "Reverse-
+# engineered for interoperability - no copyright claimed by the author",
+# states the author claims no copyright over these files and that they are
+# Egis Technology Inc.'s intellectual property; it does not state that Egis
+# Technology Inc. licenses them, so no license grant is asserted here. This
+# category also covers the EGIS_STEP_TABLE inside egis0576_proto.c, listed
+# above under category 1 (see the note on that stanza).
+Files: debian/extra-driver/egis0576/egis_funcs.c
+       debian/extra-driver/egis0576/egis_coherence_map.c
+       debian/extra-driver/egis0576/egis_preprocess.c
+       debian/extra-driver/egis0576/egis_init.h
+       debian/extra-driver/egis0576/egis_blobs.h
+       debian/extra-driver/egis0576/egis_dat.h
+       debian/extra-driver/egis0576/egis_decls.h
+       debian/extra-driver/egis0576/egis_intrin.h
+Copyright: Egis Technology Inc. (no copyright claimed by the
+ libfprint-egis0576 author)
+License: LicenseRef-Egis-reverse-engineered-interop
+
+# PROVENANCE.md category 3: the clean-room correlation matcher, copied
+# byte-for-byte with its own licence header intact from a third party.
+Files: debian/extra-driver/egis0576/tsteppy/egis_match.c
+       debian/extra-driver/egis0576/tsteppy/egis_match.h
+Copyright: 2026 Thaddeus Stepanovich
+License: LGPL-2.1-or-later
+
+# PROVENANCE.md, "Everything outside driver/": the author's own work.
+Files: debian/extra-integration/*
+       debian/patches/*
+Copyright: PHILIPPDEV5396
+License: LGPL-2.1-or-later
+
+License: LGPL-2.1-or-later
+ On Debian systems the full text of the GNU Lesser General Public License
+ version 2.1 can be found in /usr/share/common-licenses/LGPL-2.1.
+
+License: public-domain
+ Produced by NIST/ITL, not subject to copyright law in the USA.
+
+License: LicenseRef-Egis-reverse-engineered-interop
+ These files are not licensed by Egis Technology Inc. under LGPL-2.1-or-later
+ or any other licence. They are decompiled/translated from Egis Technology
+ Inc.'s proprietary Windows driver and are reproduced here only to the
+ extent necessary for the EgisTec EH576 sensor to function on Linux, on the
+ interoperability legal basis set out in PROVENANCE.md, "Legal basis and
+ honest risk disclosure". PROVENANCE.md acknowledges that redistributing
+ this translated code is a genuine, unresolved copyright grey area.

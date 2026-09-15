@@ -5,6 +5,7 @@ build/
 *.a
 *.so
 *.so.*
+packaging/debian/build-output/
 
 # --- Egis' copyrighted material — reverse-engineering reference ONLY, never commit ---
 # The original Windows driver binary and any full decompilation of it are Egis

@@ -22,7 +22,7 @@ jobs:
       - name: Checkout (tag)
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - name: Confirm the spec and PKGBUILD are pinned to this tag
+      - name: Confirm the spec, PKGBUILD and Debian changelog are pinned to this tag
         run: |
           TAG="${GITHUB_REF_NAME}"
 
@@ -36,6 +36,15 @@ jobs:
           # ours, so it is scoped to the libfprint-egis0576 source entry.
           pkgbuild_tag=$(grep 'libfprint-egis0576' packaging/aur/PKGBUILD | grep -oP '(?<=#tag=)[^"]+')
 
+          # debian/changelog's revision carries the driver tag as
+          # "-99egis<version>" (e.g. -99egis0.4.5 for tag v0.4.5), the same
+          # way the spec's Release carries "egisN". Read it straight off the
+          # top changelog stanza's "(version)" (no dpkg-dev on this runner)
+          # and compare against the tag with its leading "v" stripped.
+          changelog_version=$(head -1 packaging/debian/changelog | grep -oP '(?<=\()[^)]+(?=\))')
+          changelog_egis_version=$(echo "$changelog_version" | grep -oP '(?<=-99egis)[0-9.]+$')
+          tag_version="${TAG#v}"
+
           fail=0
           if [ "$spec_tag" != "$TAG" ]; then
             echo "FAIL: packaging/fedora/libfprint.spec sets %global egis_tag $spec_tag, but the pushed tag is $TAG"
@@ -45,9 +54,13 @@ jobs:
             echo "FAIL: packaging/aur/PKGBUILD pins #tag=$pkgbuild_tag, but the pushed tag is $TAG"
             fail=1
           fi
+          if [ "$changelog_egis_version" != "$tag_version" ]; then
+            echo "FAIL: packaging/debian/changelog's revision pins driver version $changelog_egis_version, but the pushed tag is $TAG"
+            fail=1
+          fi
           [ "$fail" -eq 0 ] || exit 1
 
-          echo "Both packaging pins match tag $TAG."
+          echo "All three packaging pins match tag $TAG."
 
   build:
     name: Build (${{ matrix.distro }})
@@ -67,6 +80,8 @@ jobs:
             container: fedora:43
           - distro: archlinux
             container: archlinux:latest
+          - distro: debian
+            container: debian:trixie
     container:
       image: ${{ matrix.container }}
     steps:
@@ -84,6 +99,12 @@ jobs:
       - name: Install git (Arch)
         if: matrix.distro == 'archlinux'
         run: pacman -Sy --noconfirm git
+
+      - name: Install git (Debian)
+        if: matrix.distro == 'debian'
+        run: |
+          apt-get update -qq
+          apt-get install -y --no-install-recommends git ca-certificates
 
       - name: Checkout (tag)
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -272,6 +293,122 @@ jobs:
           }
 
           echo "Arch install verification passed."
+
+      # --- Debian path ---
+      - name: Install Debian build deps
+        if: matrix.distro == 'debian'
+        run: |
+          apt-get install -y --no-install-recommends dpkg-dev
+
+          # apt-get build-dep looks for <dir>/debian/control, so it is pointed
+          # at packaging/ (the parent of packaging/debian, which plays the
+          # role of that debian/ subdirectory), the same way
+          # packaging/README.md documents for a local build.
+          apt-get build-dep -y ./packaging
+
+      - name: Build Debian packages
+        if: matrix.distro == 'debian'
+        run: |
+          bash packaging/debian/build.sh
+          mkdir -p "$GITHUB_WORKSPACE/dist"
+          # Prefixed with the tested Debian codename so a Debian package
+          # cannot be mistaken for one of the per-series Ubuntu packages a
+          # later leg attaches to the same release.
+          for f in packaging/debian/build-output/*.deb \
+                   packaging/debian/build-output/*.changes \
+                   packaging/debian/build-output/*.buildinfo; do
+            cp "$f" "$GITHUB_WORKSPACE/dist/debian-trixie-$(basename "$f")"
+          done
+
+      # Debian trixie ships its own libfprint-2-2, so this step installs the
+      # stock package first. That way the next step proves a real
+      # replacement of an existing package, not just a first install into an
+      # empty container.
+      - name: Install stock Debian libfprint-2-2
+        if: matrix.distro == 'debian'
+        run: apt-get install -y libfprint-2-2
+
+      - name: Install and verify the rebuilt Debian package
+        if: matrix.distro == 'debian'
+        # This container's default step shell is dash (/bin/sh), which
+        # does not support the <<< here-string below; bash is needed.
+        shell: bash
+        run: |
+          cd "$GITHUB_WORKSPACE"
+
+          lib_deb=$(ls packaging/debian/build-output/libfprint-2-2_*.deb)
+          dev_deb=$(ls packaging/debian/build-output/libfprint-2-dev_*.deb)
+          gir_deb=$(ls packaging/debian/build-output/gir1.2-fprint-2.0_*.deb)
+
+          # All three installed together: libfprint-2-dev and
+          # gir1.2-fprint-2.0 both Depend on libfprint-2-2 at an exact
+          # matching version. `apt install ./*.deb` resolves the remaining
+          # runtime deps from the container's own repos.
+          #
+          # No --allow-downgrades: the changelog carries epoch "1:", the
+          # same epoch Debian trixie's stock libfprint-2-2 (1:1.94.9-1)
+          # carries, so this build's version (1:1.94.100-99egis1) sorts
+          # above the stock package on version alone. See
+          # packaging/README.md, "Maintainer" section.
+          apt-get install -y "./$lib_deb" "./$dev_deb" "./$gir_deb"
+
+          # Read the expected version out of the changelog instead of
+          # hardcoding the revision here, so this check tracks the changelog
+          # instead of drifting from it on every driver release.
+          expected_version=$(dpkg-parsechangelog -l packaging/debian/changelog --show-field Version)
+          test -n "$expected_version" || {
+            echo "FAIL: could not read a Version out of packaging/debian/changelog"; exit 1;
+          }
+          installed_version=$(dpkg-query -W -f='${Version}\n' libfprint-2-2)
+          echo "== installed package version =="
+          echo "$installed_version"
+          test "$installed_version" = "$expected_version" || {
+            echo "FAIL: installed libfprint-2-2 is $installed_version, expected $expected_version (from packaging/debian/changelog)"; exit 1;
+          }
+
+          echo "== libfprint-2.so.2 at the Debian multiarch path =="
+          soname="/usr/lib/$(dpkg-architecture -qDEB_HOST_MULTIARCH)/libfprint-2.so.2"
+          test -e "$soname" || { echo "FAIL: $soname missing"; exit 1; }
+          soname_target=$(readlink -f "$soname")
+          test -s "$soname_target" || {
+            echo "FAIL: $soname_target is missing or empty"; exit 1;
+          }
+
+          echo "== egis0576 driver compiled into the installed library =="
+          # Captured once, up front: `strings` piped straight into `grep -q`
+          # races under pipefail on a large binary. `grep -q` exits on the
+          # first match while `strings` is still writing, and once its
+          # output exceeds the pipe buffer `strings` blocks on write() and
+          # gets SIGPIPE, so pipefail can fail the pipeline even though the
+          # match was found. Confirmed while proving this leg locally.
+          lib_strings=$(strings "$soname_target")
+
+          # A driver name string could appear from an unrelated source string
+          # table, so require several distinct egis0576 symbol names, not one
+          # substring match.
+          hits=$(grep -c 'egis0576' <<<"$lib_strings" || true)
+          test "$hits" -ge 5 || {
+            echo "FAIL: only $hits egis0576 references in the installed .so, expected several"; exit 1;
+          }
+          grep -q '^FpDeviceEgis0576$' <<<"$lib_strings" || {
+            echo "FAIL: FpDeviceEgis0576 type name not found in the installed .so"; exit 1;
+          }
+
+          echo "== systemd-sleep hook =="
+          hook=/usr/lib/systemd/system-sleep/50-egis0576-fp-resume.sh
+          test -x "$hook" || { echo "FAIL: $hook missing or not executable"; exit 1; }
+          grep -q 'systemctl.*fprintd' "$hook" || {
+            echo "FAIL: $hook does not stop/start fprintd, wrong file installed"; exit 1;
+          }
+
+          echo "== udev rule =="
+          rule=/usr/lib/udev/rules.d/60-egis0576-fp-nosuspend.rules
+          test -s "$rule" || { echo "FAIL: $rule missing or empty"; exit 1; }
+          grep -q '^ACTION==.*1c7a.*0576' "$rule" || {
+            echo "FAIL: $rule has no ACTION rule matching the 1c7a:0576 USB ID"; exit 1;
+          }
+
+          echo "Debian install verification passed."
 
       - name: Upload build artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
