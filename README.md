@@ -96,7 +96,7 @@ not the driver's own login success rate.
 |---|---|---|---|---|---|
 | Lenovo Yoga 7 14ARB7 | AMD Ryzen 7 6800U | 15.72 | Fedora 44 | ✅ full stack (enroll, verify, GDM, sudo, unlock, suspend/resume) | author |
 | Lenovo Yoga 7 15ITL5 | Intel Core i5-1135G7 | 15.72 | Fedora 44 | ✅ full stack, 17-point PASS incl. 3× suspend/resume | [#2](https://github.com/PHILIPPDEV5396/libfprint-egis0576/issues/2) |
-| Lenovo IdeaPad Flex 5 16IRU8 | Intel Core i7-1355U | 15.72 | Arch Linux (Omarchy 4.0.2) | ✅ full stack (enroll, verify, sudo/PAM, polkit, lock screen, reboot, 3× suspend/resume); one long-lock stale-claim limitation, see report | [#3](https://github.com/PHILIPPDEV5396/libfprint-egis0576/issues/3) |
+| Lenovo IdeaPad Flex 5 16IRU8 | Intel Core i7-1355U | 15.72 | Arch Linux (Omarchy 4.0.2) | ✅ full stack (enroll, verify, sudo/PAM, polkit, lock screen, reboot, 3× suspend/resume); the long-lock stale-claim failure from the original report is gone on v0.4.5, re-tested over a 10 h 46 min locked screen and 1265 verification timeouts with zero refused claims | [#3](https://github.com/PHILIPPDEV5396/libfprint-egis0576/issues/3) |
 | Lenovo Yoga 6 13ALC6 | AMD Ryzen 7 5700U | 15.72 | Ubuntu 26.04 | ✅ enroll, verify, sudo/PAM, polkit, unlock, suspend/resume (GDM login not tested) | [#4](https://github.com/PHILIPPDEV5396/libfprint-egis0576/pull/4) |
 | Lenovo IdeaPad Flex 5 14ITL05 | Intel (11th gen) | 15.72 | Zorin OS 18.1 | ⚠️ enroll, verify and screen-lock unlock work; unlock after suspend needs an extra activation gate on top of the shipped hook, see report | [#3](https://github.com/PHILIPPDEV5396/libfprint-egis0576/issues/3) |
 
