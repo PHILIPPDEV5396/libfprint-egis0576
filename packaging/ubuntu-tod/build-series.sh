@@ -2,13 +2,20 @@
 # Build packaging/ubuntu-tod for one Ubuntu series, stamping a version and a
 # distribution that identify that series in the resulting .deb.
 #
-# Why a build script instead of two checked-in debian/changelog files: dch is
-# the ordinary Debian tool for stamping a version and a distribution, and one
-# script keeps noble and resolute from drifting out of sync by hand. The
-# change lands in debian/changelog only for the duration of the build; this
-# script restores the file with `git checkout` afterward, so the committed
-# changelog names no series, and a plain `dpkg-buildpackage` from a clean
-# checkout still works and simply omits the ~series suffix.
+# Mirrors packaging/debian/build.sh: this directory is staged into a
+# throwaway work tree with `cp -rL`, which dereferences the extra-driver
+# and extra-integration symlinks (see meson.build and debian/rules) into
+# real files, so the tree dpkg-buildpackage runs in is self-contained. A
+# source package built from that tree (`dpkg-buildpackage -S`) embeds the
+# driver and integration sources with it and needs no sibling checkout to
+# unpack and rebuild, which is what a PPA upload requires. All version
+# stamping happens on that disposable copy, so this script never touches
+# the committed debian/changelog and needs no git checkout to restore it
+# from, or git at all.
+#
+# Why a build script instead of two checked-in debian/changelog files: dch
+# is the ordinary Debian tool for stamping a version and a distribution, and
+# one script keeps noble and resolute from drifting out of sync by hand.
 #
 # Why the version needs a per-series suffix at all: this driver builds
 # directly from the repository tree (see packaging/README.md), so its
@@ -47,12 +54,15 @@ case "$SERIES" in
         ;;
 esac
 
-cd "$(dirname "$0")"
+SRC="$(cd "$(dirname "$0")" && pwd)"
+OUTDIR="${OUTDIR:-$SRC/build-output}"
 
-if ! git diff --quiet -- debian/changelog || ! git diff --quiet --cached -- debian/changelog; then
-    echo "error: debian/changelog already has uncommitted changes; commit or revert first" >&2
-    exit 1
-fi
+WORK="$(mktemp -d)"
+trap 'rm -rf "$WORK"' EXIT
+
+echo ">>> staging a self-contained source tree (dereferencing extra-driver/extra-integration) ..."
+cp -rL "$SRC" "$WORK/src"
+cd "$WORK/src"
 
 BASE_VERSION=$(dpkg-parsechangelog -S Version)
 case "$BASE_VERSION" in
@@ -63,14 +73,15 @@ case "$BASE_VERSION" in
 esac
 SERIES_VERSION="${BASE_VERSION}~${RELEASE}"
 
-restore_changelog() { git checkout -- debian/changelog; }
-trap restore_changelog EXIT
-
 DEBFULLNAME="${DEBFULLNAME:-$(dpkg-parsechangelog -S Maintainer | sed 's/ <.*//')}" \
 DEBEMAIL="${DEBEMAIL:-$(dpkg-parsechangelog -S Maintainer | sed 's/.*<\(.*\)>/\1/')}" \
     dch -b -v "$SERIES_VERSION" --distribution "$SERIES" \
         "Build for Ubuntu $SERIES ($RELEASE): stamps the ~$RELEASE version suffix so the noble and resolute .debs sort and are named apart."
 
+echo ">>> building (dpkg-buildpackage -us -uc -b) ..."
 dpkg-buildpackage -us -uc -b
 
-echo "Built $SERIES ($RELEASE): version $SERIES_VERSION"
+mkdir -p "$OUTDIR"
+cp "$WORK"/*.deb "$WORK"/*.changes "$WORK"/*.buildinfo "$OUTDIR"/
+echo ">>> built $SERIES ($RELEASE): version $SERIES_VERSION. Packages in $OUTDIR:"
+ls -1 "$OUTDIR"

@@ -3,26 +3,32 @@
 # Ubuntu's libfprint (the TOD fork, package libfprint-2-2 / libfprint-2-tod1)
 # loads a fingerprint driver as a standalone lib*.so from a fixed directory
 # instead of linking it into libfprint-2.so.2. This project builds exactly
-# that module: the driver and its USB protocol code from ../../driver,
-# unmodified, plus the ten-line tod-entry.c shim in this directory. No file
-# under ../../driver is copied or patched; it is read from the repo tree.
+# that module: the driver and its USB protocol code, unmodified, plus the
+# ten-line tod-entry.c shim in this directory.
 #
-# BUILD ON THE OLDEST SERIES YOU SUPPORT (see ../README.md). The TOD version
-# script's newest symbol-version node carries an "fpi_*;" catch-all, so a
-# module built on a newer Ubuntu series can bind a symbol node that an older
-# series' libfprint-2-tod.so.1 does not export, and then fails to load there.
-# A module built on the oldest supported series loads on every newer one too
-# (verified noble -> 26.04 and 26.04 -> noble; see ../README.md).
+# The driver sources are read from extra-driver/, a symlink to ../../driver
+# checked into this repo. build-series.sh stages this whole directory with
+# cp -rL before it runs dpkg-buildpackage, which dereferences that symlink
+# into real files, so the assembled source package is self-contained: a
+# dpkg-source .dsc built from the staged tree carries the driver sources
+# with it and needs no sibling checkout to unpack and build. Running
+# dpkg-buildpackage directly in this directory (not through
+# build-series.sh) instead reads extra-driver/ through the symlink, which
+# is only valid inside a full repository checkout.
+#
+# No fixed rule about building on the oldest supported series applies here:
+# each series gets its own build from its own container (see ../README.md),
+# so no module is ever asked to load on an older series than it was built
+# on.
 
 project('libfprint-tod-egis0576', 'c',
-  version: '0.4.4',
   meson_version: '>= 0.56.0',
 )
 
 # A relative path, not one resolved through project_source_root(): meson's
 # include_directories() refuses an absolute path outright, so this must stay
 # a plain relative string all the way down to the file lists below.
-driver_root = '..' / '..' / 'driver'
+driver_root = 'extra-driver'
 
 tod_dep = dependency('libfprint-2-tod-1')
 fprint_dep = dependency('libfprint-2')
@@ -57,7 +63,11 @@ egis0576_engine = static_library('egis0576-engine',
     driver_root / 'egis0576' / 'egis_coherence_map.c',
   ],
   include_directories: include_directories(driver_root / 'egis0576'),
-  dependencies: [gusb_dep],
+  # tod_dep costs nothing today, since none of these five sources includes
+  # a libfprint header, but adding it now means a future source that does
+  # add one fails to build normally instead of with a confusing missing
+  # fpi-log.h.
+  dependencies: [gusb_dep, tod_dep],
   c_args: engine_c_args,
   install: false,
 )

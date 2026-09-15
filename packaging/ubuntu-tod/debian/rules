@@ -1,18 +1,24 @@
 #!/usr/bin/make -f
 
 # The two integration files (systemd-sleep hook, no-autosuspend udev rule)
-# live at ../../integration in the repo tree, not under this source package,
-# and are not part of the meson build. dh_auto_install (meson) installs the
-# module itself into the TOD drivers directory reported by
+# are read from extra-integration/, a symlink to ../../integration checked
+# into this source directory (see meson.build for why this is a symlink and
+# not a copy) and are not part of the meson build. dh_auto_install (meson)
+# installs the module itself into the TOD drivers directory reported by
 # pkg-config --variable=tod_driversdir libfprint-2-tod-1 (meson.build resolves
 # this at configure time), so only the two integration files need adding here.
+#
+# The udev rule installs to /usr/lib/udev/rules.d, not /etc/udev/rules.d:
+# /etc is for local administrator overrides, and a file a package installs
+# there becomes a conffile, which apt remove (as opposed to apt purge)
+# leaves behind and which prompts a conffile question on any future edit.
 
 %:
 	dh $@ --buildsystem=meson
 
 override_dh_auto_install:
 	dh_auto_install
-	install -Dm0755 ../../integration/50-egis0576-fp-resume.sh \
+	install -Dm0755 extra-integration/50-egis0576-fp-resume.sh \
 		debian/libfprint-2-tod1-egis0576/usr/lib/systemd/system-sleep/50-egis0576-fp-resume.sh
-	install -Dm0644 ../../integration/60-egis0576-fp-nosuspend.rules \
-		debian/libfprint-2-tod1-egis0576/etc/udev/rules.d/60-egis0576-fp-nosuspend.rules
+	install -Dm0644 extra-integration/60-egis0576-fp-nosuspend.rules \
+		debian/libfprint-2-tod1-egis0576/usr/lib/udev/rules.d/60-egis0576-fp-nosuspend.rules

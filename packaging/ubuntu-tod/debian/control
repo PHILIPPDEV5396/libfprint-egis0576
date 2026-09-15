@@ -9,7 +9,7 @@ Build-Depends: debhelper-compat (= 13),
                libfprint-2-dev,
                libgusb-dev,
                libglib2.0-dev
-Standards-Version: 4.6.2
+Standards-Version: 4.7.2
 Homepage: https://github.com/PHILIPPDEV5396/libfprint-egis0576
 Vcs-Git: https://github.com/PHILIPPDEV5396/libfprint-egis0576.git
 Vcs-Browser: https://github.com/PHILIPPDEV5396/libfprint-egis0576

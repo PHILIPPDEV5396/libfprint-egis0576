@@ -1,0 +1,21 @@
+#!/bin/sh
+# The EH576 is a USB device enumerated at boot, long before this package's
+# udev rule file exists on disk. systemd-udevd picks up a new rule file on
+# its own but does not replay events for devices already present, so
+# without this, power/control stays at "auto" on the sensor for the rest
+# of the session after install. Reloading the rules and triggering a
+# re-match for this vendor ID applies the rule immediately.
+set -e
+
+case "$1" in
+    configure)
+        if command -v udevadm >/dev/null 2>&1 && [ -d /run/udev ]; then
+            udevadm control --reload-rules || true
+            udevadm trigger --attr-match=idVendor=1c7a || true
+        fi
+        ;;
+esac
+
+#DEBHELPER#
+
+exit 0

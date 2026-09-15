@@ -367,8 +367,17 @@ out-of-tree drivers as separate `lib*.so` files from a fixed directory, instead
 of compiling them in. Because of this, Ubuntu does not need a rebuilt
 `libfprint-2-2` at all. This package builds **one file**,
 `libfprint-tod-egis0576.so`, and installs it next to the stock, unmodified
-`libfprint-2-2` and `libfprint-2-tod1` packages. Every other TOD driver on the
-machine (Goodix and others) keeps working, untouched.
+`libfprint-2-2` and `libfprint-2-tod1` packages. The archive library and
+every other TOD driver on the machine (Goodix and others) keep working,
+untouched.
+
+Separately, this package also installs the suspend/resume sleep hook (see
+[`../integration/`](../integration/)). That hook restarts `fprintd` around
+every suspend on the machine, for every fingerprint reader, not only the
+EH576: that is the documented upstream workaround for a `gnome-shell`/
+`fprintd` bug that leaves a stale device claim across suspend, and it is
+not specific to this driver or scoped to it. See
+[`../docs/suspend-resume.md`](../docs/suspend-resume.md).
 
 ### Users install with
 
@@ -433,24 +442,33 @@ cd packaging/ubuntu-tod
 ./build-series.sh noble       # or: ./build-series.sh resolute
 ```
 
-`build-series.sh` reads the plain version already in `debian/changelog`,
-appends `~24.04` (noble) or `~26.04` (resolute), rewrites the changelog's top
-entry with that version and the matching distribution using `dch`, runs
-`dpkg-buildpackage -us -uc -b`, then restores `debian/changelog` with `git
-checkout` so the committed file names no series. A plain
-`dpkg-buildpackage -us -uc -b` from a clean checkout still works and simply
-omits the suffix — useful for a local one-off build, not for anything meant
-to be installed alongside the other series' package.
+`build-series.sh` copies this whole directory into a throwaway work tree
+(`cp -rL`, which turns the `extra-driver` and `extra-integration` symlinks —
+checked into the repo pointing at `../../driver` and `../../integration` —
+into real files), reads the plain version already in `debian/changelog`,
+appends `~24.04` (noble) or `~26.04` (resolute), rewrites the copy's
+changelog with that version and the matching distribution using `dch`, and
+runs `dpkg-buildpackage -us -uc -b` inside the copy. The committed
+`debian/changelog` is never touched, so nothing needs restoring afterward
+and the script does not need `git`. A plain `dpkg-buildpackage -us -uc -b`
+run directly in `packaging/ubuntu-tod/` (not through `build-series.sh`)
+also still works, reading `extra-driver`/`extra-integration` through the
+symlinks, and simply omits the suffix — useful for a local one-off build,
+not for anything meant to be installed alongside the other series' package.
 
-The build reads `../../driver/egis0576.c` and `../../driver/egis0576/`
-straight out of the repository tree — nothing under `driver/` is copied or
-patched for this build — links them against the headers
-`libfprint-2-tod-dev` installs, and produces
+Because the work tree is self-contained, `dpkg-buildpackage -S` run there
+also produces a real source package: the `.dsc` and tarball carry the driver
+and integration sources with them, and unpacking that `.dsc` on a machine
+with no checkout of this repository builds the same `.deb`. This is what
+lets a PPA — which builds from an uploaded source package in a clean
+chroot, never from a checkout — build this package at all.
+
+The build links `extra-driver/egis0576.c` and `extra-driver/egis0576/`
+against the headers `libfprint-2-tod-dev` installs, and produces
 `libfprint-2-tod1-egis0576_<version>_<arch>.deb`, where `<version>` carries
 the `~24.04` or `~26.04` suffix. The two [`../integration/`](../integration/)
-files (the systemd-sleep hook and the no-autosuspend udev rule) are installed
-by `debian/rules`, also read straight from the repository, not copied into
-`packaging/ubuntu-tod/`.
+files (the systemd-sleep hook and the no-autosuspend udev rule) are staged
+the same way, through `extra-integration/`, and installed by `debian/rules`.
 
 ### Why the version needs a series suffix, and why `~24.04` / `~26.04`
 
@@ -516,6 +534,18 @@ the noble `.deb` on `ubuntu:26.04` refuses with the unmet-dependency error
 quoted above, because of the `libgusb2` → `libgusb2a` rename — exactly the
 reason both series are built separately.
 
+### Verified on real hardware
+
+The maintainer built the module (unmodified, from this source) in an
+`ubuntu:noble` container on `linux/amd64` and ran it against a real EH576
+on a Lenovo Yoga 7, passed through with `/dev/bus/usb`. The stock archive
+`libfprint-2-2` loaded the module, matched the device to this driver, and
+`fp_device_open_sync` completed the full bring-up on the physical sensor:
+the readiness poll, the 33-record vendor replay, and the six-step exposure
+calibration. He also confirmed the same noble-built binary loads under
+`1.95.1+tod1` on `ubuntu:26.04`. Enrolling and verifying a real finger are
+still pending; he is running those himself.
+
 ### What the package contains
 
 ```
@@ -534,8 +564,18 @@ installing
 ```
 /usr/lib/<triplet>/libfprint-2/tod-1/libfprint-tod-egis0576.so
 /usr/lib/systemd/system-sleep/50-egis0576-fp-resume.sh
-/etc/udev/rules.d/60-egis0576-fp-nosuspend.rules
+/usr/lib/udev/rules.d/60-egis0576-fp-nosuspend.rules
 ```
+
+A `postinst` runs `udevadm control --reload-rules` and `udevadm trigger
+--attr-match=idVendor=1c7a` (guarded on `udevadm` existing and on a running
+`udevd`), since the EH576 is enumerated at boot, before the rule file
+exists on disk, and `systemd-udevd` does not replay events for devices
+already present. Without this, the rule would have no effect until the
+next reboot. The rule installs under `/usr/lib/udev/rules.d`, not
+`/etc/udev/rules.d`: the latter is for local administrator overrides, and
+a package file there becomes a conffile, which `apt remove` leaves behind
+and which prompts a conffile question on the next release that edits it.
 
 The module file name matters: Ubuntu's TOD loader
 (`libfprint/tod/tod-shared-loader.c`) only looks at files that both start with
