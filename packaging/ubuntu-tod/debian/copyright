@@ -1,20 +1,36 @@
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 Upstream-Name: libfprint-egis0576-tod
 Source: https://github.com/PHILIPPDEV5396/libfprint-egis0576
-
 Comment:
  This source package builds one file, extra-driver/egis0576.c and its
  supporting sources under extra-driver/egis0576/, as a libfprint TOD
  module. extra-driver/ and extra-integration/ are symlinks to ../../driver
  and ../../integration, dereferenced into real files by build-series.sh
  before the source package is built (see debian/rules and ../meson.build).
- The driver's provenance, including which parts are original work and
- which are reverse-engineered for interoperability, is documented in full
- in the project's top-level PROVENANCE.md; this file summarizes it, using
- the same categories packaging/debian/copyright uses.
+ That staging step follows the symlinks with cp -rL, so the SOURCE package
+ dpkg-buildpackage -S produces, which is what a PPA publishes, carries the
+ whole of driver/ byte-for-byte, not only the files ../meson.build compiles.
+ The stanzas below cover every file under extra-driver/, whether or not the
+ built binary package links it, and each Files stanza's own comment says
+ which. The driver's provenance, including which parts are original work
+ and which are reverse-engineered for interoperability, is documented in
+ full in the project's top-level PROVENANCE.md; this file summarizes it,
+ using the same categories packaging/debian/copyright uses.
+
+# Fallback for anything not matched by a more specific stanza below. Listed
+# first: lintian's dep5 checker expects a global wildcard stanza to be the
+# first paragraph, and warns (globbing-patterns-out-of-order) if a more
+# specific pattern appears before it instead of after.
+Files: *
+Copyright: PHILIPPDEV5396
+License: LGPL-2.1-or-later
 
 # PROVENANCE.md category 1: original work written from scratch for
-# libfprint, licensed the same as the rest of the tree.
+# libfprint, licensed the same as the rest of the tree. egis_engine_cleanroom.c
+# is staged into the source package by the same cp -rL as everything else
+# under extra-driver/, even though ../meson.build does not compile it (the
+# built libfprint-2-tod1-egis0576 binary links only the vendor matcher, see
+# the category 2 stanza's comment below).
 Files: extra-driver/egis0576.c
        extra-driver/egis0576.h
        extra-driver/egis0576/egis0576_proto.c
@@ -23,6 +39,7 @@ Files: extra-driver/egis0576.c
        extra-driver/egis0576/egis_rt.h
        extra-driver/egis0576/egis_engine.c
        extra-driver/egis0576/egis_engine.h
+       extra-driver/egis0576/egis_engine_cleanroom.c
 Copyright: PHILIPPDEV5396
 License: LGPL-2.1-or-later
 
@@ -31,7 +48,11 @@ License: LGPL-2.1-or-later
 # engineered for interoperability - no copyright claimed by the author",
 # states the author claims no copyright over these files and that they are
 # Egis Technology Inc.'s intellectual property; it does not state that Egis
-# Technology Inc. licenses them, so no license grant is asserted here.
+# Technology Inc. licenses them, so no license grant is asserted here. This
+# is the matcher flavour the built binary package actually links
+# (../meson.build's egis0576_engine static library); see the next stanza for
+# the clean-room alternative, which is staged into the source package but not
+# compiled here.
 Files: extra-driver/egis0576/egis_funcs.c
        extra-driver/egis0576/egis_coherence_map.c
        extra-driver/egis0576/egis_preprocess.c
@@ -44,9 +65,15 @@ Copyright: Egis Technology Inc. (no copyright claimed by the
  libfprint-egis0576 author)
 License: LicenseRef-Egis-reverse-engineered-interop
 
-# This package does not build the clean-room matcher (see
-# packaging/README.md), so it carries none of tsteppy/egis_match.{c,h} and
-# has no PROVENANCE.md category 3 files.
+# PROVENANCE.md category 3: the clean-room correlation matcher, copied
+# byte-for-byte with its own licence header intact from a third party.
+# ../meson.build does not compile these files into the binary package (the
+# binary links the vendor matcher above, the package's default), but the
+# source package staged by build-series.sh's cp -rL carries them, since
+# extra-driver/ is a faithful copy of the whole of driver/.
+Files: extra-driver/egis0576/tsteppy/*
+Copyright: 2026 Thaddeus Stepanovich
+License: LGPL-2.1-or-later
 
 # PROVENANCE.md, "Everything outside driver/": the author's own work.
 Files: extra-integration/*

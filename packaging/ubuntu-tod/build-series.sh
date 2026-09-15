@@ -83,5 +83,9 @@ dpkg-buildpackage -us -uc -b
 
 mkdir -p "$OUTDIR"
 cp "$WORK"/*.deb "$WORK"/*.changes "$WORK"/*.buildinfo "$OUTDIR"/
+# dh_strip's dbgsym .ddeb is optional (present only when there is anything to
+# strip): copy it out too when built, so .changes never references a file
+# build-series.sh left behind in the throwaway work tree.
+cp "$WORK"/*.ddeb "$OUTDIR"/ 2>/dev/null || true
 echo ">>> built $SERIES ($RELEASE): version $SERIES_VERSION. Packages in $OUTDIR:"
 ls -1 "$OUTDIR"

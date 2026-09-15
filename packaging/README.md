@@ -1,9 +1,14 @@
 # Packaging — one-command install
 
-A libfprint driver is compiled **into** `libfprint-2.so` (it is not a loadable
-module), so every package here ships a **rebuilt libfprint that replaces the
-distro's** and includes the `egis0576` driver. The unchanged system `fprintd`
-loads it through the same soname — no `fprintd` rebuild.
+For Fedora, Arch and Debian, a libfprint driver is compiled **into**
+`libfprint-2.so` (it is not a loadable module there), so those three packages
+ship a **rebuilt libfprint that replaces the distro's** and includes the
+`egis0576` driver; the unchanged system `fprintd` loads it through the same
+soname, no `fprintd` rebuild. Ubuntu is the exception: its **TOD** fork of
+libfprint loads out-of-tree drivers as separate `.so` files, so
+`packaging/ubuntu-tod/` builds a loadable module instead and installs it
+alongside the stock, unmodified Ubuntu `libfprint-2-2`; see the Ubuntu
+section below.
 
 Two layers below: **installing** (for users, once published) and **publishing**
 (for the maintainer — needs your COPR/AUR accounts, like the GitHub push did).
@@ -397,8 +402,8 @@ Two Ubuntu series are supported, and each gets its own build:
 
 | Series | Status |
 |---|---|
-| **resolute**, 26.04 LTS | tested — the maintainer's own machine |
-| **noble**, 24.04 LTS | best effort |
+| **noble**, 24.04 LTS | tested on real hardware — see "Verified on real hardware" below |
+| **resolute**, 26.04 LTS | container build only, no hardware run yet |
 
 A single `.deb` cannot serve both series, for a reason distinct from the
 symbol-versioning rule below: `dpkg-shlibdeps` bakes in the *exact* runtime
@@ -420,13 +425,13 @@ The following information may help to resolve the situation:
 The following packages have unmet dependencies:
  libfprint-2-tod1-egis0576 : Depends: libgusb2 (>= 0.1.0) but it is not installable
 E: Unable to satisfy dependencies. Reached two conflicting assignments:
-   1. libfprint-2-tod1-egis0576:amd64=0.4.4-1~24.04 is selected for install
+   1. libfprint-2-tod1-egis0576:amd64=0.4.4~24.04 is selected for install
    2. libfprint-2-tod1-egis0576:amd64 Depends libgusb2 (>= 0.1.0)
       but none of the choices are installable:
       [no choices]
 ```
 
-(captured from `apt install ./libfprint-2-tod1-egis0576_0.4.4-1~24.04_amd64.deb`
+(captured from `apt install ./libfprint-2-tod1-egis0576_0.4.4~24.04_amd64.deb`
 in an `ubuntu:26.04` container)
 
 Building each series in its own environment regenerates `${shlibs:Depends}`
@@ -482,9 +487,9 @@ that part numerically, the same rule that makes Ubuntu's own
 not reasoned about:
 
 ```
-$ dpkg --compare-versions 0.4.4-1~24.04 '<<' 0.4.4-1~26.04 && echo yes
+$ dpkg --compare-versions 0.4.4~24.04 '<<' 0.4.4~26.04 && echo yes
 yes
-$ dpkg --compare-versions 0.4.4-1 '>>' 0.4.4-1~26.04 && echo yes
+$ dpkg --compare-versions 0.4.4 '>>' 0.4.4~26.04 && echo yes
 yes
 ```
 
@@ -494,10 +499,19 @@ today but is not a rule a future series name is bound by. `~24.04` /
 `~26.04` sorts on the release number itself, so it stays correct regardless
 of what a future series is called.
 
-The filename carries the same suffix
-(`libfprint-2-tod1-egis0576_0.4.4-1~24.04_amd64.deb` vs.
-`libfprint-2-tod1-egis0576_0.4.4-1~26.04_amd64.deb`), so the series is
-visible on a GitHub Releases page without opening the file.
+The filename carries the same suffix, so the series is visible on a GitHub
+Releases page without opening the file — but not literally as `~24.04` /
+`~26.04`: `.github/workflows/release.yml` renames every `~` in a release
+asset's name to `.` before upload, because GitHub itself silently does the
+same rename on `gh release upload` and the workflow renames first so the
+recorded `SHA256SUMS` matches what the release actually serves. The names
+GitHub serves, with the `ubuntu-<series>-` prefix the workflow also adds to
+tell the two series (and the Debian build) apart on the same release, are:
+
+```
+ubuntu-noble-libfprint-2-tod1-egis0576_0.4.4.24.04_amd64.deb
+ubuntu-resolute-libfprint-2-tod1-egis0576_0.4.4.26.04_amd64.deb
+```
 
 ### The old build-on-the-oldest-series rule, and why it is now moot
 
@@ -565,17 +579,24 @@ installing
 /usr/lib/<triplet>/libfprint-2/tod-1/libfprint-tod-egis0576.so
 /usr/lib/systemd/system-sleep/50-egis0576-fp-resume.sh
 /usr/lib/udev/rules.d/60-egis0576-fp-nosuspend.rules
+/usr/libexec/egis0576-fp-wait
+/usr/lib/systemd/system/fprintd.service.d/10-egis0576-resume-wait.conf
 ```
 
 A `postinst` runs `udevadm control --reload-rules` and `udevadm trigger
---attr-match=idVendor=1c7a` (guarded on `udevadm` existing and on a running
-`udevd`), since the EH576 is enumerated at boot, before the rule file
-exists on disk, and `systemd-udevd` does not replay events for devices
-already present. Without this, the rule would have no effect until the
-next reboot. The rule installs under `/usr/lib/udev/rules.d`, not
-`/etc/udev/rules.d`: the latter is for local administrator overrides, and
-a package file there becomes a conffile, which `apt remove` leaves behind
-and which prompts a conffile question on the next release that edits it.
+--action=add --attr-match=idVendor=1c7a` (guarded on `udevadm` existing and
+on a running `udevd`), since the EH576 is enumerated at boot, before the
+rule file exists on disk, and `systemd-udevd` does not replay events for
+devices already present. Without this, the rule would have no effect until
+the next reboot. `--action=add` matters here, not just any trigger: the
+rule in `60-egis0576-fp-nosuspend.rules` matches `ACTION=="add"`, and
+`udevadm trigger`'s own default is `--action=change`, which that rule never
+matches, so a trigger without `--action=add` would run and still leave the
+already-enumerated sensor un-covered. The rule installs under
+`/usr/lib/udev/rules.d`, not `/etc/udev/rules.d`: the latter is for local
+administrator overrides, and a package file there becomes a conffile, which
+`apt remove` leaves behind and which prompts a conffile question on the
+next release that edits it.
 
 The module file name matters: Ubuntu's TOD loader
 (`libfprint/tod/tod-shared-loader.c`) only looks at files that both start with

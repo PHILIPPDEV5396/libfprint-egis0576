@@ -11,7 +11,7 @@ case "$1" in
     configure)
         if command -v udevadm >/dev/null 2>&1 && [ -d /run/udev ]; then
             udevadm control --reload-rules || true
-            udevadm trigger --attr-match=idVendor=1c7a || true
+            udevadm trigger --action=add --attr-match=idVendor=1c7a || true
         fi
         ;;
 esac

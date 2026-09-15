@@ -485,7 +485,7 @@ jobs:
           echo "== installed package version =="
           dpkg-query -W -f='${Version}\n' libfprint-2-tod1-egis0576
           dpkg-query -W -f='${Version}\n' libfprint-2-tod1-egis0576 \
-            | grep -q -- "-1~${{ matrix.series_version }}\$" || {
+            | grep -q -- "~${{ matrix.series_version }}\$" || {
             echo "FAIL: installed version does not carry the ~${{ matrix.series_version }} series suffix"; exit 1;
           }
 

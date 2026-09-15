@@ -1,7 +1,7 @@
 Source: libfprint-egis0576-tod
 Section: libs
 Priority: optional
-Maintainer: Philipp Oster <70714877+PHILIPPDEV5396@users.noreply.github.com>
+Maintainer: Irving Popovetsky <libfprint-egis0576@popovetsky.com>
 Build-Depends: debhelper-compat (= 13),
                meson,
                pkgconf,
