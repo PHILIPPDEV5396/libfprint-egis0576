@@ -71,9 +71,10 @@ copr-cli build libfprint-egis0576 ~/rpmbuild/SRPMS/libfprint-1.94.100-99.*.src.r
 **What the spec builds:** pristine upstream libfprint **v1.94.100** + the egis0576
 driver, keeping the package name `libfprint` (drop-in). BuildRequires, `%files`
 and `%meson -Ddrivers=all` are taken verbatim from Fedora's own libfprint.spec, so
-the file layout matches stock exactly — plus two files the spec installs on top:
-the suspend/resume sleep hook and the no-autosuspend udev rule from
-[`../integration/`](../integration/).
+the file layout matches stock exactly — plus the four files the spec installs on
+top, all from [`../integration/`](../integration/): the suspend/resume sleep
+hook, the no-autosuspend udev rule, the `egis0576-fp-wait` resume gate and its
+`fprintd.service.d` drop-in.
 
 **No tradeoff since 1.94.100:** Fedora's own package now carries *no* downstream
 patches (its spec has no `Patch:` lines) and upstream ships the `egis_etu905`
@@ -225,30 +226,30 @@ stock `libfprint-2-2` carries epoch `1:` (`1:1.94.9-1`), and sid/forky's
 carries the same epoch at a newer upstream version (`1:1.94.10-1`). A build
 with no epoch (epoch `0` implicitly) sorts below both of those regardless of
 its own upstream `Version` or revision, which is why the version scheme this
-package started with (`1.94.100-99egis1`, no epoch) lost to Debian's own
+package started with (`1.94.100-99egis0.4.5`, no epoch) lost to Debian's own
 package and needed `--allow-downgrades` to install at all, and would have
 been silently reverted on the next `apt upgrade`.
 
 This package's changelog therefore carries the same epoch Debian carries,
-`1:`, giving it version `1:1.94.100-99egis1`. With the epoch matched,
+`1:`, giving it version `1:1.94.100-99egis0.4.5`. With the epoch matched,
 comparison falls through to the upstream `Version`, and `1.94.100` beats
 both `1.94.9` (trixie) and `1.94.10` (sid/forky):
 
 ```
-$ dpkg --compare-versions '1:1.94.100-99egis1' gt '1:1.94.9-1'  && echo true
+$ dpkg --compare-versions '1:1.94.100-99egis0.4.5' gt '1:1.94.9-1'  && echo true
 true
-$ dpkg --compare-versions '1:1.94.100-99egis1' gt '1:1.94.10-1' && echo true
+$ dpkg --compare-versions '1:1.94.100-99egis0.4.5' gt '1:1.94.10-1' && echo true
 true
 ```
 
-The `-99egis1` revision then mirrors the Fedora spec's `Release:
+The `-99egis<driver version>` revision then mirrors the Fedora spec's `Release:
 99...egis9` comment: the numeric `99` sorts above any plausible normal
 Debian revision (`-1`, `-2`, ...) at the same epoch and the same upstream
 `Version`, including a hypothetical future Debian rebuild of `1.94.100`
 itself:
 
 ```
-$ dpkg --compare-versions '1:1.94.100-99egis1' gt '1:1.94.100-1' && echo true
+$ dpkg --compare-versions '1:1.94.100-99egis0.4.5' gt '1:1.94.100-1' && echo true
 true
 ```
 
@@ -302,7 +303,7 @@ this session):
 
 ```
 $ dpkg-deb -f libfprint-2-2_1.94.100-99egis1_arm64.deb Version
-1:1.94.100-99egis1
+1:1.94.100-99egis0.4.5
 
 $ dpkg -c libfprint-2-2_1.94.100-99egis1_arm64.deb | grep -E "system-sleep|nosuspend|libfprint-2.so"
 -rw-r--r-- root/root   1208848 ... ./usr/lib/aarch64-linux-gnu/libfprint-2.so.2.0.0
@@ -325,11 +326,11 @@ $ apt-get install -y ./libfprint-2-2_1.94.100-99egis1_arm64.deb \
                      ./libfprint-2-dev_1.94.100-99egis1_arm64.deb \
                      ./gir1.2-fprint-2.0_1.94.100-99egis1_arm64.deb
 ...
-Setting up libfprint-2-2 (1:1.94.100-99egis1) ...
+Setting up libfprint-2-2 (1:1.94.100-99egis0.4.5) ...
 ...
 
 $ dpkg-query -W -f='${Version}' libfprint-2-2
-1:1.94.100-99egis1
+1:1.94.100-99egis0.4.5
 
 $ strings /usr/lib/aarch64-linux-gnu/libfprint-2.so.2.0.0 | grep -i egis0576
 FpDeviceEgis0576

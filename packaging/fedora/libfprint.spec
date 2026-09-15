@@ -106,6 +106,20 @@ install -Dm 0644 "$egisdir/integration/egis0576-fprintd-wait.conf" \
 
 %ldconfig_scriptlets
 
+# The fprintd.service.d drop-in this package installs is a systemd unit
+# fragment, and rpm has no trigger that reloads systemd for it. Without these,
+# the resume gate stays inert until the next reboot on install, and on erase a
+# still-cached unit keeps an ExecStartPre pointing at a deleted binary, which
+# fails activation with 203/EXEC -- fingerprint authentication silently dead
+# until someone reloads. install.sh has always done this; the package did not.
+# Only a reload: fprintd.service belongs to the fprintd package, so this one
+# must not touch its enablement with %%systemd_post.
+%post
+/usr/bin/systemctl daemon-reload >/dev/null 2>&1 || :
+
+%postun
+/usr/bin/systemctl daemon-reload >/dev/null 2>&1 || :
+
 # %%check is intentionally omitted (matches current Fedora: disabled under recent
 # pygobject/umockdev).
 
