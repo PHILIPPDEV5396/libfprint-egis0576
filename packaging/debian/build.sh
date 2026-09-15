@@ -25,6 +25,29 @@ SOURCE_NAME="libfprint-egis0576"
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 OUTDIR="${OUTDIR:-$REPO/packaging/debian/build-output}"
 
+# "1.94.100" otherwise lives in three independent places: this
+# LIBFPRINT_VERSION, the upstream part of debian/changelog's Version, and
+# the patch filename in patches/. Nothing else compares them, so a partial
+# upstream bump (one file edited, the others forgotten) would silently
+# build a .deb whose version claims one upstream release while its content
+# is patched for another. Fail loudly instead.
+changelog_version=$(dpkg-parsechangelog -l "$REPO/packaging/debian/changelog" --show-field Version)
+changelog_upstream_version=${changelog_version#*:}
+changelog_upstream_version=${changelog_upstream_version%-*}
+patch_file=$(ls "$REPO"/patches/libfprint-*-egis0576.patch)
+patch_version=$(basename "$patch_file" | sed -E 's/^libfprint-(.+)-egis0576\.patch$/\1/')
+
+if [ "$changelog_upstream_version" != "$LIBFPRINT_VERSION" ]; then
+    echo "error: debian/changelog upstream version ($changelog_upstream_version)" \
+         "does not match build.sh's LIBFPRINT_VERSION ($LIBFPRINT_VERSION)" >&2
+    exit 1
+fi
+if [ "$patch_version" != "$LIBFPRINT_VERSION" ]; then
+    echo "error: patch file $(basename "$patch_file") is for libfprint" \
+         "$patch_version, but build.sh's LIBFPRINT_VERSION is $LIBFPRINT_VERSION" >&2
+    exit 1
+fi
+
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 

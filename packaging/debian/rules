@@ -41,6 +41,22 @@ override_dh_auto_install:
 		debian/tmp/usr/lib/systemd/system-sleep/50-egis0576-fp-resume.sh
 	install -Dm0644 debian/extra-integration/60-egis0576-fp-nosuspend.rules \
 		debian/tmp/usr/lib/udev/rules.d/60-egis0576-fp-nosuspend.rules
+	install -Dm0755 debian/extra-integration/egis0576-fp-wait \
+		debian/tmp/usr/libexec/egis0576-fp-wait
+	install -Dm0644 debian/extra-integration/egis0576-fprintd-wait.conf \
+		debian/tmp/usr/lib/systemd/system/fprintd.service.d/10-egis0576-resume-wait.conf
+
+# override_dh_auto_configure copies egis0576.c/.h and the egis0576/ engine
+# tree straight into libfprint/drivers/, outside debian/, so a plain
+# dh_auto_clean (which only cleans the meson build directory) leaves them
+# behind. That breaks a source build (dpkg-buildpackage -S) run in the same
+# tree right after a binary build: dpkg-source sees files not accounted for
+# by the quilt patch and refuses to proceed. Remove them here so clean
+# actually restores the pristine upstream tree.
+override_dh_auto_clean:
+	dh_auto_clean
+	rm -f libfprint/drivers/egis0576.c libfprint/drivers/egis0576.h
+	rm -rf libfprint/drivers/egis0576
 
 # No debian/*.symbols file: Debian's own libfprint-2-2.symbols tracks
 # Debian's own upstream-import lineage, which this build does not follow (it

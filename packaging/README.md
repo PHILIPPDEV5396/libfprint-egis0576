@@ -140,6 +140,11 @@ is a lateral rebuild, not a downgrade.
 
 ## Debian / Ubuntu  →  `packaging/debian/`
 
+**Ubuntu users: do not install this package.** It replaces Ubuntu's
+TOD-patched `libfprint-2-2`, which breaks every other TOD driver on the
+machine, not just this sensor; use `packaging/ubuntu-tod/` instead, which
+installs alongside the stock package as a TOD module.
+
 ### Users install with
 
 Not published to a repository — build the `.deb` files from this repo:
@@ -353,15 +358,20 @@ strategy hit; the build above shows none of them.
 
 ## Releasing a new driver version
 
-All three recipes pin the driver by **tag** — none follows `main` — so a
-driver release means bumping every one of them, or users keep getting the old
-one:
+Fedora and Arch pin the driver by **tag**, downloading a tagged tarball at
+build time. Debian does not: `packaging/debian/build.sh` copies `driver/` and
+`integration/` straight out of whatever tree it runs in (via the
+`packaging/debian/extra-driver` and `extra-integration` symlinks, dereferenced
+at build time), not a tagged download, so its release step is keeping
+`debian/changelog`'s revision in sync with the tag rather than repointing a
+download. All three still need bumping on a driver release, or users keep
+getting the old one:
 
 | File | What to bump |
 |---|---|
 | `packaging/fedora/libfprint.spec` | `%global egis_tag` **and** the `Release:` suffix (`egisN`), plus a `%changelog` entry |
 | `packaging/aur/PKGBUILD` | the `#tag=` in `source=`, and reset `pkgrel=1` |
-| `packaging/debian/changelog` | a new entry at the top (`dch -i` or by hand), bumping the `-99egisN` revision |
+| `packaging/debian/changelog` | a new entry at the top (`dch -i` or by hand), bumping the `-99egis<version>` revision to the new tag |
 
 ## Release CI (GitHub Actions)
 

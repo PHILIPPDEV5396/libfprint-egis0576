@@ -1,12 +1,12 @@
 Source: libfprint-egis0576
 Priority: optional
 Section: libs
-Maintainer: PHILIPPDEV5396 <noreply@example.invalid>
+Maintainer: Irving Popovetsky <libfprint-egis0576@popovetsky.com>
 Build-Depends: debhelper-compat (= 13),
                dh-sequence-gir,
                meson,
                ninja-build,
-               pkg-config,
+               pkgconf,
                libglib2.0-dev,
                libgirepository1.0-dev,
                gir1.2-gobject-2.0-dev,
@@ -34,8 +34,8 @@ Description: async fingerprint library of fprint project, shared libraries
  fprintd loads it through the same libfprint-2.so.2 soname, no fprintd
  rebuild needed.
  .
- Includes the egis0576 suspend/resume systemd-sleep hook and the
- no-autosuspend udev rule for the sensor.
+ Includes the egis0576 suspend/resume systemd-sleep hook, the fprintd
+ resume-wait gate, and the no-autosuspend udev rule for the sensor.
 
 Package: libfprint-2-dev
 Section: libdevel

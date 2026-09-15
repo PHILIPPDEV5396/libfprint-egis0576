@@ -22,7 +22,7 @@ jobs:
       - name: Checkout (tag)
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - name: Confirm the spec and PKGBUILD are pinned to this tag
+      - name: Confirm the spec, PKGBUILD and Debian changelog are pinned to this tag
         run: |
           TAG="${GITHUB_REF_NAME}"
 
@@ -36,6 +36,15 @@ jobs:
           # ours, so it is scoped to the libfprint-egis0576 source entry.
           pkgbuild_tag=$(grep 'libfprint-egis0576' packaging/aur/PKGBUILD | grep -oP '(?<=#tag=)[^"]+')
 
+          # debian/changelog's revision carries the driver tag as
+          # "-99egis<version>" (e.g. -99egis0.4.5 for tag v0.4.5), the same
+          # way the spec's Release carries "egisN". Read it straight off the
+          # top changelog stanza's "(version)" (no dpkg-dev on this runner)
+          # and compare against the tag with its leading "v" stripped.
+          changelog_version=$(head -1 packaging/debian/changelog | grep -oP '(?<=\()[^)]+(?=\))')
+          changelog_egis_version=$(echo "$changelog_version" | grep -oP '(?<=-99egis)[0-9.]+$')
+          tag_version="${TAG#v}"
+
           fail=0
           if [ "$spec_tag" != "$TAG" ]; then
             echo "FAIL: packaging/fedora/libfprint.spec sets %global egis_tag $spec_tag, but the pushed tag is $TAG"
@@ -45,9 +54,13 @@ jobs:
             echo "FAIL: packaging/aur/PKGBUILD pins #tag=$pkgbuild_tag, but the pushed tag is $TAG"
             fail=1
           fi
+          if [ "$changelog_egis_version" != "$tag_version" ]; then
+            echo "FAIL: packaging/debian/changelog's revision pins driver version $changelog_egis_version, but the pushed tag is $TAG"
+            fail=1
+          fi
           [ "$fail" -eq 0 ] || exit 1
 
-          echo "Both packaging pins match tag $TAG."
+          echo "All three packaging pins match tag $TAG."
 
   build:
     name: Build (${{ matrix.distro }})

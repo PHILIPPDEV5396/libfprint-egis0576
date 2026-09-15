@@ -12,7 +12,12 @@ Copyright: National Institute of Standards and Technology
 License: public-domain
 
 # PROVENANCE.md category 1: original work written from scratch for
-# libfprint, licensed the same as the rest of the tree.
+# libfprint, licensed the same as the rest of the tree. Exception:
+# egis0576_proto.c's EGIS_STEP_TABLE is a 16-entry table taken byte-exact
+# from the vendor DLL's .rdata, and PROVENANCE.md places it in category 2
+# (see the Files stanza below); dep5 has no way to license part of a file
+# separately, so this stanza covers the file as a whole and the exception
+# is recorded here in prose, matching PROVENANCE.md's own treatment of it.
 Files: debian/extra-driver/egis0576.c
        debian/extra-driver/egis0576.h
        debian/extra-driver/egis0576/egis0576_proto.c
@@ -30,7 +35,9 @@ License: LGPL-2.1-or-later
 # engineered for interoperability - no copyright claimed by the author",
 # states the author claims no copyright over these files and that they are
 # Egis Technology Inc.'s intellectual property; it does not state that Egis
-# Technology Inc. licenses them, so no license grant is asserted here.
+# Technology Inc. licenses them, so no license grant is asserted here. This
+# category also covers the EGIS_STEP_TABLE inside egis0576_proto.c, listed
+# above under category 1 (see the note on that stanza).
 Files: debian/extra-driver/egis0576/egis_funcs.c
        debian/extra-driver/egis0576/egis_coherence_map.c
        debian/extra-driver/egis0576/egis_preprocess.c
