@@ -150,18 +150,22 @@ jobs:
           # the local RPM as a normal upgrade. No --allowerasing needed.
           dnf install -y "$rpm_file"
 
-          echo "== installed package version =="
-          rpm -q libfprint
-
-          # Read the expected Release suffix (e.g. ".egis9") out of the spec
-          # instead of hardcoding it here, so this check tracks the spec
-          # instead of drifting from it on every driver release.
-          expected_suffix=$(grep -oP '\.egis[0-9]+' packaging/fedora/libfprint.spec | head -1)
-          test -n "$expected_suffix" || {
-            echo "FAIL: could not read an .egisN suffix out of packaging/fedora/libfprint.spec"; exit 1;
+          # Read the expected Version-Release out of the spec itself (with
+          # rpmspec resolving %{egis_tag} and %{?dist} the same way rpmbuild
+          # did to produce $rpm_file) instead of hardcoding it here, so this
+          # check tracks the spec instead of drifting from it on every driver
+          # release. verify-tag already confirmed the spec's egis_tag matches
+          # the pushed tag, so this in turn ties the installed version back to
+          # the tag.
+          expected_version=$(rpmspec -q --qf '%{VERSION}-%{RELEASE}\n' packaging/fedora/libfprint.spec | head -1)
+          test -n "$expected_version" || {
+            echo "FAIL: could not read a Version-Release out of packaging/fedora/libfprint.spec"; exit 1;
           }
-          rpm -q libfprint | grep -qF "${expected_suffix}." || {
-            echo "FAIL: installed libfprint does not carry the spec's Release suffix ($expected_suffix)"; exit 1;
+          installed_version=$(rpm -q --qf '%{VERSION}-%{RELEASE}\n' libfprint)
+          echo "== installed package version =="
+          echo "$installed_version"
+          test "$installed_version" = "$expected_version" || {
+            echo "FAIL: installed libfprint is $installed_version, expected $expected_version (from packaging/fedora/libfprint.spec)"; exit 1;
           }
 
           echo "== libfprint-2.so.2 at the Fedora library path =="
@@ -259,8 +263,18 @@ jobs:
           pacman -R --noconfirm libfprint
           pacman -U --noconfirm "$pkg_file"
 
+          # Read the expected pkgver-pkgrel out of the PKGBUILD itself instead
+          # of hardcoding it here, so this check tracks the PKGBUILD instead
+          # of drifting from it on every driver release. verify-tag already
+          # confirmed the PKGBUILD's driver #tag= pin matches the pushed tag,
+          # so this in turn ties the installed version back to the tag.
+          expected_version="$(grep -oP '^pkgver=\K\S+' packaging/aur/PKGBUILD)-$(grep -oP '^pkgrel=\K\S+' packaging/aur/PKGBUILD)"
+          installed_version=$(pacman -Q libfprint-egis0576 | awk '{print $2}')
           echo "== installed package version =="
-          pacman -Q libfprint-egis0576
+          echo "$installed_version"
+          test "$installed_version" = "$expected_version" || {
+            echo "FAIL: installed libfprint-egis0576 is $installed_version, expected $expected_version (from packaging/aur/PKGBUILD)"; exit 1;
+          }
 
           echo "== libfprint-2.so.2 at the Arch library path =="
           test -e /usr/lib/libfprint-2.so.2 || {
