@@ -22,7 +22,7 @@ jobs:
       - name: Checkout (tag)
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - name: Confirm the spec, PKGBUILD and Debian changelog are pinned to this tag
+      - name: Confirm the spec, PKGBUILD and both changelogs are pinned to this tag
         run: |
           TAG="${GITHUB_REF_NAME}"
 
@@ -45,6 +45,13 @@ jobs:
           changelog_egis_version=$(echo "$changelog_version" | grep -oP '(?<=-99egis)[0-9.]+$')
           tag_version="${TAG#v}"
 
+          # packaging/ubuntu-tod/debian/changelog is a native package
+          # (debian/source/format is "3.0 (native)"), so its version
+          # carries no Debian revision and no "-99egis" suffix: the whole
+          # "(version)" on the top stanza is the driver version, compared
+          # against the tag directly.
+          tod_changelog_version=$(head -1 packaging/ubuntu-tod/debian/changelog | grep -oP '(?<=\()[^)]+(?=\))')
+
           fail=0
           if [ "$spec_tag" != "$TAG" ]; then
             echo "FAIL: packaging/fedora/libfprint.spec sets %global egis_tag $spec_tag, but the pushed tag is $TAG"
@@ -58,9 +65,13 @@ jobs:
             echo "FAIL: packaging/debian/changelog's revision pins driver version $changelog_egis_version, but the pushed tag is $TAG"
             fail=1
           fi
+          if [ "$tod_changelog_version" != "$tag_version" ]; then
+            echo "FAIL: packaging/ubuntu-tod/debian/changelog pins driver version $tod_changelog_version, but the pushed tag is $TAG"
+            fail=1
+          fi
           [ "$fail" -eq 0 ] || exit 1
 
-          echo "All three packaging pins match tag $TAG."
+          echo "All four packaging pins match tag $TAG."
 
   build:
     name: Build (${{ matrix.distro }})

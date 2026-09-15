@@ -62,6 +62,11 @@ trap 'rm -rf "$WORK"' EXIT
 
 echo ">>> staging a self-contained source tree (dereferencing extra-driver/extra-integration) ..."
 cp -rL "$SRC" "$WORK/src"
+# cp -rL copies build-output/ from a previous run too (it is a plain
+# directory under $SRC, not a symlink), so a second run would stage its
+# stale .debs, .changes and .buildinfo into the source tree dpkg-
+# buildpackage -S packages up.
+rm -rf "$WORK/src/build-output"
 cd "$WORK/src"
 
 BASE_VERSION=$(dpkg-parsechangelog -S Version)

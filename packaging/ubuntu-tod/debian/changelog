@@ -1,3 +1,18 @@
+libfprint-egis0576-tod (0.4.5) UNRELEASED; urgency=medium
+
+  * Bumped the package version to 0.4.5 to match the driver tag this
+    package now builds against. Left at 0.4.4 after the rebase onto
+    v0.4.5, the version was stale in the very commit that added the
+    v0.4.5 integration files, and nothing caught it: verify-tag in
+    .github/workflows/release.yml compared only
+    packaging/debian/changelog against the pushed tag, never this file.
+    Tagging v0.4.5 with the stale version would have attached a .deb
+    named 0.4.4 to the v0.4.5 release, and the next release's .deb would
+    have carried the same version again, which apt treats as a no-op.
+    verify-tag now checks this file too.
+
+ -- Irving Popovetsky <libfprint-egis0576@popovetsky.com>  Tue, 15 Sep 2026 00:00:00 +0000
+
 libfprint-egis0576-tod (0.4.4) UNRELEASED; urgency=medium
 
   * Dropped the "-1" revision. debian/source/format is 3.0 (native), and a

@@ -616,7 +616,7 @@ build time. Debian does not: `packaging/debian/build.sh` copies `driver/` and
 `packaging/debian/extra-driver` and `extra-integration` symlinks, dereferenced
 at build time), not a tagged download, so its release step is keeping
 `debian/changelog`'s revision in sync with the tag rather than repointing a
-download. All three still need bumping on a driver release, or users keep
+download. All four still need bumping on a driver release, or users keep
 getting the old one:
 
 | File | What to bump |
@@ -624,6 +624,7 @@ getting the old one:
 | `packaging/fedora/libfprint.spec` | `%global egis_tag` **and** the `Release:` suffix (`egisN`), plus a `%changelog` entry |
 | `packaging/aur/PKGBUILD` | the `#tag=` in `source=`, and reset `pkgrel=1` |
 | `packaging/debian/changelog` | a new entry at the top (`dch -i` or by hand), bumping the `-99egis<version>` revision to the new tag |
+| `packaging/ubuntu-tod/debian/changelog` | a new entry at the top (`dch -i` or by hand), bumping the bare version to the new tag |
 
 ## Release CI (GitHub Actions)
 

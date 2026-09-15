@@ -30,7 +30,12 @@ License: LGPL-2.1-or-later
 # is staged into the source package by the same cp -rL as everything else
 # under extra-driver/, even though ../meson.build does not compile it (the
 # built libfprint-2-tod1-egis0576 binary links only the vendor matcher, see
-# the category 2 stanza's comment below).
+# the category 2 stanza's comment below). Exception: egis0576_proto.c's
+# EGIS_STEP_TABLE is a 16-entry table taken byte-exact from the vendor
+# DLL's .rdata, and PROVENANCE.md places it in category 2 (see the Files
+# stanza below); dep5 has no way to license part of a file separately, so
+# this stanza covers the file as a whole and the exception is recorded
+# here in prose, matching packaging/debian/copyright's treatment of it.
 Files: extra-driver/egis0576.c
        extra-driver/egis0576.h
        extra-driver/egis0576/egis0576_proto.c
@@ -79,8 +84,13 @@ License: LGPL-2.1-or-later
 Files: extra-integration/*
        tod-entry.c
        meson.build
-       debian/*
 Copyright: PHILIPPDEV5396
+License: LGPL-2.1-or-later
+
+# The Ubuntu/Debian packaging itself, written by Irving Popovetsky, not
+# the upstream author credited above.
+Files: debian/*
+Copyright: Irving Popovetsky <libfprint-egis0576@popovetsky.com>
 License: LGPL-2.1-or-later
 
 License: LGPL-2.1-or-later
