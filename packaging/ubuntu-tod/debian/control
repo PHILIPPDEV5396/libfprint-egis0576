@@ -1,0 +1,30 @@
+Source: libfprint-egis0576-tod
+Section: libs
+Priority: optional
+Maintainer: Irving Popovetsky <libfprint-egis0576@popovetsky.com>
+Build-Depends: debhelper-compat (= 13),
+               meson,
+               pkgconf,
+               libfprint-2-tod-dev,
+               libfprint-2-dev,
+               libgusb-dev,
+               libglib2.0-dev
+Standards-Version: 4.7.2
+Homepage: https://github.com/PHILIPPDEV5396/libfprint-egis0576
+Vcs-Git: https://github.com/PHILIPPDEV5396/libfprint-egis0576.git
+Vcs-Browser: https://github.com/PHILIPPDEV5396/libfprint-egis0576
+
+Package: libfprint-2-tod1-egis0576
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}
+Description: EgisTec EH576 fingerprint driver as a libfprint TOD module
+ A Touch OEM Driver (TOD) module for the EgisTec (LighTuning) EH576
+ fingerprint sensor (USB ID 1c7a:0576), loaded at run time by the stock
+ Ubuntu libfprint-2-2 and libfprint-2-tod1 packages. This package installs
+ no library of its own and does not replace libfprint: it adds one driver
+ module to the TOD drivers directory that libfprint-2-2 already reads, so
+ the archive libfprint-2-2 and libfprint-2-tod1 packages are untouched and
+ every other TOD driver (Goodix and others) keeps working unmodified.
+ .
+ See packaging/README.md in the source for the per-series build rule this
+ package must be built under, and for install and upgrade notes.

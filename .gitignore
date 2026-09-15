@@ -6,6 +6,18 @@ build/
 *.so
 *.so.*
 packaging/debian/build-output/
+packaging/ubuntu-tod/build-output/
+*.deb
+*.ddeb
+*.changes
+*.buildinfo
+packaging/ubuntu-tod/debian/.debhelper/
+packaging/ubuntu-tod/debian/files
+packaging/ubuntu-tod/debian/*.debhelper.log
+packaging/ubuntu-tod/debian/*.substvars
+packaging/ubuntu-tod/debian/debhelper-build-stamp
+packaging/ubuntu-tod/debian/libfprint-2-tod1-egis0576/
+packaging/ubuntu-tod/obj-*/
 
 # --- Egis' copyrighted material — reverse-engineering reference ONLY, never commit ---
 # The original Windows driver binary and any full decompilation of it are Egis

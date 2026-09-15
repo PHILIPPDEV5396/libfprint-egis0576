@@ -1,0 +1,56 @@
+libfprint-egis0576-tod (0.4.5) UNRELEASED; urgency=medium
+
+  * Bumped the package version to 0.4.5 to match the driver tag this
+    package now builds against. Left at 0.4.4 after the rebase onto
+    v0.4.5, the version was stale in the very commit that added the
+    v0.4.5 integration files, and nothing caught it: verify-tag in
+    .github/workflows/release.yml compared only
+    packaging/debian/changelog against the pushed tag, never this file.
+    Tagging v0.4.5 with the stale version would have attached a .deb
+    named 0.4.4 to the v0.4.5 release, and the next release's .deb would
+    have carried the same version again, which apt treats as a no-op.
+    verify-tag now checks this file too.
+
+ -- Irving Popovetsky <libfprint-egis0576@popovetsky.com>  Tue, 15 Sep 2026 00:00:00 +0000
+
+libfprint-egis0576-tod (0.4.4) UNRELEASED; urgency=medium
+
+  * Dropped the "-1" revision. debian/source/format is 3.0 (native), and a
+    native package's version must carry no Debian revision at all: with one,
+    lintian's source-format check flags it as an error on the very
+    dpkg-buildpackage -S build the PPA path relies on. Kept 3.0 (native)
+    rather than moving to 3.0 (quilt), since this package carries no
+    debian/patches of its own (the meson integration lives entirely in
+    ../meson.build, not a patch). build-series.sh's per-series ~24.04 /
+    ~26.04 suffix still applies on top of this bare version.
+  * debian/copyright: fixed a false statement at the old line 47 saying
+    this package carries no PROVENANCE.md category 3 files and none of
+    tsteppy/egis_match.{c,h}. That is true of the built binary (only the
+    vendor matcher is linked), but false of the SOURCE package:
+    build-series.sh stages extra-driver with cp -rL, which dereferences the
+    ../../driver symlink into real files, so dpkg-buildpackage -S carries
+    the whole of driver/ regardless of which matcher ../meson.build
+    compiles. Added a Files stanza for extra-driver/egis0576/tsteppy/* under
+    Thaddeus Stepanovich's copyright and LGPL-2.1-or-later, added
+    extra-driver/egis0576/egis_engine_cleanroom.c to the category 1 stanza,
+    and added a Files: * fallback. Copyright lines taken from
+    PROVENANCE.md and the files' own headers, not invented.
+  * debian/rules: install the two integration files v0.4.5 added
+    (egis0576-fp-wait and its fprintd.service.d drop-in) alongside the
+    sleep hook and udev rule already installed, mirroring
+    packaging/fedora/libfprint.spec and packaging/debian/rules. Before this
+    the package shipped the sleep hook's /run marker with nothing that
+    consumed it.
+  * postinst: udevadm trigger now passes --action=add, matching
+    integration/60-egis0576-fp-nosuspend.rules' ACTION=="add" match. The
+    previous default (--action=change) never matched that rule, so the
+    already-enumerated sensor at install time never got the no-autosuspend
+    rule applied until the next reboot -- exactly the case the postinst
+    exists for.
+  * debian/control: Maintainer set to Irving Popovetsky
+    <libfprint-egis0576@popovetsky.com>, matching packaging/debian/control.
+    The previous users.noreply.github.com address is well formed but not a
+    working mailbox, and this field is shown by apt show and used by
+    Launchpad to mail PPA build failures.
+
+ -- Irving Popovetsky <libfprint-egis0576@popovetsky.com>  Mon, 15 Sep 2026 00:00:00 +0000
