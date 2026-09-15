@@ -27,7 +27,14 @@ jobs:
           TAG="${GITHUB_REF_NAME}"
 
           spec_tag=$(grep -oP '(?<=%global egis_tag )\S+' packaging/fedora/libfprint.spec)
-          pkgbuild_tag=$(grep -oP '(?<=#tag=)[^"]+' packaging/aur/PKGBUILD)
+
+          # PKGBUILD's source= array pins two different tags: the upstream
+          # libfprint checkout (#tag=v${pkgver}, a shell variable, never a
+          # literal driver tag) and this driver's own checkout. A plain
+          # grep -oP '(?<=#tag=)[^"]+' over the whole file matches whichever
+          # #tag= comes first, which is the upstream libfprint line, not
+          # ours, so it is scoped to the libfprint-egis0576 source entry.
+          pkgbuild_tag=$(grep 'libfprint-egis0576' packaging/aur/PKGBUILD | grep -oP '(?<=#tag=)[^"]+')
 
           fail=0
           if [ "$spec_tag" != "$TAG" ]; then
