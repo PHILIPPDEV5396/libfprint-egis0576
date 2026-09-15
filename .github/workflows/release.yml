@@ -465,6 +465,9 @@ jobs:
 
       - name: Install and verify the Ubuntu package (${{ matrix.series }})
         if: startsWith(matrix.distro, 'ubuntu-')
+        # This container's default step shell is dash (/bin/sh), which
+        # does not support the <<< here-string below; bash is needed.
+        shell: bash
         run: |
           cd "$GITHUB_WORKSPACE"
 
