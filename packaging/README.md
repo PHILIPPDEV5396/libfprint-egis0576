@@ -149,11 +149,16 @@ git clone https://github.com/PHILIPPDEV5396/libfprint-egis0576.git
 cd libfprint-egis0576
 sudo apt-get build-dep ./packaging   # or install Build-Depends by hand, see below
 bash packaging/debian/build.sh
-sudo apt install ./packaging/debian/build-output/libfprint-2-2_*.deb \
-                  ./packaging/debian/build-output/libfprint-2-dev_*.deb \
-                  ./packaging/debian/build-output/gir1.2-fprint-2.0_*.deb
+sudo apt install -y ./packaging/debian/build-output/libfprint-2-2_*.deb \
+                    ./packaging/debian/build-output/libfprint-2-dev_*.deb \
+                    ./packaging/debian/build-output/gir1.2-fprint-2.0_*.deb
 sudo systemctl restart fprintd
 ```
+
+Debian's `libfprint-2-tests` package pins an exact version of `libfprint-2-2`
+this build cannot satisfy, so if it is installed, `apt` removes it as part of
+this install. `libfprint-2-tests` is a test-suite package almost nobody
+installs, and nothing else on a normal system depends on it.
 
 `packaging/debian/build.sh` needs `git` and `dpkg-dev` on the host, plus every
 package `packaging/debian/control`'s `Build-Depends` lists (`debhelper-compat`,
@@ -266,6 +271,13 @@ downgrade the installed version, which is exactly the property needed here:
 Debian's own newer build must lose to this pin on purpose until this
 package is rebuilt against a newer upstream tag.
 
+This pin matches only the version glob it names. Once this package is
+rebuilt against a newer upstream tag, its version string changes, the pin
+above no longer matches it, and the pin stops protecting the installed
+package, silently, the same way the missing epoch did before this fix.
+Update the pin's version glob at the same time as any rebuild against a
+newer upstream tag.
+
 **Integration files installed automatically, unlike the AUR build:** the
 suspend/resume sleep hook and no-autosuspend udev rule are in
 `libfprint-2-2`'s own `.install` file, the same way the Fedora spec's
@@ -279,8 +291,9 @@ follow — it tracks the tag pinned in `build.sh` instead. `dh_makeshlibs -- -c0
 gives plain `${shlibs:Depends}` (soname + version floor) instead.
 
 **Verified with a real build** (`debian:trixie`, this session, `linux/arm64`
-— the packaging logic is architecture-neutral, but only arm64 was built and
-tested here; an `linux/amd64` build was not run):
+only — the packaging logic is architecture-neutral, and CI builds and tests
+`linux/amd64` on every tag, but only `linux/arm64` was built and tested in
+this session):
 
 ```
 $ dpkg-deb -f libfprint-2-2_1.94.100-99egis1_arm64.deb Version
