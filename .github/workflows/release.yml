@@ -320,6 +320,18 @@ jobs:
       - name: Generate checksums
         run: |
           cd dist
+
+          # GitHub release assets cannot contain "~" (the Ubuntu .deb,
+          # .buildinfo and .changes filenames carry one, from the
+          # ~24.04/~26.04 series suffix in build-series.sh); gh release
+          # create/upload silently renames "~" to "." on upload. Rename
+          # here, before hashing, so SHA256SUMS records the same names
+          # the release ends up serving, not the pre-upload ones.
+          for f in *'~'*; do
+            [ -e "$f" ] || continue
+            mv -- "$f" "${f//\~/.}"
+          done
+
           sha256sum -- * > SHA256SUMS
 
       - name: Create or update release and upload assets
