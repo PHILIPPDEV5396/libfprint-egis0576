@@ -285,7 +285,7 @@ jobs:
       - name: Install Debian build deps
         if: matrix.distro == 'debian'
         run: |
-          apt-get install -y --no-install-recommends dpkg-dev devscripts equivs
+          apt-get install -y --no-install-recommends dpkg-dev
 
           # apt-get build-dep looks for <dir>/debian/control, so it is pointed
           # at packaging/ (the parent of packaging/debian, which plays the
@@ -336,14 +336,22 @@ jobs:
           # packaging/README.md, "Maintainer" section.
           apt-get install -y "./$lib_deb" "./$dev_deb" "./$gir_deb"
 
+          # Read the expected version out of the changelog instead of
+          # hardcoding the revision here, so this check tracks the changelog
+          # instead of drifting from it on every driver release.
+          expected_version=$(dpkg-parsechangelog -l packaging/debian/changelog --show-field Version)
+          test -n "$expected_version" || {
+            echo "FAIL: could not read a Version out of packaging/debian/changelog"; exit 1;
+          }
+          installed_version=$(dpkg-query -W -f='${Version}\n' libfprint-2-2)
           echo "== installed package version =="
-          dpkg-query -W -f='${Version}\n' libfprint-2-2
-          dpkg-query -W -f='${Version}\n' libfprint-2-2 | grep -q 'egis1' || {
-            echo "FAIL: installed libfprint-2-2 is not the egis0576 build"; exit 1;
+          echo "$installed_version"
+          test "$installed_version" = "$expected_version" || {
+            echo "FAIL: installed libfprint-2-2 is $installed_version, expected $expected_version (from packaging/debian/changelog)"; exit 1;
           }
 
           echo "== libfprint-2.so.2 at the Debian multiarch path =="
-          soname=/usr/lib/x86_64-linux-gnu/libfprint-2.so.2
+          soname="/usr/lib/$(dpkg-architecture -qDEB_HOST_MULTIARCH)/libfprint-2.so.2"
           test -e "$soname" || { echo "FAIL: $soname missing"; exit 1; }
           soname_target=$(readlink -f "$soname")
           test -s "$soname_target" || {

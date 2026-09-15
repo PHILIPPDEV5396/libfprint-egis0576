@@ -11,8 +11,6 @@
 # and integration content is actually duplicated, and only inside the
 # throwaway build tree. debian/rules itself never reads outside debian/.
 
-export DPKG_GENSYMBOLS_CHECK_LEVEL = 0
-
 CONFIG_ARGS = \
 	-Ddrivers=all \
 	-Dudev_hwdb=enabled \
@@ -49,5 +47,3 @@ override_dh_auto_install:
 # tracks the tag pinned in build.sh instead). Plain ${shlibs:Depends}
 # (soname + version-floor dependency) is used instead of a hand-maintained
 # per-symbol export list.
-override_dh_makeshlibs:
-	dh_makeshlibs -- -c0
