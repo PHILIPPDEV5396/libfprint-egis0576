@@ -633,10 +633,15 @@ attaches them to the GitHub Release for a tag, as a convenience alongside
 COPR, the AUR and a manual Debian or Ubuntu build, not a replacement for any
 of them.
 
-**What it does:** on a push of a tag matching `v*`, a first job checks that
-`packaging/fedora/libfprint.spec` (`%global egis_tag`) and
-`packaging/aur/PKGBUILD` (the `#tag=` pin) both point at the pushed tag, and
-fails the run if either is stale. A matrix job then builds the Fedora RPM (in
+**What it does:** on a push of a tag matching `v*`, a first job checks that all
+four packaging pins point at the pushed tag — `packaging/fedora/libfprint.spec`
+(`%global egis_tag`), `packaging/aur/PKGBUILD` (the `#tag=` pin),
+`packaging/debian/changelog` (the `-99egis<driver version>` revision) and
+`packaging/ubuntu-tod/debian/changelog` — and fails the run if any is stale.
+Each install-verify step then ties the *installed* artifact back to the
+packaging file it was built from; those are two independent pins, not one
+chain, because neither the RPM's Version-Release nor the Arch package's
+pkgver-pkgrel carries the driver tag. A matrix job then builds the Fedora RPM (in
 a `fedora:43` container, from the unmodified `packaging/fedora/libfprint.spec`),
 the Arch package (in an `archlinux:latest` container, from the unmodified
 `packaging/aur/PKGBUILD`), the Debian package set (in a `debian:trixie`
