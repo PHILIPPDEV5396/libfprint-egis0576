@@ -82,14 +82,15 @@ License: LGPL-2.1-or-later
 
 # PROVENANCE.md, "Everything outside driver/": the author's own work.
 Files: extra-integration/*
-       tod-entry.c
-       meson.build
 Copyright: PHILIPPDEV5396
 License: LGPL-2.1-or-later
 
 # The Ubuntu/Debian packaging itself, written by Irving Popovetsky, not
 # the upstream author credited above.
 Files: debian/*
+       tod-entry.c
+       meson.build
+       build-series.sh
 Copyright: Irving Popovetsky <libfprint-egis0576@popovetsky.com>
 License: LGPL-2.1-or-later
 

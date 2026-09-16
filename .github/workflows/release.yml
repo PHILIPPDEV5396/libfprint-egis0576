@@ -179,9 +179,12 @@ jobs:
           # rpmspec resolving %{egis_tag} and %{?dist} the same way rpmbuild
           # did to produce $rpm_file) instead of hardcoding it here, so this
           # check tracks the spec instead of drifting from it on every driver
-          # release. verify-tag already confirmed the spec's egis_tag matches
-          # the pushed tag, so this in turn ties the installed version back to
-          # the tag.
+          # release. Note what this does and does not tie together: %{egis_tag}
+          # appears only in Source10, so Version-Release carries the upstream
+          # libfprint version and the Release suffix, never the driver tag.
+          # This step therefore ties the installed RPM to the packaging file it
+          # was built from; verify-tag separately ties that file's egis_tag to
+          # the pushed tag. Two independent pins, not one chain.
           expected_version=$(rpmspec -q --qf '%{VERSION}-%{RELEASE}\n' packaging/fedora/libfprint.spec | head -1)
           test -n "$expected_version" || {
             echo "FAIL: could not read a Version-Release out of packaging/fedora/libfprint.spec"; exit 1;
@@ -289,11 +292,21 @@ jobs:
           pacman -U --noconfirm "$pkg_file"
 
           # Read the expected pkgver-pkgrel out of the PKGBUILD itself instead
-          # of hardcoding it here, so this check tracks the PKGBUILD instead
-          # of drifting from it on every driver release. verify-tag already
-          # confirmed the PKGBUILD's driver #tag= pin matches the pushed tag,
-          # so this in turn ties the installed version back to the tag.
-          expected_version="$(grep -oP '^pkgver=\K\S+' packaging/aur/PKGBUILD)-$(grep -oP '^pkgrel=\K\S+' packaging/aur/PKGBUILD)"
+          # of hardcoding it here, so this check tracks the PKGBUILD instead of
+          # drifting from it on every driver release. As on the Fedora leg,
+          # pkgver/pkgrel are the upstream libfprint version, not the driver
+          # tag: this ties the installed package to the PKGBUILD, and verify-tag
+          # separately ties the PKGBUILD's #tag= pin to the pushed tag.
+          # \S+ then strip quotes, so both pkgver=1.2.3 and pkgver="1.2.3"
+          # (both legal) read correctly instead of false-failing the release.
+          pkgver_raw=$(grep -oP '^pkgver=\K\S+' packaging/aur/PKGBUILD)
+          pkgrel_raw=$(grep -oP '^pkgrel=\K\S+' packaging/aur/PKGBUILD)
+          pkgver_val=${pkgver_raw//\"/}
+          pkgrel_val=${pkgrel_raw//\"/}
+          test -n "$pkgver_val" -a -n "$pkgrel_val" || {
+            echo "FAIL: could not read pkgver/pkgrel out of packaging/aur/PKGBUILD"; exit 1;
+          }
+          expected_version="$pkgver_val-$pkgrel_val"
           installed_version=$(pacman -Q libfprint-egis0576 | awk '{print $2}')
           echo "== installed package version =="
           echo "$installed_version"
