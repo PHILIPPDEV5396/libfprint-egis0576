@@ -1,0 +1,113 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: libfprint-egis0576-tod
+Source: https://github.com/PHILIPPDEV5396/libfprint-egis0576
+Comment:
+ This source package builds one file, extra-driver/egis0576.c and its
+ supporting sources under extra-driver/egis0576/, as a libfprint TOD
+ module. extra-driver/ and extra-integration/ are symlinks to ../../driver
+ and ../../integration, dereferenced into real files by build-series.sh
+ before the source package is built (see debian/rules and ../meson.build).
+ That staging step follows the symlinks with cp -rL, so the SOURCE package
+ dpkg-buildpackage -S produces, which is what a PPA publishes, carries the
+ whole of driver/ byte-for-byte, not only the files ../meson.build compiles.
+ The stanzas below cover every file under extra-driver/, whether or not the
+ built binary package links it, and each Files stanza's own comment says
+ which. The driver's provenance, including which parts are original work
+ and which are reverse-engineered for interoperability, is documented in
+ full in the project's top-level PROVENANCE.md; this file summarizes it,
+ using the same categories packaging/debian/copyright uses.
+
+# Fallback for anything not matched by a more specific stanza below. Listed
+# first: lintian's dep5 checker expects a global wildcard stanza to be the
+# first paragraph, and warns (globbing-patterns-out-of-order) if a more
+# specific pattern appears before it instead of after.
+Files: *
+Copyright: PHILIPPDEV5396
+License: LGPL-2.1-or-later
+
+# PROVENANCE.md category 1: original work written from scratch for
+# libfprint, licensed the same as the rest of the tree. egis_engine_cleanroom.c
+# is staged into the source package by the same cp -rL as everything else
+# under extra-driver/, even though ../meson.build does not compile it (the
+# built libfprint-2-tod1-egis0576 binary links only the vendor matcher, see
+# the category 2 stanza's comment below). Exception: egis0576_proto.c's
+# EGIS_STEP_TABLE is a 16-entry table taken byte-exact from the vendor
+# DLL's .rdata, and PROVENANCE.md places it in category 2 (see the Files
+# stanza below); dep5 has no way to license part of a file separately, so
+# this stanza covers the file as a whole and the exception is recorded
+# here in prose, matching packaging/debian/copyright's treatment of it.
+Files: extra-driver/egis0576.c
+       extra-driver/egis0576.h
+       extra-driver/egis0576/egis0576_proto.c
+       extra-driver/egis0576/egis0576_proto.h
+       extra-driver/egis0576/egis_rt.c
+       extra-driver/egis0576/egis_rt.h
+       extra-driver/egis0576/egis_engine.c
+       extra-driver/egis0576/egis_engine.h
+       extra-driver/egis0576/egis_engine_cleanroom.c
+Copyright: PHILIPPDEV5396
+License: LGPL-2.1-or-later
+
+# PROVENANCE.md category 2: reverse-engineered from Egis Technology's
+# proprietary Windows driver for interoperability. PROVENANCE.md, "Reverse-
+# engineered for interoperability - no copyright claimed by the author",
+# states the author claims no copyright over these files and that they are
+# Egis Technology Inc.'s intellectual property; it does not state that Egis
+# Technology Inc. licenses them, so no license grant is asserted here. This
+# is the matcher flavour the built binary package actually links
+# (../meson.build's egis0576_engine static library); see the next stanza for
+# the clean-room alternative, which is staged into the source package but not
+# compiled here.
+Files: extra-driver/egis0576/egis_funcs.c
+       extra-driver/egis0576/egis_coherence_map.c
+       extra-driver/egis0576/egis_preprocess.c
+       extra-driver/egis0576/egis_init.h
+       extra-driver/egis0576/egis_blobs.h
+       extra-driver/egis0576/egis_dat.h
+       extra-driver/egis0576/egis_decls.h
+       extra-driver/egis0576/egis_intrin.h
+Copyright: Egis Technology Inc. (no copyright claimed by the
+ libfprint-egis0576 author)
+License: LicenseRef-Egis-reverse-engineered-interop
+
+# PROVENANCE.md category 3: the clean-room correlation matcher, copied
+# byte-for-byte with its own licence header intact from a third party.
+# ../meson.build does not compile these files into the binary package (the
+# binary links the vendor matcher above, the package's default), but the
+# source package staged by build-series.sh's cp -rL carries them, since
+# extra-driver/ is a faithful copy of the whole of driver/.
+Files: extra-driver/egis0576/tsteppy/*
+Copyright: 2026 Thaddeus Stepanovich
+License: LGPL-2.1-or-later
+
+# PROVENANCE.md, "Everything outside driver/": the author's own work.
+Files: extra-integration/*
+       tod-entry.c
+       meson.build
+Copyright: PHILIPPDEV5396
+License: LGPL-2.1-or-later
+
+# The Ubuntu/Debian packaging itself, written by Irving Popovetsky, not
+# the upstream author credited above.
+Files: debian/*
+Copyright: Irving Popovetsky <libfprint-egis0576@popovetsky.com>
+License: LGPL-2.1-or-later
+
+License: LGPL-2.1-or-later
+ This program is free software; you can redistribute it and/or modify it
+ under the terms of the GNU Lesser General Public License as published by
+ the Free Software Foundation; either version 2.1 of the License, or (at
+ your option) any later version.
+ .
+ On Debian systems, the complete text of the GNU Lesser General Public
+ License version 2.1 can be found in
+ "/usr/share/common-licenses/LGPL-2.1".
+
+License: LicenseRef-Egis-reverse-engineered-interop
+ These files are not licensed by Egis Technology Inc. under LGPL-2.1-or-later
+ or any other licence. They are decompiled/translated from Egis Technology
+ Inc.'s proprietary Windows driver and are reproduced here only to the
+ extent necessary for the EgisTec EH576 sensor to function on Linux, on the
+ interoperability legal basis set out in PROVENANCE.md, "Legal basis and
+ honest risk disclosure". PROVENANCE.md acknowledges that redistributing
+ this translated code is a genuine, unresolved copyright grey area.

@@ -1,9 +1,14 @@
 # Packaging — one-command install
 
-A libfprint driver is compiled **into** `libfprint-2.so` (it is not a loadable
-module), so every package here ships a **rebuilt libfprint that replaces the
-distro's** and includes the `egis0576` driver. The unchanged system `fprintd`
-loads it through the same soname — no `fprintd` rebuild.
+For Fedora, Arch and Debian, a libfprint driver is compiled **into**
+`libfprint-2.so` (it is not a loadable module there), so those three packages
+ship a **rebuilt libfprint that replaces the distro's** and includes the
+`egis0576` driver; the unchanged system `fprintd` loads it through the same
+soname, no `fprintd` rebuild. Ubuntu is the exception: its **TOD** fork of
+libfprint loads out-of-tree drivers as separate `.so` files, so
+`packaging/ubuntu-tod/` builds a loadable module instead and installs it
+alongside the stock, unmodified Ubuntu `libfprint-2-2`; see the Ubuntu
+section below.
 
 Two layers below: **installing** (for users, once published) and **publishing**
 (for the maintainer — needs your COPR/AUR accounts, like the GitHub push did).
@@ -139,7 +144,7 @@ is a lateral rebuild, not a downgrade.
 
 ---
 
-## Debian / Ubuntu  →  `packaging/debian/`
+## Debian  →  `packaging/debian/`
 
 **Ubuntu users: do not install this package.** It replaces Ubuntu's
 TOD-patched `libfprint-2-2`, which breaks every other TOD driver on the
@@ -357,6 +362,252 @@ listing. Adding `gir1.2-gobject-2.0-dev` and `gir1.2-gio-2.0-dev` to
 fixed the three cosmetic build warnings an earlier trial run of this same
 strategy hit; the build above shows none of them.
 
+---
+
+## Ubuntu / TOD module  →  `packaging/ubuntu-tod/`
+
+Ubuntu ships a different libfprint from Fedora and Arch: the **TOD** fork
+(`libfprint-2-2` depends on `libfprint-2-tod1`), whose whole purpose is loading
+out-of-tree drivers as separate `lib*.so` files from a fixed directory, instead
+of compiling them in. Because of this, Ubuntu does not need a rebuilt
+`libfprint-2-2` at all. This package builds **one file**,
+`libfprint-tod-egis0576.so`, and installs it next to the stock, unmodified
+`libfprint-2-2` and `libfprint-2-tod1` packages. The archive library and
+every other TOD driver on the machine (Goodix and others) keep working,
+untouched.
+
+Separately, this package also installs the suspend/resume sleep hook (see
+[`../integration/`](../integration/)). That hook restarts `fprintd` around
+every suspend on the machine, for every fingerprint reader, not only the
+EH576: that is the documented upstream workaround for a `gnome-shell`/
+`fprintd` bug that leaves a stale device claim across suspend, and it is
+not specific to this driver or scoped to it. See
+[`../docs/suspend-resume.md`](../docs/suspend-resume.md).
+
+### Users install with
+
+```bash
+sudo add-apt-repository ppa:PHILIPPDEV5396/libfprint-egis0576   # once published
+sudo apt update
+sudo apt install libfprint-2-tod1-egis0576
+sudo systemctl restart fprintd
+```
+
+`libfprint-2-2` is never replaced or held back by this package, so ordinary
+`apt upgrade` keeps applying Ubuntu's own libfprint security updates normally.
+
+### Supported series: one .deb each, not one .deb for both
+
+Two Ubuntu series are supported, and each gets its own build:
+
+| Series | Status |
+|---|---|
+| **noble**, 24.04 LTS | tested on real hardware — see "Verified on real hardware" below |
+| **resolute**, 26.04 LTS | container build only, no hardware run yet |
+
+A single `.deb` cannot serve both series, for a reason distinct from the
+symbol-versioning rule below: `dpkg-shlibdeps` bakes in the *exact* runtime
+package name that provides `libgusb.so.2` on the series it builds on, and
+Ubuntu renamed that package between the two series (`libgusb2` on noble,
+`libgusb2a` on resolute), with no transitional package bridging them, even
+though the `.so` itself is identical (`libgusb.so.2.0.10` on both). A
+noble-built `.deb` therefore depends on a package name that does not exist on
+resolute, and `apt install` of it on resolute refuses outright. The verbatim
+failure, `apt install`-ing a noble-built `.deb` on an `ubuntu:26.04` container:
+
+```
+Some packages could not be installed. This may mean that you have
+requested an impossible situation or if you are using the unstable
+distribution that some required packages have not yet been created
+or been moved out of Incoming.
+The following information may help to resolve the situation:
+
+The following packages have unmet dependencies:
+ libfprint-2-tod1-egis0576 : Depends: libgusb2 (>= 0.1.0) but it is not installable
+E: Unable to satisfy dependencies. Reached two conflicting assignments:
+   1. libfprint-2-tod1-egis0576:amd64=0.4.4~24.04 is selected for install
+   2. libfprint-2-tod1-egis0576:amd64 Depends libgusb2 (>= 0.1.0)
+      but none of the choices are installable:
+      [no choices]
+```
+
+(captured from `apt install ./libfprint-2-tod1-egis0576_0.4.4~24.04_amd64.deb`
+in an `ubuntu:26.04` container)
+
+Building each series in its own environment regenerates `${shlibs:Depends}`
+against that series' own package names, so this is the one clean fix — not a
+workaround applied after the fact.
+
+### Maintainer: build the module
+
+```bash
+sudo apt install build-essential devscripts debhelper meson pkgconf \
+    libfprint-2-tod-dev libfprint-2-dev libgusb-dev libglib2.0-dev
+cd packaging/ubuntu-tod
+./build-series.sh noble       # or: ./build-series.sh resolute
+```
+
+`build-series.sh` copies this whole directory into a throwaway work tree
+(`cp -rL`, which turns the `extra-driver` and `extra-integration` symlinks —
+checked into the repo pointing at `../../driver` and `../../integration` —
+into real files), reads the plain version already in `debian/changelog`,
+appends `~24.04` (noble) or `~26.04` (resolute), rewrites the copy's
+changelog with that version and the matching distribution using `dch`, and
+runs `dpkg-buildpackage -us -uc -b` inside the copy. The committed
+`debian/changelog` is never touched, so nothing needs restoring afterward
+and the script does not need `git`. A plain `dpkg-buildpackage -us -uc -b`
+run directly in `packaging/ubuntu-tod/` (not through `build-series.sh`)
+also still works, reading `extra-driver`/`extra-integration` through the
+symlinks, and simply omits the suffix — useful for a local one-off build,
+not for anything meant to be installed alongside the other series' package.
+
+Because the work tree is self-contained, `dpkg-buildpackage -S` run there
+also produces a real source package: the `.dsc` and tarball carry the driver
+and integration sources with them, and unpacking that `.dsc` on a machine
+with no checkout of this repository builds the same `.deb`. This is what
+lets a PPA — which builds from an uploaded source package in a clean
+chroot, never from a checkout — build this package at all.
+
+The build links `extra-driver/egis0576.c` and `extra-driver/egis0576/`
+against the headers `libfprint-2-tod-dev` installs, and produces
+`libfprint-2-tod1-egis0576_<version>_<arch>.deb`, where `<version>` carries
+the `~24.04` or `~26.04` suffix. The two [`../integration/`](../integration/)
+files (the systemd-sleep hook and the no-autosuspend udev rule) are staged
+the same way, through `extra-integration/`, and installed by `debian/rules`.
+
+### Why the version needs a series suffix, and why `~24.04` / `~26.04`
+
+A user runs `do-release-upgrade` from 24.04 to 26.04 and then installs the
+resolute `.deb` without first removing the noble one. For that install to
+land as an upgrade rather than a downgrade `dpkg` refuses, the resolute
+version must sort above the noble version. dpkg sorts a `~`-tagged suffix
+below no suffix at all, and — where both sides of a `~` are digits — sorts
+that part numerically, the same rule that makes Ubuntu's own
+`~24.04.8`-style SRU suffixes work. Verified with `dpkg --compare-versions`,
+not reasoned about:
+
+```
+$ dpkg --compare-versions 0.4.4~24.04 '<<' 0.4.4~26.04 && echo yes
+yes
+$ dpkg --compare-versions 0.4.4 '>>' 0.4.4~26.04 && echo yes
+yes
+```
+
+A codename suffix (`~noble` / `~resolute`) was considered and rejected: it
+would sort alphabetically, which happens to put `noble` below `resolute`
+today but is not a rule a future series name is bound by. `~24.04` /
+`~26.04` sorts on the release number itself, so it stays correct regardless
+of what a future series is called.
+
+The filename carries the same suffix, so the series is visible on a GitHub
+Releases page without opening the file — but not literally as `~24.04` /
+`~26.04`: `.github/workflows/release.yml` renames every `~` in a release
+asset's name to `.` before upload, because GitHub itself silently does the
+same rename on `gh release upload` and the workflow renames first so the
+recorded `SHA256SUMS` matches what the release actually serves. The names
+GitHub serves, with the `ubuntu-<series>-` prefix the workflow also adds to
+tell the two series (and the Debian build) apart on the same release, are:
+
+```
+ubuntu-noble-libfprint-2-tod1-egis0576_0.4.4.24.04_amd64.deb
+ubuntu-resolute-libfprint-2-tod1-egis0576_0.4.4.26.04_amd64.deb
+```
+
+### The old build-on-the-oldest-series rule, and why it is now moot
+
+Ubuntu's TOD version script (`libfprint/tod/libfprint-tod.ver.in`) ends its
+**newest** symbol node with an `fpi_*;` catch-all, so a module built on a
+newer series can bind a symbol at a version node that an older series'
+`libfprint-2-tod.so.1` does not export — and it then fails to load there,
+silently as far as the running system is concerned (it just never registers
+the driver). Building on the oldest supported series avoided this, because
+such a module carries no symbol newer than that series exports and so loads
+unmodified on every newer series too.
+
+That rule mattered only when one `.deb` had to serve every series. Now that
+each series gets its own build, from its own container, it is moot for this
+project regardless of which symbol version node a future driver release
+uses: the noble build is what noble gets, the resolute build is what
+resolute gets, and neither is ever asked to load on the other series. The
+underlying `fpi_*` catch-all behavior is still true of the TOD loader and
+still worth knowing if this project ever goes back to a single cross-series
+build.
+
+### Verified
+
+Built and installed with `build-series.sh`, each on its own series
+(`ubuntu:noble` / `ubuntu:26.04` containers, linux/amd64):
+
+| Series | `apt install` of its own `.deb` | `G_MESSAGES_DEBUG=all` shows `Loading driver egis0576` | `dpkg -V libfprint-2-2` |
+|---|---|---|---|
+| noble | resolves cleanly, no workaround | yes | unchanged |
+| resolute | resolves cleanly, no workaround | yes | unchanged |
+
+Cross-series install was also confirmed to fail as expected: `apt install` of
+the noble `.deb` on `ubuntu:26.04` refuses with the unmet-dependency error
+quoted above, because of the `libgusb2` → `libgusb2a` rename — exactly the
+reason both series are built separately.
+
+### Verified on real hardware
+
+The maintainer built the module (unmodified, from this source) in an
+`ubuntu:noble` container on `linux/amd64` and ran it against a real EH576
+on a Lenovo Yoga 7, passed through with `/dev/bus/usb`. The stock archive
+`libfprint-2-2` loaded the module, matched the device to this driver, and
+`fp_device_open_sync` completed the full bring-up on the physical sensor:
+the readiness poll, the 33-record vendor replay, and the six-step exposure
+calibration. He also confirmed the same noble-built binary loads under
+`1.95.1+tod1` on `ubuntu:26.04`. Enrolling and verifying a real finger are
+still pending; he is running those himself.
+
+### What the package contains
+
+```
+Source: libfprint-egis0576-tod
+Build-Depends: debhelper-compat (= 13), meson, pkgconf,
+               libfprint-2-tod-dev, libfprint-2-dev,
+               libgusb-dev, libglib2.0-dev
+
+Package: libfprint-2-tod1-egis0576
+Architecture: any
+Depends: ${shlibs:Depends}, ${misc:Depends}
+```
+
+installing
+
+```
+/usr/lib/<triplet>/libfprint-2/tod-1/libfprint-tod-egis0576.so
+/usr/lib/systemd/system-sleep/50-egis0576-fp-resume.sh
+/usr/lib/udev/rules.d/60-egis0576-fp-nosuspend.rules
+/usr/libexec/egis0576-fp-wait
+/usr/lib/systemd/system/fprintd.service.d/10-egis0576-resume-wait.conf
+```
+
+A `postinst` runs `udevadm control --reload-rules` and `udevadm trigger
+--action=add --attr-match=idVendor=1c7a` (guarded on `udevadm` existing and
+on a running `udevd`), since the EH576 is enumerated at boot, before the
+rule file exists on disk, and `systemd-udevd` does not replay events for
+devices already present. Without this, the rule would have no effect until
+the next reboot. `--action=add` matters here, not just any trigger: the
+rule in `60-egis0576-fp-nosuspend.rules` matches `ACTION=="add"`, and
+`udevadm trigger`'s own default is `--action=change`, which that rule never
+matches, so a trigger without `--action=add` would run and still leave the
+already-enumerated sensor un-covered. The rule installs under
+`/usr/lib/udev/rules.d`, not `/etc/udev/rules.d`: the latter is for local
+administrator overrides, and a package file there becomes a conffile, which
+`apt remove` leaves behind and which prompts a conffile question on the
+next release that edits it.
+
+The module file name matters: Ubuntu's TOD loader
+(`libfprint/tod/tod-shared-loader.c`) only looks at files that both start with
+`lib` and end in `.so` — anything else in the drivers directory, including a
+correctly-built module under the wrong name, is skipped with no error. The
+build here relies on meson's default shared-library naming (no `soversion` is
+set), which already produces exactly `libfprint-tod-egis0576.so`, not a
+symlink chain ending in `.so.0.0.0`.
+
+---
+
 ## Releasing a new driver version
 
 Fedora and Arch pin the driver by **tag**, downloading a tagged tarball at
@@ -365,7 +616,7 @@ build time. Debian does not: `packaging/debian/build.sh` copies `driver/` and
 `packaging/debian/extra-driver` and `extra-integration` symlinks, dereferenced
 at build time), not a tagged download, so its release step is keeping
 `debian/changelog`'s revision in sync with the tag rather than repointing a
-download. All three still need bumping on a driver release, or users keep
+download. All four still need bumping on a driver release, or users keep
 getting the old one:
 
 | File | What to bump |
@@ -373,12 +624,14 @@ getting the old one:
 | `packaging/fedora/libfprint.spec` | `%global egis_tag` **and** the `Release:` suffix (`egisN`), plus a `%changelog` entry |
 | `packaging/aur/PKGBUILD` | the `#tag=` in `source=`, and reset `pkgrel=1` |
 | `packaging/debian/changelog` | a new entry at the top (`dch -i` or by hand), bumping the `-99egis<version>` revision to the new tag |
+| `packaging/ubuntu-tod/debian/changelog` | a new entry at the top (`dch -i` or by hand), bumping the bare version to the new tag |
 
 ## Release CI (GitHub Actions)
 
-`.github/workflows/release.yml` builds all three packages in containers and
+`.github/workflows/release.yml` builds all five packages in containers and
 attaches them to the GitHub Release for a tag, as a convenience alongside
-COPR, the AUR and a manual Debian build, not a replacement for any of them.
+COPR, the AUR and a manual Debian or Ubuntu build, not a replacement for any
+of them.
 
 **What it does:** on a push of a tag matching `v*`, a first job checks that
 `packaging/fedora/libfprint.spec` (`%global egis_tag`) and
@@ -386,26 +639,37 @@ COPR, the AUR and a manual Debian build, not a replacement for any of them.
 fails the run if either is stale. A matrix job then builds the Fedora RPM (in
 a `fedora:43` container, from the unmodified `packaging/fedora/libfprint.spec`),
 the Arch package (in an `archlinux:latest` container, from the unmodified
-`packaging/aur/PKGBUILD`), and the Debian package set (in a `debian:trixie`
+`packaging/aur/PKGBUILD`), the Debian package set (in a `debian:trixie`
 container, using `packaging/debian/build.sh` the same way "Users install
-with" above does), each on GitHub's native x86_64 runners with no aarch64
-leg. **The Fedora RPM is a Fedora 43 build only** (the container is
-`fedora:43`, so `%{?dist}` expands to `.fc43`); COPR remains the supported
-install path for other Fedora versions, since its project builds separate
-chroots for each one. Each leg then installs its own freshly built package on
-top of the distro's stock package (where one ships) inside the same
-container, and checks the installed files: the package version, the shared
-library's presence and size, the egis0576 driver symbols compiled into it,
-and (Fedora and Debian) the suspend/resume hook and udev rule. The produced
-`.deb` files are prefixed `debian-trixie-` so they read apart from a later
-leg's per-series Ubuntu packages on the Releases page. A failed check fails
-that leg's build, so a package this workflow does not verify never reaches
-the release. A final job then attaches every built package, plus a generated
-`SHA256SUMS` file, to the GitHub Release for that tag, creating the release
-if one does not already exist for it. The workflow uses only the built-in
-`GITHUB_TOKEN`, requests just the `contents` permission it needs, and never
-pushes to COPR or the AUR — publishing to those still follows the steps
-above.
+with" above does), and the Ubuntu TOD module, once per supported series (in
+`ubuntu:noble` and `ubuntu:26.04` containers, using
+`packaging/ubuntu-tod/build-series.sh` the same way the Ubuntu section above
+does), each on GitHub's native x86_64 runners with no aarch64 leg. **The
+Fedora RPM is a Fedora 43 build only** (the container is `fedora:43`, so
+`%{?dist}` expands to `.fc43`); COPR remains the supported install path for
+other Fedora versions, since its project builds separate chroots for each
+one. Each leg then installs its own freshly built package on top of the
+distro's stock package (where one ships) inside the same container, and
+checks the installed files: the package version, the shared library's
+presence and size, the egis0576 driver symbols compiled into it, and (Fedora
+and Debian) the suspend/resume hook and udev rule. Each Ubuntu leg installs
+its own series' `.deb` with a plain `apt install` (no `--allow-downgrades`,
+no `--force-depends`), checks the module landed under the `tod_driversdir`
+`pkg-config` reports and that its file name satisfies the TOD loader's
+`lib*.so` rule, asserts `dpkg -V libfprint-2-2` is byte-for-byte unchanged
+from before the install, and builds and runs the same `fp_context_new()`
+probe documented in the Ubuntu section above to confirm the stock library
+logs `Loading driver egis0576` under `G_MESSAGES_DEBUG=all` — a probe that
+does not print that line fails the job, it is not just logged. The produced
+`.deb` files are prefixed `debian-trixie-`, `ubuntu-noble-` or
+`ubuntu-resolute-` so all three read apart from each other on the Releases
+page. A failed check fails that leg's build, so a package this workflow does
+not verify never reaches the release. A final job then attaches every built
+package, plus a generated `SHA256SUMS` file, to the GitHub Release for that
+tag, creating the release if one does not already exist for it. The
+workflow uses only the built-in `GITHUB_TOKEN`, requests just the `contents`
+permission it needs, and never pushes to COPR or the AUR — publishing to
+those still follows the steps above.
 
 If the tagged commit is not an ancestor of the repository's default branch,
 the release is created as a draft instead of published, and the job output
@@ -425,8 +689,14 @@ git tag v0.4.5
 git push origin v0.4.5
 ```
 
-The workflow picks up the tag push, builds all three packages, and attaches
+The workflow picks up the tag push, builds all five packages, and attaches
 them to the `v0.4.5` GitHub Release once the build jobs finish.
+
+`packaging/ubuntu-tod/` builds directly from the repository tree it lives in —
+there is no tag to bump — so a driver release only needs a version bump in
+`packaging/ubuntu-tod/debian/changelog` (the two series' `~24.04` / `~26.04`
+suffixes are stamped on top by `build-series.sh` at build time, see the
+Ubuntu section above).
 
 ## Common notes
 
