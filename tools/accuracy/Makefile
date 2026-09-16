@@ -49,9 +49,30 @@ $(OBJ)/cleanroom/egis_engine_cleanroom.o: $(DRV)/egis_engine_cleanroom.c
 	@mkdir -p $(dir $@)
 	$(CC) $(CLEAN_CFLAGS) -c -o $@ $<
 
+# The clean-room matcher's translation search half-width. Empty (the default)
+# compiles Thaddeus' file exactly as it ships, EM_SRCH 6. Setting it, e.g.
+#
+#     make EM_SRCH=19
+#
+# compiles a generated copy whose only difference is that the constant can be
+# overridden, and nothing else changes -- built with EM_SRCH=6 it reproduces the
+# shipped scorer's numbers exactly. Measured on the reference dataset, 19 or 20
+# takes the clean-room FRR from 35 % to 3.3 % at an unchanged threshold with no
+# false accepts; see docs/matcher-comparison.md. His file is never edited: it is
+# copied byte-for-byte from his repository (PROVENANCE.md category 3).
+ifeq ($(strip $(EM_SRCH)),)
 $(OBJ)/cleanroom/egis_match.o: $(DRV)/tsteppy/egis_match.c
 	@mkdir -p $(dir $@)
 	$(CC) $(CLEAN_CFLAGS) -c -o $@ $<
+else
+$(OBJ)/cleanroom/egis_match_srch.c: $(DRV)/tsteppy/egis_match.c
+	@mkdir -p $(dir $@)
+	sed 's|^#define EM_SRCH 6$$|#ifndef EM_SRCH_VAL\n#define EM_SRCH_VAL 6\n#endif\n#define EM_SRCH EM_SRCH_VAL|' $< > $@
+
+$(OBJ)/cleanroom/egis_match.o: $(OBJ)/cleanroom/egis_match_srch.c
+	@mkdir -p $(dir $@)
+	$(CC) $(CLEAN_CFLAGS) -DEM_SRCH_VAL=$(EM_SRCH) -c -o $@ $<
+endif
 
 clean:
 	rm -rf $(OBJ) $(HERE)score-vendor $(HERE)score-cleanroom

@@ -95,7 +95,26 @@ produces `tools/accuracy/score-vendor` and `tools/accuracy/score-cleanroom`,
 compiled straight from `driver/egis0576/`. The vendor sources need the relaxed
 flag set the libfprint build also uses for them (`-w -fno-stack-protector
 -fpermissive -fwrapv ...`); the clean-room matcher is plain C99. `make -C
-tools/accuracy clean` removes everything again. The kit can be run from any
+tools/accuracy clean` removes everything again.
+
+**The clean-room matcher's search width.** Its translation search is ±6 px as
+shipped, and on the reference dataset that costs most of its accuracy: widening
+it to 19 takes the false-reject rate from 35 % to 3.3 % at the same threshold,
+with no false accepts, and nothing else changes
+([`docs/matcher-comparison.md`](../../docs/matcher-comparison.md)). Whether that
+holds on other units is exactly what is unknown, so the kit can build it either
+way:
+
+```
+make -C tools/accuracy clean && make -C tools/accuracy EM_SRCH=19
+```
+
+Thaddeus Stepanovich's file is never edited — the build generates a copy whose
+only difference is that the constant can be overridden, and built with
+`EM_SRCH=6` it reproduces the shipped scorer's numbers exactly. **If you are
+reporting results, please run it both ways** and post both `results.json` files;
+the pair is what settles whether the wider search helps everyone or only one
+laptop. The kit can be run from any
 directory; it finds the repository from its own location.
 
 ## 3. Capture (about 10 minutes)
