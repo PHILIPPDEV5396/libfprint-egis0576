@@ -130,9 +130,15 @@ Got a different machine with an EH576? **Please open an issue with your results.
 > needed; capture and matching are unchanged.
 
 
-The driver is compiled *into* `libfprint-2.so` (it is not a loadable module), so
-installing it means installing a libfprint that includes it, replacing the distro's.
-The stock `fprintd` then loads it through the unchanged ABI (no `fprintd` rebuild).
+How the driver reaches `fprintd` depends on the distribution. On Fedora, Arch and
+Debian it is compiled *into* `libfprint-2.so`, so installing it means installing a
+libfprint that includes it, replacing the distro's; the stock `fprintd` then loads it
+through the unchanged ABI (no `fprintd` rebuild). On **Ubuntu** nothing is replaced:
+every Ubuntu series ships `libfprint-2-tod1`, and the package in
+[`packaging/ubuntu-tod/`](packaging/ubuntu-tod/) builds the driver as a loadable TOD
+module that the distro's own libfprint picks up
+([#9](https://github.com/PHILIPPDEV5396/libfprint-egis0576/pull/9), contributed by
+[irvingpop](https://github.com/irvingpop)).
 
 ### One command (packaged)
 
@@ -431,7 +437,10 @@ of making already-owned hardware usable on Linux. The optional clean-room
 correlation matcher (`driver/egis0576/tsteppy/`, LGPL-2.1-or-later) is the work of
 Thaddeus Stepanovich. The suspend/resume activation gate in
 [`integration/`](integration/) implements a design diagnosed, built and tested by
-[sam-dant](https://github.com/sam-dant/egis0576-resume-workaround). Prior art
+[sam-dant](https://github.com/sam-dant/egis0576-resume-workaround). The Debian and
+Ubuntu packaging, the Ubuntu TOD module and the release CI's version checks were
+contributed by [irvingpop](https://github.com/irvingpop), who maintains that part of
+the packaging stack. Prior art
 this project started from is listed in
 [PROVENANCE.md §3](PROVENANCE.md#3-prior-art-by-others); the people who tested the
 driver on their hardware are named in the "Tested platforms" table above. Built on

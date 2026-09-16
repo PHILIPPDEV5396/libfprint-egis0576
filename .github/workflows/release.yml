@@ -231,6 +231,21 @@ jobs:
             echo "FAIL: $rule has no ACTION rule matching the 1c7a:0576 USB ID"; exit 1;
           }
 
+
+          echo "== fprintd resume gate =="
+          # v0.4.5 ships the gate as TWO files; a package that installs the
+          # drop-in without the helper (or the other way round) leaves fprintd
+          # either ungated or blocked, so check both and their wiring.
+          wait=/usr/libexec/egis0576-fp-wait
+          test -x "$wait" || { echo "FAIL: $wait missing or not executable"; exit 1; }
+          grep -q '/run/egis0576-fp-resume.pending' "$wait" || {
+            echo "FAIL: $wait does not wait on the resume marker, wrong file installed"; exit 1;
+          }
+          dropin=/usr/lib/systemd/system/fprintd.service.d/10-egis0576-resume-wait.conf
+          test -s "$dropin" || { echo "FAIL: $dropin missing or empty"; exit 1; }
+          grep -q "ExecStartPre=.*$wait" "$dropin" || {
+            echo "FAIL: $dropin does not run $wait before fprintd"; exit 1;
+          }
           echo "Fedora install verification passed."
 
       # --- Arch path ---
@@ -332,9 +347,9 @@ jobs:
             echo "FAIL: FpDeviceEgis0576 type name not found in the installed .so"; exit 1;
           }
 
-          # The PKGBUILD deliberately ships no systemd-sleep hook and no
-          # egis0576 udev rule (see packaging/aur/PKGBUILD), unlike the
-          # Fedora spec. Confirm that stays true, so a future PKGBUILD change
+          # The PKGBUILD deliberately ships no systemd-sleep hook, no
+          # egis0576 udev rule and no fprintd resume gate (see
+          # packaging/aur/PKGBUILD), unlike the Fedora spec. Confirm that stays true, so a future PKGBUILD change
           # that starts shipping them does not go unnoticed here.
           echo "== confirm the sleep hook and udev rule are absent, as intended =="
           test ! -e /usr/lib/systemd/system-sleep/50-egis0576-fp-resume.sh || {
@@ -342,6 +357,13 @@ jobs:
           }
           test ! -e /usr/lib/udev/rules.d/60-egis0576-fp-nosuspend.rules || {
             echo "FAIL: unexpected udev rule in the Arch package"; exit 1;
+          }
+
+          test ! -e /usr/libexec/egis0576-fp-wait || {
+            echo "FAIL: unexpected fprintd resume-gate helper in the Arch package"; exit 1;
+          }
+          test ! -e /usr/lib/systemd/system/fprintd.service.d/10-egis0576-resume-wait.conf || {
+            echo "FAIL: unexpected fprintd resume-gate drop-in in the Arch package"; exit 1;
           }
 
           echo "Arch install verification passed."
@@ -460,6 +482,21 @@ jobs:
             echo "FAIL: $rule has no ACTION rule matching the 1c7a:0576 USB ID"; exit 1;
           }
 
+
+          echo "== fprintd resume gate =="
+          # v0.4.5 ships the gate as TWO files; a package that installs the
+          # drop-in without the helper (or the other way round) leaves fprintd
+          # either ungated or blocked, so check both and their wiring.
+          wait=/usr/libexec/egis0576-fp-wait
+          test -x "$wait" || { echo "FAIL: $wait missing or not executable"; exit 1; }
+          grep -q '/run/egis0576-fp-resume.pending' "$wait" || {
+            echo "FAIL: $wait does not wait on the resume marker, wrong file installed"; exit 1;
+          }
+          dropin=/usr/lib/systemd/system/fprintd.service.d/10-egis0576-resume-wait.conf
+          test -s "$dropin" || { echo "FAIL: $dropin missing or empty"; exit 1; }
+          grep -q "ExecStartPre=.*$wait" "$dropin" || {
+            echo "FAIL: $dropin does not run $wait before fprintd"; exit 1;
+          }
           echo "Debian install verification passed."
 
       # --- Ubuntu TOD module path ---

@@ -1,0 +1,19 @@
+#!/bin/sh
+# Counterpart to the postinst: once the fprintd.service.d drop-in is gone from
+# disk, systemd still has it in its loaded configuration until it is told
+# otherwise, and fprintd would keep waiting on an ExecStartPre binary this
+# package has just removed. Mirrors packaging/debian/libfprint-2-2.postrm and
+# packaging/fedora/libfprint.spec's %postun.
+set -e
+
+case "$1" in
+    remove|purge)
+        if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
+            systemctl daemon-reload || true
+        fi
+        ;;
+esac
+
+#DEBHELPER#
+
+exit 0
