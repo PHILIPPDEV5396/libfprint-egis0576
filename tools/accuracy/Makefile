@@ -1,7 +1,7 @@
 # Builds the two offline scorers straight from the repo's driver sources.
 # No libfprint build tree, no meson, no glib: a C compiler and libm only.
 #
-#   make            -> score-vendor score-cleanroom (next to this Makefile)
+#   make            -> score-vendor score-cleanroom score-gabor (next to this Makefile)
 #   make clean
 #
 # The vendor objects are Egis' matcher machine-translated from the Windows
@@ -21,6 +21,11 @@ VENDOR_CFLAGS := $(COMMON) -w -fno-stack-protector -fpermissive -fwrapv \
                  -Wno-int-conversion -Wno-incompatible-pointer-types \
                  -Wno-implicit-function-declaration
 CLEAN_CFLAGS  := $(COMMON) -Wall -I$(DRV)/tsteppy
+# The Gabor flavour is the same adapter on a different front-end, with the
+# adapter's three operating-point constants force-included from the header
+# that documents where they come from (driver/egis0576/gabor/).
+GABOR_CFLAGS  := $(COMMON) -Wall -std=c99 -I$(DRV)/tsteppy \
+                 -include $(DRV)/gabor/egis_cr_tuning_gabor.h
 SCORE_CFLAGS  := $(COMMON) -Wall
 
 VENDOR_SRC := egis_funcs.c egis_rt.c egis_engine.c egis_preprocess.c egis_coherence_map.c
@@ -28,14 +33,26 @@ CLEAN_SRC  := egis_engine_cleanroom.c tsteppy/egis_match.c
 
 VENDOR_OBJ := $(addprefix $(OBJ)/vendor/,$(VENDOR_SRC:.c=.o))
 CLEAN_OBJ  := $(addprefix $(OBJ)/cleanroom/,$(notdir $(CLEAN_SRC:.c=.o)))
+GABOR_OBJ  := $(OBJ)/gabor/egis_engine_cleanroom.o $(OBJ)/gabor/egis_match_gabor.o
 
-all: $(HERE)score-vendor $(HERE)score-cleanroom
+all: $(HERE)score-vendor $(HERE)score-cleanroom $(HERE)score-gabor
 
 $(HERE)score-vendor: $(OBJ)/score.o $(VENDOR_OBJ)
 	$(CC) -o $@ $^ -lm
 
 $(HERE)score-cleanroom: $(OBJ)/score.o $(CLEAN_OBJ)
 	$(CC) -o $@ $^ -lm
+
+$(HERE)score-gabor: $(OBJ)/score.o $(GABOR_OBJ)
+	$(CC) -o $@ $^ -lm
+
+$(OBJ)/gabor/egis_engine_cleanroom.o: $(DRV)/egis_engine_cleanroom.c $(DRV)/gabor/egis_cr_tuning_gabor.h
+	@mkdir -p $(dir $@)
+	$(CC) $(GABOR_CFLAGS) -c -o $@ $<
+
+$(OBJ)/gabor/egis_match_gabor.o: $(DRV)/gabor/egis_match_gabor.c $(DRV)/tsteppy/egis_match.h
+	@mkdir -p $(dir $@)
+	$(CC) $(GABOR_CFLAGS) -c -o $@ $<
 
 $(OBJ)/score.o: $(HERE)score.c $(DRV)/egis_engine.h
 	@mkdir -p $(dir $@)
@@ -75,6 +92,6 @@ $(OBJ)/cleanroom/egis_match.o: $(OBJ)/cleanroom/egis_match_srch.c
 endif
 
 clean:
-	rm -rf $(OBJ) $(HERE)score-vendor $(HERE)score-cleanroom
+	rm -rf $(OBJ) $(HERE)score-vendor $(HERE)score-cleanroom $(HERE)score-gabor
 
 .PHONY: all clean

@@ -282,6 +282,56 @@ a wider or rotation-aware search, multi-frame templates scored jointly, a
 different enhancement — is now a concrete question with three datasets' worth of
 scores and a harness to answer it against.
 
+## Gabor front-end (`-Degis0576_matcher=gabor`), reference unit only
+
+The third flavour keeps Thaddeus Stepanovich's adapter and masked NCC and
+replaces what is fed into it: an orientation-selective Gabor enhancement
+instead of the isotropic high-pass, a per-pixel coherence mask instead of the
+16×16-block one, and a rotation search (±10° in 2.5° steps, coarse-to-fine)
+on top of the ±19 px translation search
+(`driver/egis0576/gabor/egis_match_gabor.c`; the file's header carries the
+full ablation, cost and caveats). It ships with its own operating point,
+NCC 0.75 → score 5000 (score = NCC × 5000 / 0.75, so a perfect 1.0 logs as
+6667), because both populations sit higher than with his front-end and his
+0.53 would false-accept 14 % of same-person impostors.
+
+Same captures, same protocol, same kit (`score-gabor`), 2026-09-17:
+
+| | genuine (n = 60) | impostor (n = 480) |
+|---|---:|---:|
+| score min / median / max | 5411 / 6464 / 6604 | 407 / 2769 / 4603 |
+| in NCC terms | 0.81 / 0.97 / 0.99 | 0.06 / 0.42 / 0.69 |
+| at threshold 5000 (NCC 0.75) | **FRR 0.0 %** | **FAR 0.0 %** |
+
+The populations **do not overlap**: the weakest genuine press (0.81) sits
+0.12 above the strongest impostor (0.69), so no EER exists. Templates held
+5–6 frames per fold (one first-contact frame in the whole set fell under the
+coverage gate). The same comparison in an adapter-free harness, and with the
+threshold chosen on one fold and applied to the other (placed mid-gap, as one
+would in practice), gives 0 / 30 false rejects and 0 / 240 false accepts both
+ways; the two folds put that threshold at 0.751 and 0.752. The stricter
+cross-fold rule — threshold *at* the other fold's highest impostor — gives
+0 % FRR at 1.5 % FAR, which is the honest statement of how well 480 samples
+pin down the impostor tail.
+
+What this run does **not** show, in the same words as for the other flavours:
+it is one person, one unit, one session — and this time every parameter
+(angle step, erosion, search size) was chosen on this very dataset, so the
+in-sample figures above are the best case by construction. Three things were
+checked against that: the cross-fold threshold above; that the shipped
+coarse-to-fine search is not what produces the gap (a run with every angle
+in the coarse pass and finer pixel decimation finds the same extremes to
+four decimals on all 540 comparisons); and that the C front-end reproduces
+its numpy prototype bit-for-bit. What was *not*
+possible here is the only measurement that matters for the two units where
+his front-end fell to 73 % and 93 % FRR: theirs. `make -C tools/accuracy`
+now builds `score-gabor`, and `evaluate.py` runs it by default.
+
+Cost, for the driver's every-frame scoring loop: `em_frame_compute` 1.6 ms
+(his 0.17 ms), `em_match` 4.0 ms against 0.85 ms at ±6 and 6.4 ms at ±19 —
+the rotation search costs less than the wider translation search alone,
+because its coarse pass is decimated and one NCC pass accumulates raw sums.
+
 ## What the three runs agree on, and where they do not
 
 **Agree.** The vendor matcher beats the clean-room matcher on false rejects on

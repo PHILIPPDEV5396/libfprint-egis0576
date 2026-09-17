@@ -10,8 +10,8 @@ tools/accuracy/
   capture.py     acquire a dataset from the sensor (pyusb + numpy)
   egis_eh576.py  the plaintext EGIS/SIGE transport capture.py uses (pyusb only)
   score.c        offline scorer, built once per matcher from driver/egis0576
-  Makefile       -> score-vendor, score-cleanroom (C compiler + libm, nothing else)
-  evaluate.py    two-fold FAR/FRR for both flavours -> table + results.json
+  Makefile       -> score-vendor, score-cleanroom, score-gabor (C compiler + libm, nothing else)
+  evaluate.py    two-fold FAR/FRR for all three flavours -> table + results.json
 ```
 
 ## PRIVACY — read this first
@@ -91,11 +91,24 @@ python3 tools/accuracy/capture.py --dry-run
 make -C tools/accuracy
 ```
 
-produces `tools/accuracy/score-vendor` and `tools/accuracy/score-cleanroom`,
-compiled straight from `driver/egis0576/`. The vendor sources need the relaxed
-flag set the libfprint build also uses for them (`-w -fno-stack-protector
--fpermissive -fwrapv ...`); the clean-room matcher is plain C99. `make -C
-tools/accuracy clean` removes everything again.
+produces `tools/accuracy/score-vendor`, `tools/accuracy/score-cleanroom` and
+`tools/accuracy/score-gabor`, compiled straight from `driver/egis0576/`. The
+vendor sources need the relaxed flag set the libfprint build also uses for
+them (`-w -fno-stack-protector -fpermissive -fwrapv ...`); the other two are
+plain C99. `make -C tools/accuracy clean` removes everything again.
+
+**The Gabor flavour** (`score-gabor`) is the clean-room adapter on a different
+front-end: `driver/egis0576/gabor/egis_match_gabor.c` replaces the isotropic
+high-pass with an orientation-selective Gabor enhancement, a per-pixel mask
+and a rotation search, and it ships with its own operating point
+(`gabor/egis_cr_tuning_gabor.h`, accept at NCC 0.75 -> score 5000). On the
+reference dataset it is the first configuration whose genuine and impostor
+populations do not overlap (lowest genuine press 0.81, highest impostor 0.69,
+0 % / 0 % at the shipped threshold, and 0 % / 0 % with the threshold chosen on
+one fold and applied to the other). That is one person, one unit, one session,
+and every parameter was chosen on that dataset -- which is exactly why a run
+on another unit is worth more than anything measured here. Its header
+comment carries the full measurement and what it does not show.
 
 **The clean-room matcher's search width.** Its translation search is ±6 px as
 shipped, and on the reference dataset that costs most of its accuracy: widening
@@ -229,7 +242,8 @@ python3 tools/accuracy/evaluate.py ~/egis-accuracy/<date_time> \
 `--model` and `--distro` are optional and are the only hardware information
 recorded; leave them off if you prefer. Add `--best-frame` for the sensitivity
 variant (enrol the highest-contrast frame of each press instead of the first)
-and `--flavour vendor` / `--flavour cleanroom` to run one matcher only.
+and `--flavour vendor` / `--flavour cleanroom` / `--flavour gabor` to run one
+matcher only (repeatable).
 
 A dataset from an interrupted capture works: fingers with fewer than two
 presses (or with a frame missing) are skipped with a warning and listed under
@@ -309,7 +323,8 @@ of frames, or the dataset directory, and do not attach it to an e-mail either.
 - Scores are not comparable between flavours except through the operating
   point: the vendor matcher's score is its own minutiae score; the clean-room
   score is an NCC scaled so that its published operating point 0.53 lands on
-  the driver's threshold 5000 (divide by 9434 to get the NCC back).
+  the driver's threshold 5000 (divide by 9434 to get the NCC back); the Gabor
+  flavour scales its own operating point 0.75 to 5000 (divide by 6667).
 - The enrolment used here (first finger-on frame of six presses) is the
   driver's, but the evaluation deliberately keeps every press that produced
   at least one finger-on frame, so a press the driver's enrolment would have

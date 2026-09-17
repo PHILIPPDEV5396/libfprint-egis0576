@@ -1,4 +1,5 @@
 build/
 score-vendor
 score-cleanroom
+score-gabor
 __pycache__/

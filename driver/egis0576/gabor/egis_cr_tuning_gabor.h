@@ -1,0 +1,39 @@
+/* egis_cr_tuning_gabor.h -- the clean-room adapter's three operating-point
+ * constants for the Gabor front-end (egis_match_gabor.c).
+ *
+ * Copyright (C) 2026 Philipp Oster
+ * SPDX-License-Identifier: LGPL-2.1-or-later
+ *
+ * egis_engine_cleanroom.c calibrates these to the NCC distribution of
+ * tsteppy/egis_match.c. The Gabor front-end produces a different distribution
+ * (both populations sit higher), so linking it behind the adapter's defaults
+ * would accept impostors: at the shipped EGIS_CR_ACCEPT_NCC 0.53 it measured
+ * 14 % false accepts on the reference dataset. This header is force-included
+ * (-include) ahead of the adapter when the Gabor flavour is built, so the
+ * operating point travels with the front-end instead of hiding in a build
+ * flag. Values and provenance:
+ *
+ *   EGIS_CR_ACCEPT_NCC     mid-point of the gap between the lowest genuine
+ *                          press and the highest impostor press on the
+ *                          reference dataset (tools/accuracy, 60 / 480); the
+ *                          two folds put that mid-point within 0.003 of each
+ *                          other. Maps to EGIS_THRESHOLD (5000) exactly.
+ *   EGIS_CR_MIN_COVERAGE   the front-end's per-pixel mask after erosion covers
+ *                          0.70-0.75 of a well-placed frame and < 0.2 of an
+ *                          empty or smeared one; tsteppy's block mask, which
+ *                          0.55 was chosen for, is quantised to 16x16 blocks
+ *                          and not comparable.
+ *   EGIS_CR_REDUNDANT_NCC  disabled (1.0): with this front-end two DIFFERENT
+ *                          presses of the same finger reach NCC 0.99, the same
+ *                          value as two frames of one press, so the gate cannot
+ *                          tell them apart and at 0.95 it threw away one in
+ *                          four genuine enrolment presses. The driver already
+ *                          waits for finger-off between enrolment stages
+ *                          (driver/egis0576.c), so same-press duplicates cannot
+ *                          reach the adapter in the first place.
+ */
+#pragma once
+
+#define EGIS_CR_ACCEPT_NCC 0.75
+#define EGIS_CR_MIN_COVERAGE 0.35
+#define EGIS_CR_REDUNDANT_NCC 1.0

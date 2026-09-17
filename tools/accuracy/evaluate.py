@@ -37,7 +37,7 @@ import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 THRESHOLD = 5000                          # EGIS_THRESHOLD in egis_engine.h
-FLAVOURS = ["vendor", "cleanroom"]
+FLAVOURS = ["vendor", "cleanroom", "gabor"]
 KIT_VERSION = 2
 
 # Scorer exit codes (score.c) and the only failure texts results.json may carry.
@@ -284,8 +284,12 @@ def print_table(label, r):
     print(f"| at threshold {r['threshold']} | FRR {pct(r['frr'])} | FAR {pct(r['far'])} |")
     if r["eer"] is not None:
         print(f"\nEER {pct(r['eer'])} at score {r['eer_threshold']}")
-    else:
+    elif r["n_impostor"] == 0:
         print("\nEER n/a (no impostor trials: only one finger evaluated)")
+    else:
+        print("\nEER n/a: the two populations do not overlap (no threshold has both"
+              " a false accept and a false reject; lowest genuine "
+              f"{min(r['genuine_press_scores'])} > highest impostor {max(r['impostor_press_scores'])})")
     if r["failures"]:
         print(f"fold failures: {r['failures']}")
     tpl = [d["enrolled"] for d in r["enrolment"]]
@@ -295,7 +299,7 @@ def print_table(label, r):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("dataset", help="directory written by capture.py (manifest.json + frames)")
-    ap.add_argument("--bin-dir", default=HERE, help="where score-vendor / score-cleanroom live (default: here)")
+    ap.add_argument("--bin-dir", default=HERE, help="where score-vendor / score-cleanroom / score-gabor live (default: here)")
     ap.add_argument("--flavour", action="append", choices=FLAVOURS, help="evaluate only this flavour (repeatable)")
     ap.add_argument("--fingers", default=None, help="comma-separated subset of the dataset's finger labels")
     ap.add_argument("--threshold", type=int, default=THRESHOLD, help=f"accept threshold (default {THRESHOLD})")

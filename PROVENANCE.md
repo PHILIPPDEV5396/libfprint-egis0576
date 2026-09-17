@@ -32,7 +32,8 @@ Written from scratch for libfprint:
 | `egis0576.c`, `egis0576.h` | The libfprint `FpDevice` driver: enroll/verify/identify state machines, capture worker thread, per-boot flat-field, software finger detection. |
 | `egis0576/egis0576_proto.c`, `.h` | The plaintext `EGIS`/`SIGE` transport over gusb, per-device exposure calibration, init orchestration. |
 | `egis0576/egis_rt.c`, `.h`, `egis_engine.c`, `.h` | The flat-memory runtime and the enroll/verify/gallery wrapper around the matcher. |
-| `egis0576/egis_engine_cleanroom.c` | Adapter that implements the `egis_engine.h` contract on top of Thaddeus Stepanovich's clean-room correlation matcher (see category 3); compiled only with `-Degis0576_matcher=cleanroom`. |
+| `egis0576/egis_engine_cleanroom.c` | Adapter that implements the `egis_engine.h` contract on top of Thaddeus Stepanovich's clean-room correlation matcher (see category 3); compiled with `-Degis0576_matcher=cleanroom` or `=gabor`. |
+| `egis0576/gabor/egis_match_gabor.c`, `egis_cr_tuning_gabor.h` | An alternative front-end for that adapter behind the same two-function interface (`em_frame_compute` / `em_match`): orientation-selective Gabor enhancement, per-pixel coherence mask, rotation-aware coarse-to-fine NCC search, and its operating point. Own work from public-domain building blocks (Hong, Wan & Jain 1998; structure-tensor orientation; masked NCC as in category 3); no vendor code or vendor-derived constant was consulted. Compiled only with `-Degis0576_matcher=gabor`. |
 
 These files are licensed **LGPL-2.1-or-later**, matching libfprint. See `LICENSE`.
 
@@ -136,7 +137,11 @@ Since v0.4.2 a clean-room correlation matcher by Thaddeus Stepanovich ships
 in-tree (`egis0576/tsteppy/egis_match.{c,h}`, adapter
 `egis0576/egis_engine_cleanroom.c`) and can be built instead of the vendor matcher
 with `-Degis0576_matcher=cleanroom` (see the README, "Experimental — clean-room
-matcher"). Measured on identical captures from three units, one person each
+matcher"). The `gabor` flavour (`egis0576/gabor/`, own work, LGPL) keeps his
+adapter and NCC but replaces the front-end; on the reference dataset it is the
+first clean-room configuration whose genuine and impostor populations do not
+overlap (0 % / 0 % at the shipped threshold, cross-fold checked), measured so far
+on one unit only. Measured on identical captures from three units, one person each
 ([`docs/matcher-comparison.md`](docs/matcher-comparison.md)): the vendor matcher
 scored 0/60, 2/60 and 37/60 false rejects and 0/480 false accepts on each; the
 clean-room matcher rejected 35 %, 73.3 % and 93.3 % of genuine presses at its

@@ -12,7 +12,7 @@
  * WHAT THIS FILE IS
  *
  * The egis0576 driver (driver/egis0576.c) talks to its host matcher only
- * through the small contract in egis_engine.h. Two implementations exist:
+ * through the small contract in egis_engine.h. Three flavours exist:
  *
  *   egis_engine.c            "vendor"    Egis' own extractor/matcher, machine-
  *                                        translated from the Windows driver
@@ -21,15 +21,27 @@
  *                                        Thaddeus Stepanovich's LGPL-2.1-or-later
  *                                        correlation matcher em_frame_compute()
  *                                        / em_match() (tsteppy/egis_match.{c,h}).
+ *   egis_engine_cleanroom.c  "gabor"     THIS FILE again, on the same two-function
+ *     + gabor/                           contract implemented by gabor/
+ *                                        egis_match_gabor.c (own work, LGPL):
+ *                                        orientation-selective front-end and a
+ *                                        rotation search. Its three operating-
+ *                                        point constants come from
+ *                                        gabor/egis_cr_tuning_gabor.h, force-
+ *                                        included by the build (see below).
  *
  * The flavour is chosen at BUILD time with the meson option
  *
  *     -Degis0576_matcher=vendor      (default, today's behaviour, byte-identical)
- *     -Degis0576_matcher=cleanroom   (this file)
+ *     -Degis0576_matcher=cleanroom   (this file + tsteppy/egis_match.c)
+ *     -Degis0576_matcher=gabor       (this file + gabor/egis_match_gabor.c)
  *
- * Exactly one flavour is compiled into libfprint; the other flavour's sources
+ * Exactly one flavour is compiled into libfprint; the other flavours' sources
  * are not built at all (see the 'egis0576' block in libfprint/meson.build).
- * The driver source and egis_engine.h are identical in both flavours.
+ * The driver source and egis_engine.h are identical in all flavours. Numbers
+ * quoted in this header (thresholds, stack, timings, template counts) are
+ * for tsteppy's front-end unless they say otherwise; the Gabor front-end's
+ * are in its own two files.
  *
  * PROVENANCE OF tsteppy/egis_match.{c,h}
  *
@@ -95,7 +107,11 @@
  *       ncc 0.528 -> 4981 (reject; his best impostor)
  *       ncc 0.421 -> 3972
  *
- *   To convert a logged score back to an NCC divide by 9433.96. A negative
+ *   To convert a logged score back to an NCC divide by 9433.96. The Gabor
+ *   flavour uses the same formula with its own EGIS_CR_ACCEPT_NCC (0.75, see
+ *   gabor/egis_cr_tuning_gabor.h): 5000 / 0.75 = 6666.67 per unit NCC, so a
+ *   perfect 1.0 logs as 6667 there and scores are NOT comparable across the
+ *   two flavours except through the threshold. A negative
  *   result (-1) is returned verbatim, never scaled, for: em_match's overlap
  *   sentinel, a probe whose coverage is below EGIS_CR_MIN_COVERAGE (his probe
  *   quality gate), an empty gallery slot or a bad index. The driver already
@@ -118,14 +134,19 @@
  *   (rather than EmFrames) keeps the blob 9x smaller, independent of future
  *   changes to em_frame_compute(), and in the same representation Thaddeus'
  *   own driver stores, so his offline tools can re-evaluate these enrolments.
- *   EmFrames are recomputed once per action in egis_gallery_load() (~1 ms
- *   each), never per probe.
+ *   EmFrames are recomputed once per action in egis_gallery_load() (~0.2 ms
+ *   each with tsteppy's front-end, ~1.6 ms with the Gabor one), never per
+ *   probe.
  *
  *   Cross-flavour: a vendor-flavour blob fails the magic/size check here,
  *   egis_gallery_load() returns -1 and the driver maps that to
  *   FP_DEVICE_ERROR_DATA_INVALID without touching the sensor; the user
  *   re-enrols. The reverse direction (a clean-room blob fed to a vendor build)
- *   is NOT guarded on the vendor side. Re-enrol after switching flavours.
+ *   is NOT guarded on the vendor side. The cleanroom and gabor flavours store
+ *   the SAME blob (raw frames, no front-end state), so a template enrolled
+ *   under one loads silently under the other -- and scores on the other's
+ *   scale, against the other's threshold. Re-enrol after switching flavours,
+ *   in every direction.
  *
  * ENROLMENT MAPPING (egis_enroll_add return codes, see egis_engine.h)
  *
@@ -146,8 +167,9 @@
  *   calls egis_engine_init / egis_enroll_begin / egis_gallery_load on the main
  *   thread before the capture worker starts, and egis_enroll_add / egis_verify
  *   / egis_identify / egis_enroll_finish from the worker; actions never
- *   overlap. All EmFrames live on the heap (35,920 bytes each; em_frame_compute
- *   itself uses ~64 KB of stack transiently).
+ *   overlap. All EmFrames live on the heap (35,920 bytes each; tsteppy's
+ *   em_frame_compute uses ~64 KB of stack transiently, the Gabor one < 8 KB
+ *   and a malloc'd scratch block).
  * ---------------------------------------------------------------------------
  */
 
@@ -168,9 +190,21 @@
 
 /* Thaddeus' operating points (his driver: EGIS0576_MATCH_THRESHOLD and
  * EGIS0576_MIN_COVERAGE). */
+/* Overridable at compile time (-D...) so the accuracy kit can measure a
+ * different matcher front-end behind the same adapter without editing this
+ * file: all three are calibrated against the NCC distribution of
+ * tsteppy/egis_match.c, and a front-end with a different distribution needs
+ * them moved or the gates fire on the wrong things. The defaults are the
+ * shipped driver's and are unchanged. */
+#ifndef EGIS_CR_ACCEPT_NCC
 #define EGIS_CR_ACCEPT_NCC 0.53      /* maps to EGIS_THRESHOLD exactly */
+#endif
+#ifndef EGIS_CR_MIN_COVERAGE
 #define EGIS_CR_MIN_COVERAGE 0.55    /* enrol + probe quality gate */
+#endif
+#ifndef EGIS_CR_REDUNDANT_NCC
 #define EGIS_CR_REDUNDANT_NCC 0.95   /* enrol: reject same-press duplicate */
+#endif
 
 #define EGIS_CR_MAGIC "EH576CR"      /* 7 chars + NUL = 8 bytes */
 #define EGIS_CR_VERSION 1
@@ -222,7 +256,10 @@ score_entry (const EmFrame *p, const CrEntry *e)
 {
     double best = -1.0;
     for (int i = 0; i < e->nframes; i++) {
-        double s = em_match (p, &e->frames[i]);
+        /* template first, probe second: tsteppy's em_match is symmetric, but
+         * a front-end that resamples the probe (rotation search) is not, and
+         * this is the order the accuracy kit measures. */
+        double s = em_match (&e->frames[i], p);
         if (s > best)
             best = s;
     }
@@ -316,7 +353,7 @@ egis_enroll_add (const uint8_t *raw, int *progress)
 
     /* (c) same-press duplicate */
     for (int i = 0; i < enrol->count; i++)
-        if (em_match (&enrol->scratch, &enrol->frames[i]) >= EGIS_CR_REDUNDANT_NCC)
+        if (em_match (&enrol->frames[i], &enrol->scratch) >= EGIS_CR_REDUNDANT_NCC)
             return 4;
 
     /* (d) store */

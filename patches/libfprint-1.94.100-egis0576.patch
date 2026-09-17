@@ -1,5 +1,5 @@
 diff --git a/libfprint/meson.build b/libfprint/meson.build
-index f11533c..fe3f692 100644
+index f11533c..029be62 100644
 --- a/libfprint/meson.build
 +++ b/libfprint/meson.build
 @@ -116,6 +116,12 @@ driver_sources = {
@@ -15,7 +15,7 @@ index f11533c..fe3f692 100644
      'egismoc' : files('drivers/egismoc/egismoc.c'),
      'egis_etu905' : files('drivers/egismoc/egis_etu905.c'),
      'vfs0050' : files('drivers/vfs0050.c'),
-@@ -250,13 +256,59 @@ libfprint_private = static_library('fprint-private',
+@@ -250,13 +256,76 @@ libfprint_private = static_library('fprint-private',
      link_with: libnbis,
      install: false)
  
@@ -50,7 +50,7 @@ index f11533c..fe3f692 100644
 +                '-Wno-implicit-function-declaration',
 +            ],
 +            install: false) ]
-+    else
++    elif egis0576_matcher == 'cleanroom'
 +        # Clean-room matcher + its egis_engine.h adapter: plain C99, built with
 +        # libfprint's normal flags (no -w, no -fno-stack-protector).
 +        egis0576_engine_libs = [ static_library('egis0576-cleanroom',
@@ -60,6 +60,23 @@ index f11533c..fe3f692 100644
 +            ],
 +            include_directories: include_directories('drivers/egis0576',
 +                                                     'drivers/egis0576/tsteppy'),
++            dependencies: [ mathlib_dep ],
++            install: false) ]
++    else
++        # Same adapter on the Gabor front-end (drivers/egis0576/gabor/). The
++        # adapter's three operating-point constants are force-included from
++        # the header that documents them, because this front-end's score
++        # distribution differs from tsteppy's and the adapter defaults would
++        # false-accept.
++        egis0576_engine_libs = [ static_library('egis0576-gabor',
++            sources: [
++                'drivers/egis0576/egis_engine_cleanroom.c',
++                'drivers/egis0576/gabor/egis_match_gabor.c',
++            ],
++            include_directories: include_directories('drivers/egis0576',
++                                                     'drivers/egis0576/tsteppy'),
++            c_args: [ '-include',
++                      meson.current_source_dir() / 'drivers/egis0576/gabor/egis_cr_tuning_gabor.h' ],
 +            dependencies: [ mathlib_dep ],
 +            install: false) ]
 +    endif
@@ -89,7 +106,7 @@ index ab09dc1..a51abd5 100644
      'synaptics': {},
      'elan': { 'endian_dependent': true },
 diff --git a/meson_options.txt b/meson_options.txt
-index 3c4cd26..1a992b2 100644
+index 3c4cd26..defaf30 100644
 --- a/meson_options.txt
 +++ b/meson_options.txt
 @@ -34,3 +34,9 @@ option('installed-tests',
@@ -98,7 +115,7 @@ index 3c4cd26..1a992b2 100644
         value: true)
 +
 +option('egis0576_matcher',
-+       description: 'Which host matcher the egis0576 (EgisTec EH576) driver links: vendor = Egis extractor/matcher translated from the Windows driver (default, not upstreamable); cleanroom = Thaddeus Stepanovich\'s LGPL correlation matcher (egis_match.c). Templates enrolled under one flavour are rejected by the other (re-enrol after switching).',
++       description: 'Which host matcher the egis0576 (EgisTec EH576) driver links: vendor = Egis extractor/matcher translated from the Windows driver (default, not upstreamable); cleanroom = Thaddeus Stepanovich\'s LGPL correlation matcher (egis_match.c); gabor = the same adapter on an orientation-selective front-end (gabor/egis_match_gabor.c). Re-enrol after switching: vendor templates are rejected by the other two, and cleanroom/gabor share a template format but not a score scale.',
 +       type: 'combo',
-+       choices: ['vendor', 'cleanroom'],
++       choices: ['vendor', 'cleanroom', 'gabor'],
 +       value: 'vendor')
