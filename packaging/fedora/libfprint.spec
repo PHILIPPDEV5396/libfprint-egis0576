@@ -12,6 +12,21 @@
 
 %global egis_tag v0.4.5
 
+# Matcher flavour. Default: the vendor matcher, byte-identical to before.
+#   rpmbuild --with gabor     -> -Degis0576_matcher=gabor (experimental, see
+#                                driver/egis0576/gabor/), Release gets ".gabor"
+#                                so the package is distinguishable and sorts
+#                                above the default build for the same version.
+# Templates are not portable between flavours; re-enrol after switching.
+%bcond_with gabor
+%if %{with gabor}
+%global flavour_rel .gabor
+%global flavour_meson -Degis0576_matcher=gabor
+%else
+%global flavour_rel %{nil}
+%global flavour_meson %{nil}
+%endif
+
 Name:           libfprint
 Version:        1.94.100
 # Release sorts ABOVE Fedora's own 1.fcNN for the SAME Version, so `dnf upgrade`
@@ -19,7 +34,7 @@ Version:        1.94.100
 # ../README.md, e.g. priority=90), which wins regardless of version — keep it
 # set, because it is what saves enabled users when Fedora ships a version this
 # spec has not been rebased onto yet.
-Release:        99%{?dist}.egis10
+Release:        99%{?dist}.egis10%{flavour_rel}
 Summary:        Toolkit for fingerprint scanner (rebuilt with the EgisTec EH576 / 1c7a:0576 driver)
 
 License:        LGPL-2.1-or-later AND NIST-PD
@@ -79,7 +94,7 @@ patch -p1 < "$egisdir"/patches/libfprint-%{version}-egis0576.patch
 %build
 # -Ddrivers=all builds every default+virtual driver, including egis0576 (which the
 # patch added to default_drivers, so its engine static-lib is built and linked).
-%meson -Ddrivers=all
+%meson -Ddrivers=all %{flavour_meson}
 %meson_build
 
 %install

@@ -20,11 +20,14 @@ COMMON := -std=gnu99 -O3 -fno-strict-aliasing -D_GNU_SOURCE -I$(DRV)
 VENDOR_CFLAGS := $(COMMON) -w -fno-stack-protector -fpermissive -fwrapv \
                  -Wno-int-conversion -Wno-incompatible-pointer-types \
                  -Wno-implicit-function-declaration
-CLEAN_CFLAGS  := $(COMMON) -Wall -I$(DRV)/tsteppy
+# The kit wants the true best-of-template score, not the driver's
+# first-frame-over-threshold shortcut (egis_engine_cleanroom.c).
+CLEAN_CFLAGS  := $(COMMON) -Wall -I$(DRV)/tsteppy -DEGIS_CR_VERIFY_EARLY_EXIT=0
 # The Gabor flavour is the same adapter on a different front-end, with the
 # adapter's three operating-point constants force-included from the header
 # that documents where they come from (driver/egis0576/gabor/).
 GABOR_CFLAGS  := $(COMMON) -Wall -std=c99 -I$(DRV)/tsteppy \
+                 -DEGIS_CR_VERIFY_EARLY_EXIT=0 \
                  -include $(DRV)/gabor/egis_cr_tuning_gabor.h
 SCORE_CFLAGS  := $(COMMON) -Wall
 

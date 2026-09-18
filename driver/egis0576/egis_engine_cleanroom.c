@@ -205,6 +205,13 @@
 #ifndef EGIS_CR_REDUNDANT_NCC
 #define EGIS_CR_REDUNDANT_NCC 0.95   /* enrol: reject same-press duplicate */
 #endif
+/* egis_verify() stops scoring template frames at the first one over the
+ * accept NCC (the driver only compares the result with the threshold). The
+ * accuracy kit builds with this at 0 so its score distributions show the
+ * true best-of-template maximum, not the first frame that cleared it. */
+#ifndef EGIS_CR_VERIFY_EARLY_EXIT
+#define EGIS_CR_VERIFY_EARLY_EXIT 1
+#endif
 
 #define EGIS_CR_MAGIC "EH576CR"      /* 7 chars + NUL = 8 bytes */
 #define EGIS_CR_VERSION 1
@@ -252,7 +259,7 @@ ncc_to_score (double ncc)
 
 /* best-of-N over one gallery entry; -1 if nothing could be scored */
 static int
-score_entry (const EmFrame *p, const CrEntry *e)
+score_entry (const EmFrame *p, const CrEntry *e, int stop_at_accept)
 {
     double best = -1.0;
     for (int i = 0; i < e->nframes; i++) {
@@ -262,6 +269,12 @@ score_entry (const EmFrame *p, const CrEntry *e)
         double s = em_match (&e->frames[i], p);
         if (s > best)
             best = s;
+        /* verify only needs "over the threshold or not", so it stops at the
+         * first template frame that clears it: a genuine press then costs one
+         * to a few em_match calls instead of all twelve. identify keeps the
+         * full maximum, because it ranks prints against each other. */
+        if (stop_at_accept && best >= EGIS_CR_ACCEPT_NCC)
+            break;
     }
     return ncc_to_score (best);
 }
@@ -431,7 +444,7 @@ egis_verify (const uint8_t *raw, int idx)
     em_frame_compute (raw, probe);
     if (probe->coverage < EGIS_CR_MIN_COVERAGE)
         return -1;
-    return score_entry (probe, &gallery[idx]);
+    return score_entry (probe, &gallery[idx], EGIS_CR_VERIFY_EARLY_EXIT);
 }
 
 void
@@ -457,7 +470,7 @@ egis_identify (const uint8_t *raw, int *out_idx)
     for (int i = 0; i < gallery_n; i++) {
         if (!gallery[i].frames)
             continue;
-        int s = score_entry (probe, &gallery[i]);
+        int s = score_entry (probe, &gallery[i], 0);
         if (s > best) {                            /* strict: ties keep lower idx */
             best = s;
             besti = i;
