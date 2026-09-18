@@ -327,6 +327,32 @@ possible here is the only measurement that matters for the two units where
 his front-end fell to 73 % and 93 % FRR: theirs. `make -C tools/accuracy`
 now builds `score-gabor`, and `evaluate.py` runs it by default.
 
+**Second unit (2026-09-17, Thaddeus Stepanovich, Yoga 7 16IRL8 / Intel):**
+he ran the front-end on his own two capture sets (29 genuine / 88 impostor
+decisions, cross-fold with the strictest zero-false-accept threshold, folds
+split by capture block; method and tables in his
+[`docs/gabor-frontend-second-unit.md`](https://github.com/tsteppy/egistec-eh576-libfprint/blob/main/docs/gabor-frontend-second-unit.md)):
+
+| configuration | held-out FRR | held-out FAR |
+|---|---:|---:|
+| his front-end as shipped (±6 / 800) | 51.7 % | 4.5 % |
+| Gabor, raw frames | 17.2 % | 1.1 % |
+| **Gabor + flat-field** | **6.9 %** | **1.1 %** |
+
+So the front-end replicates as a large improvement, and the 0 % / 0 % above
+does not: flat-fielded, his weakest genuine press scores 0.600 against a
+strongest impostor of 0.815, so his populations still overlap and 6.9 % is a
+threshold choice (two of 29 presses). Two further findings of his that
+matter here: the per-boot flat-field this driver already applies is what
+makes the threshold portable (his raw-frame folds wanted 0.832 / 0.870, his
+flat-fielded ones 0.815 / 0.813), and it helps this front-end while hurting
+his (51.7 % → 65.5 %). The threshold is still unit-dependent even flat-fielded
+— 0.75 here, 0.81 there — which is the open problem a third unit has to
+inform. He also showed that his own front-end, retuned jointly (±26 px,
+1400 px overlap floor), ties the Gabor one on *raw* frames pooled and loses
+to it flat-fielded, so the ablation in the file's header, measured against a
+fixed 800 px floor, is one dataset's answer to "what each piece contributes".
+
 Cost, for the driver's every-frame scoring loop: `em_frame_compute` 1.6 ms
 (his 0.17 ms), `em_match` 4.0 ms against 0.85 ms at ±6 and 6.4 ms at ±19 —
 the rotation search costs less than the wider translation search alone,

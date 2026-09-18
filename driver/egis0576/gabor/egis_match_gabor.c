@@ -71,6 +71,31 @@
  * the populations is 4x what his front-end reaches at +-19 (-0.38, they
  * overlap) and is the whole point.
  *
+ * SECOND UNIT (Thaddeus Stepanovich, Yoga 7 16IRL8, Intel; 29 genuine / 88
+ * impostor decisions, cross-fold with the strictest zero-false-accept
+ * threshold; his docs/gabor-frontend-second-unit.md): his front-end as
+ * shipped 51.7 % FRR / 4.5 % FAR; this file on raw frames 17.2 % / 1.1 %;
+ * this file on flat-fielded frames 6.9 % / 1.1 %, one of the two folds at
+ * 0 / 0. The 0 % / 0 % above did NOT reproduce there (genuine min 0.600
+ * against impostor max 0.815, flat-fielded), so across two units the honest
+ * summary is "a large improvement", not "a clean gap". His retuned old
+ * front-end (+-26 px, 1400 px floor) ties this file on RAW frames pooled
+ * (17.2 % each) and loses to it flat-fielded; the ablation above was
+ * measured against the 800 px floor, which on my data was inert at +-19
+ * (800..2000 changed nothing) but on his binds hard, so "what each piece
+ * contributes" is still one dataset's answer.
+ *
+ * THE FLAT-FIELD IS HALF OF IT. The per-boot flat-field this driver already
+ * applies (driver/egis0576.c) is what makes the threshold portable: on raw
+ * frames his unit wants ~0.85 where mine wants 0.80, flat-fielded his two
+ * folds agree to within 0.001 (0.815 / 0.813) and mine to 0.001 (0.751 /
+ * 0.752). It must be SUBTRACTIVE (raw - baseline + mean(baseline)); the
+ * multiplicative form clips and destroys frames. And it helps this front-end
+ * while hurting his (51.7 % -> 65.5 % on his unit), because his +128
+ * high-pass has no local normalisation to absorb the changed contrast. The
+ * threshold it lands on is still unit-dependent at this sample size (0.75
+ * here, 0.81 there); a third unit decides.
+ *
  * WHERE THE GAIN COMES FROM (numpy prototype of this pipeline, exhaustive
  * search, 240 impostors; the C reproduces its per-frame features
  * bit-for-bit, verified on synthetic frames, and its numbers to +-0.01)
@@ -84,9 +109,10 @@
  *
  * Most of the rise in BOTH populations comes from the larger alignment space
  * (search, mask, rotation take the worst impostor 0.44 -> 0.67 and the worst
- * genuine press 0.13 -> 0.64); the Gabor step is what finally lifts the
- * genuine floor clear of the impostor ceiling. None of the pieces does it
- * alone.
+ * genuine press 0.13 -> 0.64); on this dataset the Gabor step is what
+ * finally lifts the genuine floor clear of the impostor ceiling, and none of
+ * the pieces does it alone. See SECOND UNIT for why "on this dataset" is
+ * load-bearing.
  *
  * COST (synthetic frames, idle laptop, gcc -O3): em_frame_compute 1.6 ms
  * against his 0.17 ms, once per frame; em_match 4.0 ms against his 0.85 ms
