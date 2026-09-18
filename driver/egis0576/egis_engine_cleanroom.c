@@ -185,8 +185,12 @@
  * for more presses than this, enrolment still terminates (extra adds return 2)
  * but the extra frames are not stored. */
 #define EGIS_CR_MAX_FRAMES 12
-/* Maximum gallery entries per egis_gallery_load (driver passes at most 5). */
-#define EGIS_CR_MAX_GALLERY 5
+/* Maximum gallery entries per egis_gallery_load. fprintd names at most 10
+ * fingers per user and passes them all to identify; its pre-enrol duplicate
+ * check can pass more than one user's prints. The driver asks
+ * egis_gallery_capacity() and refuses loudly beyond it instead of matching
+ * a prefix. */
+#define EGIS_CR_MAX_GALLERY 16
 
 /* Thaddeus' operating points (his driver: EGIS0576_MATCH_THRESHOLD and
  * EGIS0576_MIN_COVERAGE). */
@@ -204,6 +208,14 @@
 #endif
 #ifndef EGIS_CR_REDUNDANT_NCC
 #define EGIS_CR_REDUNDANT_NCC 0.95   /* enrol: reject same-press duplicate */
+#endif
+/* Raw-frame corroboration (egis_verify_raw_ok): the un-flat-fielded confirming
+ * frame must reach this NCC against the accepted gallery entry, else the
+ * accept is dropped. 0 disables the check (returns 1 always). tsteppy's
+ * front-end has not been measured on raw-vs-flat-fielded pairs, so it ships
+ * disabled; the Gabor tuning header sets it. */
+#ifndef EGIS_CR_RAW_CORROBORATE_NCC
+#define EGIS_CR_RAW_CORROBORATE_NCC 0.0
 #endif
 /* egis_verify() stops scoring template frames at the first one over the
  * accept NCC (the driver only compares the result with the threshold). The
@@ -453,6 +465,38 @@ egis_preprocess (const uint8_t *raw, uint8_t *out)
     /* identity: em_frame_compute() does its own enhancement (see header) */
     if (raw != out)
         memcpy (out, raw, EGIS_IMG_SIZE);
+}
+
+int
+egis_gallery_capacity (void)
+{
+    return EGIS_CR_MAX_GALLERY;
+}
+
+int
+egis_verify_raw_ok (const uint8_t *raw_unfielded, int idx)
+{
+    double best = -1.0;
+
+    if (EGIS_CR_RAW_CORROBORATE_NCC <= 0.0)
+        return 1;
+    if (!probe || !raw_unfielded || idx < 0 || idx >= gallery_n || !gallery[idx].frames)
+        return 0;
+    /* The raw frame still carries the sensor's fixed pattern (that is the
+     * point: nothing has been subtracted from it, so nothing can have been
+     * painted into it). Genuine raw probes against flat-fielded templates
+     * measured NCC >= 0.79 on the reference unit; a featureless contact whose
+     * flat-fielded twin scored 0.93 through a poisoned baseline scores like a
+     * blank here. */
+    em_frame_compute (raw_unfielded, probe);
+    for (int i = 0; i < gallery[idx].nframes; i++) {
+        double v = em_match (&gallery[idx].frames[i], probe);
+        if (v > best)
+            best = v;
+        if (best >= EGIS_CR_RAW_CORROBORATE_NCC)
+            return 1;
+    }
+    return 0;
 }
 
 int

@@ -24,9 +24,13 @@
  *                          side: 0.09 against the reference dataset's worst
  *                          impostor, 0.07 against the worst live one seen so
  *                          far (0.71, 2026-09-18), 0.03 under the worst
- *                          genuine press. It is also nearer the second unit's
- *                          flat-fielded operating point (0.81, tsteppy). Maps
- *                          to EGIS_THRESHOLD (5000) exactly.
+ *                          genuine press. Maps to EGIS_THRESHOLD (5000)
+ *                          exactly. What this margin is NOT: a defence
+ *                          against synthetic ridge textures -- a curved
+ *                          grating at the right period scores 0.88-0.96
+ *                          against real templates, above the worst genuine
+ *                          press, so no value of this constant separates
+ *                          them (see egis_match_gabor.c, LIMITS).
  *   EGIS_CR_MIN_COVERAGE   the front-end's per-pixel mask after erosion covers
  *                          0.70-0.75 of a well-placed frame and < 0.2 of an
  *                          empty or smeared one; tsteppy's block mask, which
@@ -46,3 +50,9 @@
 #define EGIS_CR_ACCEPT_NCC 0.78
 #define EGIS_CR_MIN_COVERAGE 0.35
 #define EGIS_CR_REDUNDANT_NCC 1.0
+/* Raw-frame corroboration of an accept (egis_verify_raw_ok, see
+ * egis_engine.h for the hole it closes). Genuine un-flat-fielded probes
+ * against flat-fielded templates: min 0.79 over 66 frames on the reference
+ * unit; a featureless contact that reached 0.93 flat-fielded through a
+ * poisoned baseline reaches ~0.2 raw. 0.5 sits between with margin both ways. */
+#define EGIS_CR_RAW_CORROBORATE_NCC 0.5

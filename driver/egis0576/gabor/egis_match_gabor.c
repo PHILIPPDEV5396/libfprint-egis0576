@@ -96,7 +96,38 @@
  * threshold it lands on is still unit-dependent at this sample size (the
  * mid-gap is 0.75 here, 0.81 there; the shipped 0.78 sits on the genuine side
  * of this unit's gap on purpose, see egis_cr_tuning_gabor.h); a third unit
- * decides.
+ * decides. One caveat on the comparison itself: his numbers come from HIS
+ * capture path (gain switching between reg 0x12 = 0 and 6, one settled frame
+ * per press, 3-frame reference), not this driver's (calibrated exposure at a
+ * fixed gain, 8-frame baseline, every frame scored), so his 0.815 impostor
+ * ceiling is a property of that pipeline as much as of his unit, and it is
+ * not an argument for where this driver's constant should sit.
+ *
+ * LIMITS (from an adversarial review, 2026-09-18, all measured):
+ *   - Synthetic ridge textures. A curved grating (arc) at the sensor's ridge
+ *     period scores 0.909 against real templates, a hill-climbed ridge model
+ *     0.960, filtered ridge-frequency noise 0.849 -- above the worst genuine
+ *     press (0.812). This is what a masked texture correlation on 70x57 px
+ *     IS: any patch of locally parallel ridges at the right period and angle
+ *     matches. No threshold fixes it, the probe self-similarity gate does
+ *     not stop the curved ones, and this sensor offers no liveness signal.
+ *     To exploit it an attacker must present the pattern to the sensor
+ *     (physical access, a fabricated artefact), which also defeats every
+ *     other matcher without presentation-attack detection -- but a
+ *     minutiae-based matcher would reject a featureless grating, and this
+ *     one does not. Countermeasures under measurement.
+ *   - Poisoned flat-field baseline. If the driver's per-boot baseline is
+ *     captured with the enrolled finger resting lightly on the sensor, the
+ *     subtraction paints that finger's ridges, inverted, into every later
+ *     frame, and a correlation matcher cannot tell an inverted half-period-
+ *     shifted copy from the real thing: a featureless smudge then scored
+ *     0.92-0.94. Closed in the adapter by corroborating every accept on the
+ *     un-flat-fielded frame (egis_verify_raw_ok): the smudge's raw frame has
+ *     no ridges (-1), genuine raw probes score >= 0.83 against flat-fielded
+ *     templates on the reference dataset.
+ *   - Partial presses. A small well-aligned patch of one finger can match a
+ *     different finger's template over the 800 px minimum overlap. Under
+ *     evaluation (raising the floor to 1200 costs one genuine press in 60).
  *
  * WHERE THE GAIN COMES FROM (numpy prototype of this pipeline, exhaustive
  * search, 240 impostors; the C reproduces its per-frame features
@@ -160,6 +191,17 @@
 #endif
 #ifndef EG_ERODE
 #define EG_ERODE 1
+#endif
+#ifndef EG_MIN_RIDGE_SD
+#define EG_MIN_RIDGE_SD 5.0  /* ridge evidence: sd of the Gabor response over
+                              * the mask, in the units eg_normalise leaves
+                              * (local sd floored at 6). Measured on the
+                              * reference dataset: real frames min 6.65 /
+                              * p1 12.2 / median 16.4; a smooth ramp 0.02, a
+                              * smooth bump 0.42, white noise 5.6. Without
+                              * this the mask -- a coherence ratio -- gives a
+                              * ridge-free gradient full coverage (0.74) and
+                              * it gets enrolled. */
 #endif
 #ifndef EG_GSX
 #define EG_GSX 2.6           /* Gabor sigma across the ridges                */
@@ -496,6 +538,33 @@ em_frame_compute (const uint8_t *raw, EmFrame *f)
   eg_gabor (S->norm, S->ridge, eg_period (S->norm, S->ridge, S->a, S->b), f->img);
   f->coverage = eg_mask (S, f->mask);
   free (S);
+
+  /* Ridge evidence on an ABSOLUTE scale, before the standardisation below
+   * erases it: a frame whose Gabor response over the mask has no amplitude
+   * is not a fingerprint, whatever its coherence says. Zero its coverage so
+   * the adapter's gate rejects it in enrol (-2) and verify (-1). */
+  {
+    double m = 0, v = 0;
+    int n = 0;
+    for (int i = 0; i < EM_N; i++)
+      if (f->mask[i])
+        {
+          m += f->img[i];
+          n++;
+        }
+    if (n > 0)
+      {
+        m /= n;
+        for (int i = 0; i < EM_N; i++)
+          if (f->mask[i])
+            v += (f->img[i] - m) * (f->img[i] - m);
+        if (sqrt (v / n) < EG_MIN_RIDGE_SD)
+          {
+            memset (f->mask, 0, sizeof f->mask);
+            f->coverage = 0.0;
+          }
+      }
+  }
 
   for (int i = 0; i < EM_N; i++)
     mean += f->img[i];

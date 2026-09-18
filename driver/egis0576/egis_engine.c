@@ -121,6 +121,17 @@ static long long gallery_entry(int idx) {
     return *(long long *)(GALLERY_BASE + (long long)idx * 0x18);
 }
 
+/* The vendor matcher decides on minutiae correspondence, which a painted,
+ * inverted imprint does not produce, so no raw-frame corroboration here. */
+int egis_verify_raw_ok(const uint8_t *raw_unfielded, int idx) {
+    (void)raw_unfielded; (void)idx;
+    return 1;
+}
+
+int egis_gallery_capacity(void) {
+    return 5;   /* FUN_18002bf50(ctx, 0, 5, 0) above */
+}
+
 int egis_verify(const uint8_t *raw, int idx) {
     void *fs = extract(raw);
     if (!fs) return -1;

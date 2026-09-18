@@ -40,6 +40,24 @@ int egis_gallery_load(const uint8_t *const *blobs, const int *sizes, int n);
 /* score a probe frame against gallery entry `idx`; returns score (<0 error) */
 int egis_verify(const uint8_t *raw, int idx);
 
+/* Corroborate an accept on the UN-flat-fielded sensor frame. The driver calls
+ * this after egis_verify()/egis_identify() crossed the threshold, with the
+ * raw bytes of the confirming frame (no flat-field, no preprocessing), and
+ * only reports success if it returns 1. Closes the poisoned-baseline hole:
+ * a flat-field baseline captured with the enrolled finger resting lightly
+ * on the sensor paints that finger's ridges (inverted) into every later
+ * frame, and a correlation matcher cannot tell an inverted, half-period
+ * shifted copy from the real thing -- so a featureless smudge scored as the
+ * enrolled finger. The raw frame cannot be painted: either the ridges are
+ * physically there or they are not. Flavours without the concern (vendor)
+ * return 1 unconditionally. */
+int egis_verify_raw_ok(const uint8_t *raw_unfielded, int idx);
+
+/* How many gallery entries egis_gallery_load() accepts. fprintd passes every
+ * print of the user (up to 10 finger names), so a flavour that can hold them
+ * all must say so, or fingers past the cap silently never authenticate. */
+int egis_gallery_capacity(void);
+
 /* --- byte-exact Windows per-frame preprocessing (egis_preprocess.c) ---
  * min-subtract -> invert -> auto-brightness -> Otsu stretch(0x8c) -> row-flip.
  * Normalises per-session brightness/contrast so a template enrolled in one

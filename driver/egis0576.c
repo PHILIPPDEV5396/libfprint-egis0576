@@ -439,6 +439,22 @@ capture_thread (gpointer data)
   gboolean cancelled = FALSE;    /* left the loop because the capture was cancelled */
   gboolean saw_finger = FALSE;   /* verify/identify: a press is in progress */
   int best_score = -1;           /* verify/identify: best score seen this press */
+  /* Two-frame confirmation (verify/identify). A frame over the threshold is
+   * held as a CANDIDATE; success is reported only when the NEXT finger-on
+   * frame also clears the threshold (identify: for the same print), differs
+   * from it byte-wise, and its raw bytes corroborate the accept
+   * (egis_verify_raw_ok). Why: the sensor has been seen re-serving a stale
+   * frame of an earlier press with fresh noise (tsteppy's driver guards for
+   * the same reason), and with "first frame over threshold wins" one such
+   * frame of the enrolled finger unlocks under any finger. A genuine press
+   * clears the threshold on consecutive frames -- measured 60 of 60 presses
+   * on the reference dataset, the accept moving from frame 0.07 to 1.10 on
+   * average, i.e. one frame (~35 ms) of latency. A candidate that the finger
+   * lifts on, or that the next frame contradicts, is never reported as a
+   * match. */
+  gboolean cand_valid = FALSE;
+  int cand_score = -1, cand_idx = -1;
+  guint8 cand_raw[EGIS_IMG];
   guint8 ffframe[EGIS_IMG];  /* flat-fielded frame (baseline-subtracted) */
   BaselineAcc bl = { { 0 }, 0 }; /* opportunistic no-finger baseline accumulator */
 
@@ -597,53 +613,95 @@ capture_thread (gpointer data)
           if (var >= EGIS0576_FINGER_ON_VAR)
             {
               saw_finger = TRUE;
-              if (action == FPI_DEVICE_ACTION_VERIFY)
-                {
-                  int score = egis_verify (probe, 0);
-                  if (score > best_score)
-                    best_score = score;
-                  fp_dbg ("verify score %d (best %d, var %.0f)", score, best_score, var);
-                  if (score >= EGIS_THRESHOLD)
-                    {
-                      Msg *m = g_new0 (Msg, 1);
-                      m->kind = M_VERIFY_REPORT;
-                      m->score = score;
-                      post_msg (dev, m);
-                      finishing = TRUE;
-                    }
-                }
-              else /* IDENTIFY */
-                {
-                  int idx = -1;
-                  int s = egis_identify (probe, &idx);
-                  if (s > best_score)
-                    best_score = s;
-                  fp_dbg ("identify score %d idx %d (best %d, var %.0f)", s, idx, best_score, var);
-                  if (idx >= 0)
-                    {
-                      Msg *m = g_new0 (Msg, 1);
-                      m->kind = M_IDENTIFY_REPORT;
-                      m->idx = idx;
-                      post_msg (dev, m);
-                      finishing = TRUE;
-                    }
-                }
+              {
+                int score, idx;
+                if (action == FPI_DEVICE_ACTION_VERIFY)
+                  {
+                    idx = 0;
+                    score = egis_verify (probe, 0);
+                  }
+                else
+                  {
+                    idx = -1;
+                    score = egis_identify (probe, &idx);
+                  }
+                if (score > best_score)
+                  best_score = score;
+                fp_dbg ("%s score %d idx %d (best %d, var %.0f)%s",
+                        action == FPI_DEVICE_ACTION_VERIFY ? "verify" : "identify",
+                        score, idx, best_score, var, cand_valid ? " [candidate held]" : "");
+
+                if (score >= EGIS_THRESHOLD && idx >= 0)
+                  {
+                    if (cand_valid && idx == cand_idx
+                        && memcmp (cand_raw, self->frame, EGIS_IMG) != 0)
+                      {
+                        /* second consecutive frame over the threshold for the
+                         * same print, and not a byte-identical re-serve */
+                        if (egis_verify_raw_ok (self->frame, idx))
+                          {
+                            Msg *m = g_new0 (Msg, 1);
+                            m->kind = action == FPI_DEVICE_ACTION_VERIFY
+                                      ? M_VERIFY_REPORT : M_IDENTIFY_REPORT;
+                            m->score = MAX (score, cand_score);
+                            m->idx = idx;
+                            fp_dbg ("match confirmed by a second frame (%d, %d)",
+                                    cand_score, score);
+                            post_msg (dev, m);
+                            finishing = TRUE;
+                          }
+                        else
+                          {
+                            fp_warn ("match not corroborated on the raw frame "
+                                     "(flat-field baseline suspect) -- discarded");
+                            cand_valid = FALSE;
+                          }
+                      }
+                    else
+                      {
+                        cand_valid = TRUE;
+                        cand_score = score;
+                        cand_idx = idx;
+                        memcpy (cand_raw, self->frame, EGIS_IMG);
+                      }
+                  }
+                else
+                  {
+                    /* a frame below the threshold breaks the chain: a stale
+                     * frame stands alone, a genuine press does not */
+                    if (cand_valid)
+                      fp_warn ("candidate frame (%d) not confirmed by the next "
+                               "frame (%d) -- possible stale capture", cand_score, score);
+                    cand_valid = FALSE;
+                  }
+              }
             }
           else if (var < EGIS0576_FINGER_OFF_VAR && saw_finger)
             {
-              /* finger lifted without any frame crossing the threshold */
+              /* finger lifted without a confirmed match. An unconfirmed
+               * candidate is NOT a match (see cand_valid above), so the
+               * reported score is capped below the threshold. A press that
+               * produced nothing scorable at all (every frame -1: coverage
+               * under the gate) is a placement problem, not a failed
+               * attempt -- ask for a retry instead of spending one of
+               * fprintd's tries. */
               Msg *m = g_new0 (Msg, 1);
               if (action == FPI_DEVICE_ACTION_VERIFY)
                 {
                   m->kind = M_VERIFY_REPORT;
-                  m->score = best_score < 0 ? 0 : best_score;
+                  m->score = best_score < 0 ? 0 : MIN (best_score, EGIS_THRESHOLD - 1);
                 }
               else
                 {
                   m->kind = M_IDENTIFY_REPORT;
                   m->idx = -1;
                 }
-              fp_dbg ("finger lifted, final best %d -> no match", best_score);
+              m->extract_fail = (best_score < 0);
+              if (cand_valid)
+                fp_warn ("finger lifted on an unconfirmed candidate (%d) -- no match",
+                         cand_score);
+              fp_dbg ("finger lifted, final best %d -> %s", best_score,
+                      best_score < 0 ? "nothing scorable, retry" : "no match");
               post_msg (dev, m);
               finishing = TRUE;
             }
@@ -844,19 +902,30 @@ egis0576_identify (FpDevice *dev)
 {
   FpDeviceEgis0576 *self = FPI_DEVICE_EGIS0576 (dev);
   GPtrArray *prints = NULL;
-  const guint8 *blobs[5];
-  int sizes[5];
+  g_autofree const guint8 **blobs = NULL;
+  g_autofree int *sizes = NULL;
   g_autoptr(GPtrArray) vars = g_ptr_array_new_with_free_func ((GDestroyNotify) g_variant_unref);
-  guint n = 0;
+  guint n = 0, cap = (guint) MAX (egis_gallery_capacity (), 1);
 
   g_clear_pointer (&self->gallery_prints, g_ptr_array_unref);
   self->gallery_prints = g_ptr_array_new ();   /* borrowed refs, gallery order */
 
   fpi_device_get_identify_data (dev, &prints);
-  if (prints && prints->len > 5)
-    fp_warn ("identify gallery has %u prints but the engine holds 5; "
-             "only the first 5 are matched", prints->len);
-  for (guint i = 0; prints && i < prints->len && n < 5; i++)
+  if (prints && prints->len > cap)
+    {
+      /* fprintd passes every print of the user; matching only a prefix would
+       * make the later fingers silently unusable for login. Fail loudly
+       * instead (the vendor engine holds 5, the clean-room flavours 16). */
+      g_clear_pointer (&self->gallery_prints, g_ptr_array_unref);
+      fpi_device_identify_complete (dev,
+                                    fpi_device_error_new_msg (FP_DEVICE_ERROR_DATA_INVALID,
+                                                              "%u prints to match but this matcher holds at most %u; "
+                                                              "delete some enrolled fingers", prints->len, cap));
+      return;
+    }
+  blobs = g_new0 (const guint8 *, prints ? prints->len + 1 : 1);
+  sizes = g_new0 (int, prints ? prints->len + 1 : 1);
+  for (guint i = 0; prints && i < prints->len; i++)
     {
       FpPrint *print = g_ptr_array_index (prints, i);
       GVariant *var = NULL;

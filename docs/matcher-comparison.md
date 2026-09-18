@@ -351,7 +351,11 @@ makes the threshold portable (his raw-frame folds wanted 0.832 / 0.870, his
 flat-fielded ones 0.815 / 0.813), and it helps this front-end while hurting
 his (51.7 % → 65.5 %). The threshold is still unit-dependent even flat-fielded
 — mid-gap 0.75 here, 0.81 there — which is the open problem a third unit has to
-inform. He also showed that his own front-end, retuned jointly (±26 px,
+inform. One caveat on that comparison: his numbers come from his capture path
+(gain switching between register 0x12 = 0 and 6, one settled frame per press,
+a 3-frame reference), not this driver's (calibrated exposure at a fixed gain,
+8-frame baseline, every frame scored), so his impostor ceiling is a property
+of that pipeline as much as of his unit. He also showed that his own front-end, retuned jointly (±26 px,
 1400 px overlap floor), ties the Gabor one on *raw* frames pooled and loses
 to it flat-fielded, so the ablation in the file's header, measured against a
 fixed 800 px floor, is one dataset's answer to "what each piece contributes".
