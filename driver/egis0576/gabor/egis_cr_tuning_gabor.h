@@ -13,11 +13,20 @@
  * operating point travels with the front-end instead of hiding in a build
  * flag. Values and provenance:
  *
- *   EGIS_CR_ACCEPT_NCC     mid-point of the gap between the lowest genuine
- *                          press and the highest impostor press on the
- *                          reference dataset (tools/accuracy, 60 / 480); the
- *                          two folds put that mid-point within 0.003 of each
- *                          other. Maps to EGIS_THRESHOLD (5000) exactly.
+ *   EGIS_CR_ACCEPT_NCC     placed in the gap between the lowest genuine press
+ *                          (0.81, flat-fielded and raw alike) and the highest
+ *                          impostor press (0.69) on the reference dataset
+ *                          (tools/accuracy, 60 / 480) -- deliberately NOT at
+ *                          its mid-point (0.75, where the two folds agree to
+ *                          0.001) but 0.03 above it, on the genuine side. A
+ *                          false reject costs a retry; a false accept costs
+ *                          the login, so the margin belongs on the impostor
+ *                          side: 0.09 against the reference dataset's worst
+ *                          impostor, 0.07 against the worst live one seen so
+ *                          far (0.71, 2026-09-18), 0.03 under the worst
+ *                          genuine press. It is also nearer the second unit's
+ *                          flat-fielded operating point (0.81, tsteppy). Maps
+ *                          to EGIS_THRESHOLD (5000) exactly.
  *   EGIS_CR_MIN_COVERAGE   the front-end's per-pixel mask after erosion covers
  *                          0.70-0.75 of a well-placed frame and < 0.2 of an
  *                          empty or smeared one; tsteppy's block mask, which
@@ -34,6 +43,6 @@
  */
 #pragma once
 
-#define EGIS_CR_ACCEPT_NCC 0.75
+#define EGIS_CR_ACCEPT_NCC 0.78
 #define EGIS_CR_MIN_COVERAGE 0.35
 #define EGIS_CR_REDUNDANT_NCC 1.0

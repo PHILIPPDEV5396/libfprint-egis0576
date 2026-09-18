@@ -93,8 +93,10 @@
  * multiplicative form clips and destroys frames. And it helps this front-end
  * while hurting his (51.7 % -> 65.5 % on his unit), because his +128
  * high-pass has no local normalisation to absorb the changed contrast. The
- * threshold it lands on is still unit-dependent at this sample size (0.75
- * here, 0.81 there); a third unit decides.
+ * threshold it lands on is still unit-dependent at this sample size (the
+ * mid-gap is 0.75 here, 0.81 there; the shipped 0.78 sits on the genuine side
+ * of this unit's gap on purpose, see egis_cr_tuning_gabor.h); a third unit
+ * decides.
  *
  * WHERE THE GAIN COMES FROM (numpy prototype of this pipeline, exhaustive
  * search, 240 impostors; the C reproduces its per-frame features

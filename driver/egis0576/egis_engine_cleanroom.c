@@ -108,9 +108,9 @@
  *       ncc 0.421 -> 3972
  *
  *   To convert a logged score back to an NCC divide by 9433.96. The Gabor
- *   flavour uses the same formula with its own EGIS_CR_ACCEPT_NCC (0.75, see
- *   gabor/egis_cr_tuning_gabor.h): 5000 / 0.75 = 6666.67 per unit NCC, so a
- *   perfect 1.0 logs as 6667 there and scores are NOT comparable across the
+ *   flavour uses the same formula with its own EGIS_CR_ACCEPT_NCC (0.78, see
+ *   gabor/egis_cr_tuning_gabor.h): 5000 / 0.78 = 6410.26 per unit NCC, so a
+ *   perfect 1.0 logs as 6410 there and scores are NOT comparable across the
  *   two flavours except through the threshold. A negative
  *   result (-1) is returned verbatim, never scaled, for: em_match's overlap
  *   sentinel, a probe whose coverage is below EGIS_CR_MIN_COVERAGE (his probe

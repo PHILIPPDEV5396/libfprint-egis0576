@@ -245,7 +245,7 @@ Thaddeus Stepanovich's, it takes his matcher from 51.7 % to 6.9 % false rejects
 held-out, without reaching a clean gap. Since 2026-09-18 it is what the
 reference unit logs in with — the first login through this driver with no
 vendor code in the matcher (`fprintd-verify`: genuine match, other finger
-rejected at 0.71 against a 0.75 threshold, ~60 ms per frame; lock screen via
+rejected at 0.71 against a threshold since raised to 0.78, ~60 ms per frame; lock screen via
 `pam_fprintd`). Fedora: `rpmbuild --with gabor` on the spec in
 [`packaging/fedora/`](packaging/fedora/). Whether it becomes the default
 clean-room flavour is decided by the units it has not seen yet

@@ -291,17 +291,20 @@ instead of the isotropic high-pass, a per-pixel coherence mask instead of the
 on top of the ±19 px translation search
 (`driver/egis0576/gabor/egis_match_gabor.c`; the file's header carries the
 full ablation, cost and caveats). It ships with its own operating point,
-NCC 0.75 → score 5000 (score = NCC × 5000 / 0.75, so a perfect 1.0 logs as
-6667), because both populations sit higher than with his front-end and his
-0.53 would false-accept 14 % of same-person impostors.
+NCC 0.78 → score 5000 (score = NCC × 5000 / 0.78, so a perfect 1.0 logs as
+6410), because both populations sit higher than with his front-end and his
+0.53 would false-accept 14 % of same-person impostors. The threshold sits on
+the genuine side of this unit's gap on purpose (mid-gap would be 0.75): a
+false reject costs a retry, a false accept costs the login.
 
-Same captures, same protocol, same kit (`score-gabor`), 2026-09-17:
+Same captures, same protocol, same kit (`score-gabor`), 2026-09-18 (scores
+on the 0.78 scale):
 
 | | genuine (n = 60) | impostor (n = 480) |
 |---|---:|---:|
-| score min / median / max | 5411 / 6464 / 6604 | 407 / 2769 / 4603 |
+| score min / median / max | 5203 / 6216 / 6350 | 391 / 2662 / 4426 |
 | in NCC terms | 0.81 / 0.97 / 0.99 | 0.06 / 0.42 / 0.69 |
-| at threshold 5000 (NCC 0.75) | **FRR 0.0 %** | **FAR 0.0 %** |
+| at threshold 5000 (NCC 0.78) | **FRR 0.0 %** | **FAR 0.0 %** |
 
 The populations **do not overlap**: the weakest genuine press (0.81) sits
 0.12 above the strongest impostor (0.69), so no EER exists. Templates held
@@ -347,11 +350,19 @@ matter here: the per-boot flat-field this driver already applies is what
 makes the threshold portable (his raw-frame folds wanted 0.832 / 0.870, his
 flat-fielded ones 0.815 / 0.813), and it helps this front-end while hurting
 his (51.7 % → 65.5 %). The threshold is still unit-dependent even flat-fielded
-— 0.75 here, 0.81 there — which is the open problem a third unit has to
+— mid-gap 0.75 here, 0.81 there — which is the open problem a third unit has to
 inform. He also showed that his own front-end, retuned jointly (±26 px,
 1400 px overlap floor), ties the Gabor one on *raw* frames pooled and loses
 to it flat-fielded, so the ablation in the file's header, measured against a
 fixed 800 px floor, is one dataset's answer to "what each piece contributes".
+
+One more thing measured and rejected on this front-end, because it is the
+obvious way to widen the margin: scoring a probe frame by its *second*-best
+(or third-best) template frame instead of the best, so an impostor has to
+fool two templates. It costs the genuine side far more than the impostor
+side — genuine min 0.81 → 0.55 (2nd) → 0.30 (3rd) against impostor max
+0.69 → 0.67 → 0.64 — for the same reason it failed on his front-end: a
+genuine press overlaps one enrolled placement well, not two.
 
 Cost, for the driver's every-frame scoring loop: `em_frame_compute` 1.6 ms
 (his 0.17 ms), `em_match` 4.0 ms against 0.85 ms at ±6 and 6.4 ms at ±19 —
