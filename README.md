@@ -234,6 +234,24 @@ comparisons at or above the threshold, where the vendor matcher scored 0 on all
 reproduce the measurement on your own unit with
 [`tools/accuracy/`](tools/accuracy/README.md).
 
+**Experimental — Gabor front-end (the same adapter, a different front-end).**
+`-Degis0576_matcher=gabor` keeps his adapter and NCC and replaces what goes
+into them: an orientation-selective Gabor enhancement, a per-pixel coherence
+mask and a rotation search
+([`driver/egis0576/gabor/`](driver/egis0576/gabor/), own work, LGPL). On the
+reference unit its genuine and impostor populations do not overlap
+(**0 % / 0 %** at its own threshold, cross-fold checked); on a second unit,
+Thaddeus Stepanovich's, it takes his matcher from 51.7 % to 6.9 % false rejects
+held-out, without reaching a clean gap. Since 2026-09-18 it is what the
+reference unit logs in with — the first login through this driver with no
+vendor code in the matcher (`fprintd-verify`: genuine match, other finger
+rejected at 0.71 against a 0.75 threshold, ~60 ms per frame; lock screen via
+`pam_fprintd`). Fedora: `rpmbuild --with gabor` on the spec in
+[`packaging/fedora/`](packaging/fedora/). Whether it becomes the default
+clean-room flavour is decided by the units it has not seen yet
+([#5](https://github.com/PHILIPPDEV5396/libfprint-egis0576/issues/5));
+numbers and caveats in [`docs/matcher-comparison.md`](docs/matcher-comparison.md).
+
 ## Enrolling
 
 ```bash
