@@ -7,6 +7,16 @@ attacked by two independent reviewers; 53 gaps survived, listed here by severity
 asked to fix; `note` = information). Duplicates across lenses are kept where the wording adds something.
 This file is the definition of v0.5.0: the release is cut when every blocker and major below is closed.
 
+## Status
+
+| step | state | where |
+|---|---|---|
+| 1 tree, provenance, instance state, contract | done | `0e5f7bb`, `000afc5`, `8cbfc6a`, `a60fd36` (2026-09-21) |
+| 2 asynchronous I/O | done, finger paths under hardware validation | `c81516a` (2026-09-21): FpiSsm over FpiUsbTransfer, matcher in a GTask |
+| 3 suspend/resume/autosuspend in the driver | open | |
+| 4 umockdev test | open | |
+| 5 style, headers, statement, MR text | open | |
+
 ## The work, in the order it should be done
 
 1. **Submission tree and provenance** — one clean-room flavour under `libfprint/drivers/egis0576/`, two meson hunks,
