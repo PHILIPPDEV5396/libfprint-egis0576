@@ -1,5 +1,5 @@
 diff --git a/libfprint/meson.build b/libfprint/meson.build
-index f11533c..029be62 100644
+index f11533c..8d47a2a 100644
 --- a/libfprint/meson.build
 +++ b/libfprint/meson.build
 @@ -116,6 +116,12 @@ driver_sources = {
@@ -15,7 +15,7 @@ index f11533c..029be62 100644
      'egismoc' : files('drivers/egismoc/egismoc.c'),
      'egis_etu905' : files('drivers/egismoc/egis_etu905.c'),
      'vfs0050' : files('drivers/vfs0050.c'),
-@@ -250,13 +256,76 @@ libfprint_private = static_library('fprint-private',
+@@ -250,13 +256,73 @@ libfprint_private = static_library('fprint-private',
      link_with: libnbis,
      install: false)
  
@@ -60,23 +60,20 @@ index f11533c..029be62 100644
 +            ],
 +            include_directories: include_directories('drivers/egis0576',
 +                                                     'drivers/egis0576/tsteppy'),
++            c_args: [ '-DEGIS_CR_FRONTEND_TSTEPPY' ],
 +            dependencies: [ mathlib_dep ],
 +            install: false) ]
 +    else
-+        # Same adapter on the Gabor front-end (drivers/egis0576/gabor/). The
-+        # adapter's three operating-point constants are force-included from
-+        # the header that documents them, because this front-end's score
-+        # distribution differs from tsteppy's and the adapter defaults would
-+        # false-accept.
++        # The same adapter on the Gabor front-end (drivers/egis0576/gabor/),
++        # the shipped clean-room matcher; plain C99 under the normal flags.
 +        egis0576_engine_libs = [ static_library('egis0576-gabor',
 +            sources: [
 +                'drivers/egis0576/egis_engine_cleanroom.c',
 +                'drivers/egis0576/gabor/egis_match_gabor.c',
 +            ],
 +            include_directories: include_directories('drivers/egis0576',
-+                                                     'drivers/egis0576/tsteppy'),
-+            c_args: [ '-include',
-+                      meson.current_source_dir() / 'drivers/egis0576/gabor/egis_cr_tuning_gabor.h' ],
++                                                     'drivers/egis0576/tsteppy',
++                                                     'drivers/egis0576/gabor'),
 +            dependencies: [ mathlib_dep ],
 +            install: false) ]
 +    endif

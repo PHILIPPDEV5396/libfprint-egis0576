@@ -4,16 +4,18 @@
  * Copyright (C) 2026 Philipp Oster
  * SPDX-License-Identifier: LGPL-2.1-or-later
  *
- * egis_engine_cleanroom.c calibrates these to the NCC distribution of
+ * The adapter's defaults are calibrated to the NCC distribution of
  * tsteppy/egis_match.c. The Gabor front-end produces a different distribution
- * (both populations sit higher), so linking it behind the adapter's defaults
- * would accept impostors: at the shipped EGIS_CR_ACCEPT_NCC 0.53 it measured
- * 14 % false accepts on the reference dataset. This header is force-included
- * (-include) ahead of the adapter when the Gabor flavour is built, so the
- * operating point travels with the front-end instead of hiding in a build
- * flag. Values and provenance:
+ * (both populations sit higher), so linking it behind those defaults would
+ * accept impostors: at the original 0.53 accept point it measured 14 % false
+ * accepts on the reference dataset. The two constants the front-end owns
+ * outright -- the accept NCC (em_match_threshold) and the probe coverage gate
+ * (em_min_coverage) -- are defined in egis_match_gabor.c itself, as
+ * egis_match.h prescribes; this header carries the adapter-side policy that
+ * depends on them, and the adapter includes it directly when it is built
+ * against this front-end. Values and provenance:
  *
- *   EGIS_CR_ACCEPT_NCC     placed in the gap between the lowest genuine press
+ *   em_match_threshold     (egis_match_gabor.c, 0.78) placed in the gap between the lowest genuine press
  *                          (0.81, flat-fielded and raw alike) and the highest
  *                          impostor press (0.69) on the reference dataset
  *                          (tools/accuracy, 60 / 480) -- deliberately NOT at
@@ -31,7 +33,7 @@
  *                          against real templates, above the worst genuine
  *                          press, so no value of this constant separates
  *                          them (see egis_match_gabor.c, LIMITS).
- *   EGIS_CR_MIN_COVERAGE   the front-end's per-pixel mask after erosion covers
+ *   em_min_coverage        (egis_match_gabor.c, 0.35) the front-end's per-pixel mask after erosion covers
  *                          0.70-0.75 of a well-placed frame and < 0.2 of an
  *                          empty or smeared one; tsteppy's block mask, which
  *                          0.55 was chosen for, is quantised to 16x16 blocks
@@ -47,8 +49,6 @@
  */
 #pragma once
 
-#define EGIS_CR_ACCEPT_NCC 0.78
-#define EGIS_CR_MIN_COVERAGE 0.35
 #define EGIS_CR_MIN_ENROL_COVERAGE 0.60   /* well-placed frames: 0.70-0.75 */
 #define EGIS_CR_REDUNDANT_NCC 1.0
 /* Raw-frame corroboration of an accept (egis_verify_raw_ok, see

@@ -46,7 +46,7 @@
  * PROVENANCE OF tsteppy/egis_match.{c,h}
  *
  *   Upstream: https://github.com/tsteppy/egistec-eh576-libfprint.git
- *   Commit:   56ac424fdd84906b5128ca306c67ccf2768327a1  (driver/egis_match.{c,h})
+ *   Commit:   0a3cb68ebd31fb3a82018267d99ec9150a8efb8a  (driver/egis_match.{c,h})
  *   Copied byte-for-byte (license header intact); re-sync with plain `cp`.
  *   Its `#ifdef EGIS_MATCH_MAIN` evaluator is inert in this build.
  *
@@ -174,11 +174,21 @@
 
 #include "egis_engine.h"
 #include "egis_match.h"
-#ifdef __has_include
-#if __has_include("egis_match_check.h")
-#include "egis_match_check.h"      /* Gabor front-end: em_match_ex() with the alignment */
+
+/* Which front-end this adapter is compiled against. The shipped one is the
+ * Gabor front-end (gabor/egis_match_gabor.c), whose adapter-side constants
+ * live in gabor/egis_cr_tuning_gabor.h and which reports the winning
+ * alignment (egis_match_check.h) that the enrolment steering needs. The
+ * original front-end (tsteppy/egis_match.c) is kept buildable for the
+ * comparison in docs/matcher-comparison.md with -DEGIS_CR_FRONTEND_TSTEPPY:
+ * it has no alignment report, so no steering, and the adapter's defaults
+ * below are its operating point. The accept threshold and the probe
+ * coverage gate themselves come from the front-end in both cases
+ * (em_match_threshold / em_min_coverage, declared in egis_match.h). */
+#ifndef EGIS_CR_FRONTEND_TSTEPPY
+#include "gabor/egis_cr_tuning_gabor.h"
+#include "gabor/egis_match_check.h"
 #define EGIS_CR_HAVE_MATCH_EX 1
-#endif
 #endif
 
 /* Must equal EGIS0576_ENROLL_STAGES in driver/egis0576.c. If the driver asks
@@ -200,12 +210,11 @@
  * tsteppy/egis_match.c, and a front-end with a different distribution needs
  * them moved or the gates fire on the wrong things. The defaults are the
  * shipped driver's and are unchanged. */
-#ifndef EGIS_CR_ACCEPT_NCC
-#define EGIS_CR_ACCEPT_NCC 0.53      /* maps to EGIS_THRESHOLD exactly */
-#endif
-#ifndef EGIS_CR_MIN_COVERAGE
-#define EGIS_CR_MIN_COVERAGE 0.55    /* enrol + probe quality gate */
-#endif
+/* The accept NCC and the probe coverage gate are the front-end's own
+ * (egis_match.h): tsteppy's file defines 0.53 / 0.55, the Gabor file
+ * 0.78 / 0.35. The threshold maps to EGIS_THRESHOLD exactly. */
+#define EGIS_CR_ACCEPT_NCC   em_match_threshold
+#define EGIS_CR_MIN_COVERAGE em_min_coverage
 #ifndef EGIS_CR_REDUNDANT_NCC
 #define EGIS_CR_REDUNDANT_NCC 0.95   /* enrol: reject same-press duplicate */
 #endif

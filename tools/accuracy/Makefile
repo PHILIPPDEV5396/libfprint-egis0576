@@ -22,13 +22,13 @@ VENDOR_CFLAGS := $(COMMON) -w -fno-stack-protector -fpermissive -fwrapv \
                  -Wno-implicit-function-declaration
 # The kit wants the true best-of-template score, not the driver's
 # first-frame-over-threshold shortcut (egis_engine_cleanroom.c).
-CLEAN_CFLAGS  := $(COMMON) -Wall -I$(DRV)/tsteppy -DEGIS_CR_VERIFY_EARLY_EXIT=0
-# The Gabor flavour is the same adapter on a different front-end, with the
-# adapter's three operating-point constants force-included from the header
-# that documents where they come from (driver/egis0576/gabor/).
-GABOR_CFLAGS  := $(COMMON) -Wall -std=c99 -I$(DRV)/tsteppy \
-                 -DEGIS_CR_VERIFY_EARLY_EXIT=0 \
-                 -include $(DRV)/gabor/egis_cr_tuning_gabor.h
+# The clean-room adapter is built against one of two front-ends: the shipped
+# Gabor one (no flag) or, for the comparison, tsteppy's original
+# (-DEGIS_CR_FRONTEND_TSTEPPY); see egis_engine_cleanroom.c.
+CLEAN_CFLAGS  := $(COMMON) -Wall -I$(DRV)/tsteppy -DEGIS_CR_VERIFY_EARLY_EXIT=0 \
+                 -DEGIS_CR_FRONTEND_TSTEPPY
+GABOR_CFLAGS  := $(COMMON) -Wall -std=c99 -I$(DRV)/tsteppy -I$(DRV)/gabor \
+                 -DEGIS_CR_VERIFY_EARLY_EXIT=0
 SCORE_CFLAGS  := $(COMMON) -Wall
 
 VENDOR_SRC := egis_funcs.c egis_rt.c egis_engine.c egis_preprocess.c egis_coherence_map.c
@@ -49,7 +49,7 @@ $(HERE)score-cleanroom: $(OBJ)/score.o $(CLEAN_OBJ)
 $(HERE)score-gabor: $(OBJ)/score.o $(GABOR_OBJ)
 	$(CC) -o $@ $^ -lm
 
-$(OBJ)/gabor/egis_engine_cleanroom.o: $(DRV)/egis_engine_cleanroom.c $(DRV)/gabor/egis_cr_tuning_gabor.h
+$(OBJ)/gabor/egis_engine_cleanroom.o: $(DRV)/egis_engine_cleanroom.c $(DRV)/gabor/egis_cr_tuning_gabor.h $(DRV)/gabor/egis_match_check.h
 	@mkdir -p $(dir $@)
 	$(CC) $(GABOR_CFLAGS) -c -o $@ $<
 
@@ -69,30 +69,17 @@ $(OBJ)/cleanroom/egis_engine_cleanroom.o: $(DRV)/egis_engine_cleanroom.c
 	@mkdir -p $(dir $@)
 	$(CC) $(CLEAN_CFLAGS) -c -o $@ $<
 
-# The clean-room matcher's translation search half-width. Empty (the default)
-# compiles Thaddeus' file exactly as it ships, EM_SRCH 6. Setting it, e.g.
-#
-#     make EM_SRCH=19
-#
-# compiles a generated copy whose only difference is that the constant can be
-# overridden, and nothing else changes -- built with EM_SRCH=6 it reproduces the
-# shipped scorer's numbers exactly. Measured on the reference dataset, 19 or 20
-# takes the clean-room FRR from 35 % to 3.3 % at an unchanged threshold with no
-# false accepts; see docs/matcher-comparison.md. His file is never edited: it is
-# copied byte-for-byte from his repository (PROVENANCE.md category 3).
-ifeq ($(strip $(EM_SRCH)),)
+# The original front-end's translation search half-width (EM_SRCH, default 6
+# as tsteppy ships it). His file guards its constants with #ifndef since his
+# 97dbf8a, so `make EM_SRCH=19` just passes the define; nothing is generated.
+# Measured on the reference dataset, 19 or 20 takes that flavour's FRR from
+# 35 % to 3.3 % at an unchanged threshold; see docs/matcher-comparison.md.
+ifneq ($(strip $(EM_SRCH)),)
+CLEAN_CFLAGS += -DEM_SRCH=$(EM_SRCH)
+endif
 $(OBJ)/cleanroom/egis_match.o: $(DRV)/tsteppy/egis_match.c
 	@mkdir -p $(dir $@)
 	$(CC) $(CLEAN_CFLAGS) -c -o $@ $<
-else
-$(OBJ)/cleanroom/egis_match_srch.c: $(DRV)/tsteppy/egis_match.c
-	@mkdir -p $(dir $@)
-	sed 's|^#define EM_SRCH 6$$|#ifndef EM_SRCH_VAL\n#define EM_SRCH_VAL 6\n#endif\n#define EM_SRCH EM_SRCH_VAL|' $< > $@
-
-$(OBJ)/cleanroom/egis_match.o: $(OBJ)/cleanroom/egis_match_srch.c
-	@mkdir -p $(dir $@)
-	$(CC) $(CLEAN_CFLAGS) -DEM_SRCH_VAL=$(EM_SRCH) -c -o $@ $<
-endif
 
 clean:
 	rm -rf $(OBJ) $(HERE)score-vendor $(HERE)score-cleanroom $(HERE)score-gabor

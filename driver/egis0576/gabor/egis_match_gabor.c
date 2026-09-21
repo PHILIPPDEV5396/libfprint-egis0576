@@ -192,6 +192,17 @@
 #include "egis_match.h"
 #include "egis_match_check.h"
 
+/* Operating point of THIS front-end (egis_match.h): the accept NCC sits in
+ * the gap between the lowest genuine press (0.81) and the highest impostor
+ * press (0.69) on the reference dataset, deliberately on the genuine side of
+ * its mid-point (0.75) -- a false reject is a retry, a false accept is the
+ * login. The probe coverage gate is placed where the per-pixel mask separates
+ * well-placed frames (0.70-0.75) from empty or smeared ones (< 0.2). Both are
+ * measured on flat-fielded frames; see egis_cr_tuning_gabor.h for the
+ * adapter-side policy that depends on them. */
+const double em_match_threshold = 0.78;
+const double em_min_coverage = 0.35;
+
 #define EG_PI 3.14159265358979323846   /* M_PI is not C99 */
 
 #ifndef EG_SRCH

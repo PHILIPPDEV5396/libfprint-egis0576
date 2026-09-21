@@ -29,5 +29,12 @@ typedef struct
 void em_frame_compute (const uint8_t *raw, EmFrame *f);
 
 /* Masked NCC over the coherent overlap, translation-searched. -1 if the
- * two frames never overlap enough to compare. */
+ * two frames never overlap enough to compare. a is the stored template,
+ * b the probe: egis_match.c is symmetric, egis_match_gabor.c is not. */
 double em_match (const EmFrame *a, const EmFrame *b);
+
+/* The operating point belongs to the front-end, not the driver: a different
+ * front-end produces a different score distribution. Each egis_match*.c
+ * defines both. */
+extern const double em_match_threshold;  /* accept iff em_match () >= this   */
+extern const double em_min_coverage;     /* reject a frame below this coverage */
