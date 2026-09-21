@@ -52,6 +52,21 @@ typedef struct
 #ifndef EM_FQ_MIN_CORR
 #define EM_FQ_MIN_CORR -2.0
 #endif
+/* A probe whose period map is flat (p_spread < EM_FQ_MIN_PSPREAD) still
+ * passes when it reproduces the template's map: corr >= RESCUE_CORR and
+ * mad <= RESCUE_MAD, with at least RESCUE_PSPREAD of variation so that the
+ * correlation is not computed on noise. Measured genuine flat pairs on the
+ * reference unit: corr 0.58-0.97, mad 0.03-0.12; blind synthetic families
+ * have nothing to correlate. */
+#ifndef EM_FQ_RESCUE_PSPREAD
+#define EM_FQ_RESCUE_PSPREAD 0.06
+#endif
+#ifndef EM_FQ_RESCUE_CORR
+#define EM_FQ_RESCUE_CORR 0.70
+#endif
+#ifndef EM_FQ_RESCUE_MAD
+#define EM_FQ_RESCUE_MAD 0.10
+#endif
 #ifndef EM_FQ_GATE_FROM
 #define EM_FQ_GATE_FROM 0.70 /* run the check only from this NCC upwards */
 #endif

@@ -120,8 +120,15 @@
  *     over the overlap and agree with the template's. Every blind family
  *     of the review now scores below the threshold (sine 0.70, arc 0.70,
  *     loop/delta 0.75, ridge noise 0.70) at a measured genuine cost of
- *     0 of 60 presses (genuine min 0.812 -> 0.800, impostor max unchanged,
- *     cross-fold still 0 / 0). NOT closed: an attacker who can read the
+ *     0 of 60 presses (genuine min 0.812 -> 0.804, impostor max unchanged,
+ *     cross-fold still 0 / 0). The first version of the rule also demanded
+ *     that the probe's period VARY, and that threw away a genuine pair at
+ *     NCC 0.97 on the second reference session (flat region of a real
+ *     finger; press score 0.97 -> 0.73, a live false reject): a flat map
+ *     now passes when it reproduces the template's (see the RESCUE
+ *     constants), and on both sessions, with eleven templates per finger,
+ *     no genuine press crosses the threshold downward because of the check.
+ *     NOT closed: an attacker who can read the
  *     score and hill-climb a curved ridge model against it still reaches
  *     0.93 on one finger, because the period map of a 2x2 mm patch is
  *     smooth enough for a low-order polynomial to reproduce. A second,
@@ -1096,7 +1103,19 @@ em_match (const EmFrame *a, const EmFrame *b)
   if (s > -1.0)
     {
       if (in.nblk < EM_FQ_MIN_NBLK || in.mad > EM_FQ_MAX_MAD
-          || in.p_spread < EM_FQ_MIN_PSPREAD || in.corr < EM_FQ_MIN_CORR)
+          || in.corr < EM_FQ_MIN_CORR)
+        return -1.0;
+      /* A flat period map is what a synthetic grating has -- and also what a
+       * real finger has over some of its regions: on the second reference
+       * session a genuine pair at NCC 0.97 had p_spread 0.16 with the two
+       * maps agreeing at mad 0.03 and corr 0.97, and the flat-only rule threw
+       * it away (press score 0.97 -> 0.73, a false reject). So a flat probe
+       * is rejected only when its map does NOT reproduce the template's: a
+       * grating has nothing to reproduce (corr ~0), skin does. */
+      if (in.p_spread < EM_FQ_MIN_PSPREAD
+          && !(in.p_spread >= EM_FQ_RESCUE_PSPREAD
+               && in.corr >= EM_FQ_RESCUE_CORR
+               && in.mad <= EM_FQ_RESCUE_MAD))
         return -1.0;
     }
 #else

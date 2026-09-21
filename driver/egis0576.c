@@ -34,6 +34,15 @@
 #include "drivers_api.h"
 
 #define EGIS0576_ENROLL_STAGES 12
+/* Enrolment takes the first finger-on frame of a press, and on a press that
+ * lands at the edge (which is exactly what the placement steering asks for)
+ * that frame is often partial contact: coverage under the gate, refused, and
+ * the user has to press again for nothing. Instead, a refusal for coverage
+ * keeps sampling the SAME press for up to this many frames (~300 ms) before
+ * it is reported; the finger settles and coverage rises. Measured on the
+ * reference unit: 5 of 17 presses of one enrolment were refused on their
+ * first frame, none of them for placement. */
+#define EGIS0576_ENROLL_SETTLE_FRAMES 8
 /* After the vendor init + exposure calibration the no-finger frame has a
  * fixed-pattern variance around ~140 (measured 140.4 at the shipped gain,
  * docs/sensor-tuning.md; ~160 was the figure through the former TLS transport);
@@ -454,6 +463,7 @@ capture_thread (gpointer data)
    * match. */
   gboolean cand_valid = FALSE;
   int cand_score = -1, cand_idx = -1;
+  int settle_tries = 0;          /* enrol: coverage refusals on the current press */
   guint8 cand_raw[EGIS_IMG];
   guint8 ffframe[EGIS_IMG];  /* flat-fielded frame (baseline-subtracted) */
   BaselineAcc bl = { { 0 }, 0 }; /* opportunistic no-finger baseline accumulator */
@@ -575,10 +585,19 @@ capture_thread (gpointer data)
             {
               if (var >= EGIS0576_FINGER_ON_VAR)
                 {
-                  Msg *m = g_new0 (Msg, 1);
+                  Msg *m;
                   int prog = 0;
                   int r;
                   r = egis_enroll_add (probe, &prog);
+                  if (r == -2 && settle_tries < EGIS0576_ENROLL_SETTLE_FRAMES)
+                    {
+                      /* partial contact: let the press settle, try the next frame */
+                      settle_tries++;
+                      g_usleep (EGIS0576_POLL_SLEEP_US);
+                      continue;
+                    }
+                  m = g_new0 (Msg, 1);
+                  settle_tries = 0;
                   if (r == 1 || r == 2)
                     {
                       self->enroll_count++;
@@ -602,6 +621,17 @@ capture_thread (gpointer data)
                     }
                   post_msg (dev, m);
                   phase = PH_AWAIT_OFF;
+                }
+              else if (var < EGIS0576_FINGER_OFF_VAR && settle_tries > 0)
+                {
+                  /* lifted before any frame of the press reached the coverage
+                   * gate: that press was too light or too partial, say so */
+                  Msg *m = g_new0 (Msg, 1);
+                  fp_dbg ("enroll press lifted after %d partial frames -- retry", settle_tries);
+                  settle_tries = 0;
+                  m->kind = M_ENROLL_RETRY;
+                  m->stage = self->enroll_count;
+                  post_msg (dev, m);
                 }
             }
           else /* PH_AWAIT_OFF */
