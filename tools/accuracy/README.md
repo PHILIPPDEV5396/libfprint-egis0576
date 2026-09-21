@@ -122,9 +122,9 @@ way:
 make -C tools/accuracy clean && make -C tools/accuracy EM_SRCH=19
 ```
 
-Thaddeus Stepanovich's file is never edited — the build generates a copy whose
-only difference is that the constant can be overridden, and built with
-`EM_SRCH=6` it reproduces the shipped scorer's numbers exactly. **If you are
+Thaddeus Stepanovich's file is never edited — his constants are `#ifndef`-guarded
+upstream since his 97dbf8a, so the switch is one define, and built without it
+the scorer reproduces his shipped numbers exactly. **If you are
 reporting results, please run it both ways** and post both `results.json` files;
 the pair is what settles whether the wider search helps everyone or only one
 laptop. The kit can be run from any

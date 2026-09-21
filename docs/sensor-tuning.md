@@ -84,12 +84,14 @@ of what `0x20` produces unaided — which is why calibration is close to a no-op
 this unit, exactly as the comment on `egis_dev_calibrate`
 (`driver/egis0576/egis0576_proto.c`) says.
 
-**Consequence for per-frame auto-exposure:** `egis_dev_autoexpose` exists and, since
-the plaintext migration, register reads may interleave with capture, so it is now
-mechanically possible (verified: frame variance 140.1 before a register read,
-140.4 after). It is deliberately **not wired into the capture loop.** Its step-table
-arithmetic computes jumps that would overshoot a ±4-count window straight into
-saturation, and there is no unit available on which a badly-exposed starting point
+**Consequence for per-frame auto-exposure:** a per-frame auto-exposure step
+existed in the transport until 0e5f7bb and was never wired into the capture
+loop; it is removed now, together with the vendor step table it depended on.
+Register reads may interleave with capture since the plaintext migration
+(verified: frame variance 140.1 before a register read, 140.4 after), so the
+mechanism would be possible, but its step-table arithmetic computed jumps that
+would overshoot a ±4-count window straight into saturation, and there is no
+unit available on which a badly-exposed starting point
 could be tested. Shipping an untested behaviour change to other people's hardware
 is the mistake that produced the TLS transport.
 

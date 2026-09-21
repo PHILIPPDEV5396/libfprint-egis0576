@@ -50,9 +50,13 @@ clean-room equivalent has yet matched it (see below):
 | `egis0576/egis_init.h` | The sensor's init + calibration sequence: 25 `EGIS` command records plus the 3990-byte payload upload. Recovered by observing a decrypted vendor session rather than from the decompilation; the bytes are transport-independent and are now sent in the clear. |
 | `egis0576/egis_blobs.h`, `egis_dat.h`, `egis_decls.h`, `egis_intrin.h` | Extracted data tables and support declarations for the translated code. |
 
-`egis0576/egis0576_proto.c` is listed under category 1 as original work, with one
-exception: its `EGIS_STEP_TABLE` is a 16-entry table taken byte-exact from the
-vendor DLL's `.rdata`, and belongs to this second category.
+`egis0576/egis0576_proto.c` is category 1 without exception since 0e5f7bb: the
+16-entry exposure step table it used to carry (taken byte-exact from the vendor
+DLL's `.rdata`, only reachable through an auto-exposure routine that was never
+wired in) is gone, together with that routine and every comment that named a
+decompiled function or a section offset. What remains of the vendor's material
+in the transport is protocol fact: the register roles of init record 25, which
+are the same values Windows keeps in the device's registry entry.
 
 An earlier revision of this driver also carried the sensor's TLS-PSK pre-shared
 key, recovered from the older (2020) vendor DLL. That transport has been removed —
@@ -86,8 +90,8 @@ together with the author's adapter `egis0576/egis_engine_cleanroom.c` (category
 1). Exactly one matcher flavour is compiled: in a `cleanroom` build none of the
 category-2 matcher sources (`egis_funcs.c`, `egis_coherence_map.c`,
 `egis_preprocess.c` and the headers they pull in) are compiled at all — of the
-reverse-engineered material only `egis_init.h` (the sensor bring-up sequence) and
-the `EGIS_STEP_TABLE` in `egis0576_proto.c` remain. Its measured accuracy is in
+reverse-engineered material only `egis_init.h` (the sensor bring-up sequence)
+remains. Its measured accuracy is in
 [`docs/matcher-comparison.md`](docs/matcher-comparison.md).
 
 ### Everything outside `driver/`

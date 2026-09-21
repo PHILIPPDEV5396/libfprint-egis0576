@@ -341,7 +341,6 @@ $ strings /usr/lib/aarch64-linux-gnu/libfprint-2.so.2.0.0 | grep -i egis0576
 FpDeviceEgis0576
 egis0576
 libfprint-egis0576
-EGIS0576_NO_CALIBRATE
 egis0576-capture
 ../libfprint/drivers/egis0576.c
 No valid egis0576 templates to match
