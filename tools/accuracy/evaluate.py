@@ -38,6 +38,7 @@ import tempfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 THRESHOLD = 5000                          # EGIS_THRESHOLD in egis_engine.h
 FLAVOURS = ["vendor", "cleanroom", "gabor"]
+SETTLE_FRAMES = 8   # driver/egis0576.c EGIS0576_ENROLL_SETTLE_FRAMES: frames of one press tried before a quality refusal counts
 KIT_VERSION = 2
 
 # Scorer exit codes (score.c) and the only failure texts results.json may carry.
@@ -192,7 +193,15 @@ def evaluate(flavour, binary, fingers, presses, base, thr, best_frame, var, ddir
                 if best_frame:
                     enroll = [max(p, key=lambda x: var[x]) for p in E]
                 else:
-                    enroll = [p[0] for p in E]           # first finger-on frame per press
+                    # the driver's policy: the first finger-on frame, but a frame
+                    # the engine refuses for quality is followed by the next
+                    # frames of the SAME press (up to SETTLE_FRAMES, ~300 ms,
+                    # driver/egis0576.c EGIS0576_ENROLL_SETTLE_FRAMES) before the
+                    # press counts as refused. score.c gets each press as a
+                    # group, "--" separated, and tries the group in order.
+                    enroll = []
+                    for p in E:
+                        enroll += p[:SETTLE_FRAMES] + ["--"]
                 others = [(g, p) for g in fingers if g != f for p in presses[g]]
                 probes = [x for p in T for x in p] + [x for _, p in others for x in p]
                 scores, diag, err = sc.run(enroll, probes)

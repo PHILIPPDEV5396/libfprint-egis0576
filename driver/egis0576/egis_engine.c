@@ -24,9 +24,31 @@
 #define ST_ENROLL  0x1b59
 #define ST_PACK    0x1b5a
 
+/* The Windows-style per-frame preprocessing this engine expects on its input
+ * (min-subtract, invert, auto-brightness, Otsu stretch, row flip); applied
+ * here so the driver contract stays free of it. */
+void egis_preprocess(const uint8_t *raw, uint8_t *out);
+
 static void *cur_session;
 
-int egis_engine_init(void) {
+/* The flat-memory runtime is process-global by construction (mapped at fixed
+ * addresses), so this flavour has exactly one engine: the handle is a
+ * singleton and free is a no-op. */
+static struct EgisEngine { int initialised; } the_engine;
+
+static int egis_engine_init(void);
+
+EgisEngine *egis_engine_new(void) {
+    if (!the_engine.initialised) {
+        if (egis_engine_init() != 0) return NULL;
+        the_engine.initialised = 1;
+    }
+    return &the_engine;
+}
+
+void egis_engine_free(EgisEngine *e) { (void)e; }
+
+static int egis_engine_init(void) {
     if (egis_init() != 0) return -1;
     void *ctx = e_malloc(0x400);
     if (!ctx) return -1;
@@ -36,17 +58,20 @@ int egis_engine_init(void) {
 }
 
 /* raw 70x57 frame -> extracted featureset (in arena); NULL on failure */
-static void *extract(const uint8_t *raw) {
+static void *extract(const uint8_t *frame) {
+    uint8_t pre[EGIS_IMG_SIZE];
     char *h = (char *)FUN_18002e460(EGIS_IMG_W, EGIS_IMG_H);
     if (!h) return 0;
-    memcpy(h + EGIS_IMG_H * 8, raw, EGIS_IMG_SIZE);
+    egis_preprocess(frame, pre);
+    memcpy(h + EGIS_IMG_H * 8, pre, EGIS_IMG_SIZE);
     void *fs = 0;
     int r = FUN_18003ce10(h, EGIS_IMG_W, EGIS_IMG_H, &fs, (void *)CFG);
     if (r != 0 || !fs || *(int *)fs < 11) return 0;   /* need >= 11 minutiae */
     return fs;
 }
 
-int egis_enroll_begin(void) {
+int egis_enroll_begin(EgisEngine *e) {
+    (void)e;
     egis_reset();
     void *ctx = e_malloc(0x400);
     FUN_18002bf50(ctx, 0, 5, 0);
@@ -54,18 +79,20 @@ int egis_enroll_begin(void) {
     return (cur_session && STATE == ST_ENROLL) ? 0 : -1;
 }
 
-int egis_enroll_add(const uint8_t *raw, int *progress) {
+int egis_enroll_add(EgisEngine *e, const uint8_t *frame, int *progress) {
+    (void)e;
     if (!cur_session) return -1;
     uint8_t *img = e_malloc(EGIS_IMG_SIZE);
     if (!img) return -1;
-    memcpy(img, raw, EGIS_IMG_SIZE);
+    egis_preprocess(frame, img);
     int prog = 0;
     int r = (int)FUN_18002c880(img, EGIS_IMG_W, EGIS_IMG_H, cur_session, &prog);
     if (progress) *progress = prog;
     return r;
 }
 
-int egis_enroll_finish(uint8_t **out) {
+int egis_enroll_finish(EgisEngine *e, uint8_t **out) {
+    (void)e;
     if (!cur_session) return -1;
     STATE = ST_PACK;                    /* force pack-ready */
     int size = 0;
@@ -81,7 +108,8 @@ int egis_enroll_finish(uint8_t **out) {
 
 static long long gallery_entry(int idx);   /* fwd decl for the load-verify below */
 
-int egis_gallery_load(const uint8_t *const *blobs, const int *sizes, int n) {
+int egis_gallery_load(EgisEngine *e, const uint8_t *const *blobs, const int *sizes, int n) {
+    (void)e;
     if (n <= 0 || n > 5) return -1;
     /* fresh arena + config for this match operation (no cross-op leak/state) */
     egis_reset();
@@ -123,17 +151,19 @@ static long long gallery_entry(int idx) {
 
 /* The vendor matcher decides on minutiae correspondence, which a painted,
  * inverted imprint does not produce, so no raw-frame corroboration here. */
-int egis_verify_raw_ok(const uint8_t *raw_unfielded, int idx) {
-    (void)raw_unfielded; (void)idx;
+int egis_verify_raw_ok(EgisEngine *e, const uint8_t *raw_unfielded, int idx) {
+    (void)e; (void)raw_unfielded; (void)idx;
     return 1;
 }
 
-int egis_gallery_capacity(void) {
+int egis_gallery_capacity(EgisEngine *e) {
+    (void)e;
     return 5;   /* FUN_18002bf50(ctx, 0, 5, 0) above */
 }
 
-int egis_verify(const uint8_t *raw, int idx) {
-    void *fs = extract(raw);
+int egis_verify(EgisEngine *e, const uint8_t *frame, int idx) {
+    void *fs = extract(frame);
+    (void)e;
     if (!fs) return -1;
     long long g = gallery_entry(idx);
     if (!g) return -1;
@@ -141,8 +171,9 @@ int egis_verify(const uint8_t *raw, int idx) {
     return (int)FUN_18002d530(fs, (void *)g, &flag, 0);
 }
 
-int egis_identify(const uint8_t *raw, int *out_idx) {
-    void *fs = extract(raw);
+int egis_identify(EgisEngine *e, const uint8_t *frame, int *out_idx) {
+    void *fs = extract(frame);
+    (void)e;
     if (!fs) return -1;
     int best = -1, besti = -1, flag;
     for (int i = 0; i < GCOUNT; i++) {

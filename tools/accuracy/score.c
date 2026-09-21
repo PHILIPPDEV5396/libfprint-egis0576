@@ -10,9 +10,9 @@
  * Frames are raw 70x57 = 3990-byte uint8 images, either as numpy .npy files
  * (what capture.py writes) or as bare 3990-byte files. Pipeline per frame,
  * exactly as driver/egis0576.c does it:
- *   flat_field(raw, baseline) -> egis_preprocess() -> engine
- * (the clean-room adapter's egis_preprocess is an identity copy, so calling it
- * unconditionally reproduces BOTH real pipelines.)
+ *   flat_field(raw, baseline) -> engine
+ * (the vendor engine applies its own Windows-style per-frame preprocessing
+ * internally; the clean-room engine needs none.)
  *
  * Enrolment feeds the listed frames in order, one per line (the driver uses
  * the first finger-on frame of each press). Every probe file is then scored
@@ -92,9 +92,7 @@ static void flat_field(const uint8_t *raw, const uint8_t *base, uint8_t *out)
 
 static void prep(const uint8_t *raw, const uint8_t *base, uint8_t *out)
 {
-  uint8_t ff[N];
-  flat_field(raw, base, ff);
-  egis_preprocess(ff, out);
+  flat_field(raw, base, out);
 }
 
 static char *chomp(char *line)
@@ -118,32 +116,51 @@ int main(int argc, char **argv)
     return 2;
   }
   if (rd(argv[1], base)) { fprintf(stderr, "bad baseline file\n"); return 2; }
-  if (egis_engine_init() != 0) { fprintf(stderr, "engine init failed\n"); return 3; }
-  if (egis_enroll_begin() != 0) { fprintf(stderr, "enroll_begin failed\n"); return 3; }
+  EgisEngine *eng = egis_engine_new();
+  if (!eng) { fprintf(stderr, "engine init failed\n"); return 3; }
+  if (egis_enroll_begin(eng) != 0) { fprintf(stderr, "enroll_begin failed\n"); return 3; }
 
   el = fopen(argv[2], "r");
   if (!el) { fprintf(stderr, "cannot open enroll list\n"); return 2; }
+  /* One line per frame. Frames of one PRESS may be grouped with a "--" line
+   * after the group: the press is then tried frame by frame until the engine
+   * returns anything but -2 (quality under the gate), which is what the
+   * driver's settle loop does; without groups every line is its own press. */
   idx = 0;
-  while (fgets(line, sizeof line, el)) {
-    int prog = 0;
-    chomp(line);
-    if (!*line) continue;
-    if (rd(line, raw)) { fprintf(stderr, "enroll %d -> unreadable\n", idx); idx++; continue; }
-    prep(raw, base, cor);
-    r = egis_enroll_add(cor, &prog);
-    fprintf(stderr, "enroll %d -> %d (progress %d)\n", idx, r, prog);
-    idx++;
-    if (r == 1 || r == 2) added++;
-    if (r == 2) break;
+  {
+    int settled = 0;                       /* this press already produced a verdict */
+    int last = -2;
+    while (fgets(line, sizeof line, el)) {
+      int prog = 0;
+      chomp(line);
+      if (!*line) continue;
+      if (strcmp(line, "--") == 0) {
+        if (!settled)                      /* every frame of the press was refused */
+          fprintf(stderr, "enroll %d -> %d (progress 0)\n", idx, last), idx++;
+        settled = 0; last = -2;
+        continue;
+      }
+      if (settled) continue;               /* rest of a press that already settled */
+      if (rd(line, raw)) { fprintf(stderr, "enroll %d -> unreadable\n", idx); idx++; settled = 1; continue; }
+      prep(raw, base, cor);
+      r = egis_enroll_add(eng, cor, &prog);
+      last = r;
+      if (r == -2) continue;               /* let the press settle: next frame */
+      fprintf(stderr, "enroll %d -> %d (progress %d)\n", idx, r, prog);
+      idx++;
+      settled = 1;
+      if (r == 1 || r == 2) added++;
+      if (r == 2) break;
+    }
   }
   fclose(el);
 
-  sz = egis_enroll_finish(&blob);
+  sz = egis_enroll_finish(eng, &blob);
   fprintf(stderr, "enrolled %d frames, template %d bytes\n", added, sz);
   if (sz <= 0) { fprintf(stderr, "enroll_finish failed %d\n", sz); return 4; }
   blobs[0] = blob;
   sizes[0] = sz;
-  if (egis_gallery_load(blobs, sizes, 1) != 0) { fprintf(stderr, "gallery_load failed\n"); return 4; }
+  if (egis_gallery_load(eng, blobs, sizes, 1) != 0) { fprintf(stderr, "gallery_load failed\n"); return 4; }
 
   pl = fopen(argv[3], "r");
   if (!pl) { fprintf(stderr, "cannot open probe list\n"); return 2; }
@@ -155,7 +172,7 @@ int main(int argc, char **argv)
       printf("%d unreadable\n", idx);
     } else {
       prep(raw, base, cor);
-      printf("%d %d\n", idx, egis_verify(cor, 0));
+      printf("%d %d\n", idx, egis_verify(eng, cor, 0));
     }
     idx++;
   }

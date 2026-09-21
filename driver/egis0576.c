@@ -33,7 +33,7 @@
 #include "egis0576/egis0576_proto.h"
 #include "drivers_api.h"
 
-#define EGIS0576_ENROLL_STAGES 12
+#define EGIS0576_ENROLL_STAGES EGIS_ENROLL_STAGES   /* one source: egis_engine.h */
 /* Enrolment takes the first finger-on frame of a press, and on a press that
  * lands at the edge (which is exactly what the placement steering asks for)
  * that frame is often partial contact: coverage under the gate, refused, and
@@ -65,6 +65,7 @@ struct _FpDeviceEgis0576
   FpDevice      parent;
 
   EgisDev      *sensor;         /* the plaintext channel to the sensor */
+  EgisEngine   *engine;         /* the host matcher (egis_engine.h), per instance */
 
   /* capture runs in a worker thread (blocking USB must not run in the main
    * loop); results are marshalled back with g_idle_add. */
@@ -100,7 +101,6 @@ struct _FpDeviceEgis0576
                                  * re-initialised before the next capture */
 
   guint8        frame[EGIS_IMG];
-  guint8        corrected[EGIS_IMG];    /* flat-field corrected frame */
   /* Per-instance, i.e. per fprintd process: the flat-field baseline (see
    * baseline_feed) and the exposure calibration egis_dev_calibrate found in
    * the first open(), re-applied to every later EgisDev the driver opens. */
@@ -135,15 +135,7 @@ frame_variance (const guint8 *buf)
   return var / (gdouble) EGIS_IMG;
 }
 
-/* Per-frame preprocessing (egis_preprocess, from egis_preprocess.c) is now the
- * BYTE-EXACT translation of the Windows pipeline (min-subtract -> invert ->
- * auto-brightness -> Otsu stretch to black-level 0x8c -> vertical flip). It is
- * declared in egis_engine.h and validated on fp_final (genuine 8/10 preserved,
- * impostor 0/12 — my earlier hand-written approximation destroyed minutiae, 0/10).
- * The min-subtract + Otsu-stretch normalise per-session brightness/contrast so a
- * template enrolled in one capture session matches a probe from another. */
-
-/* Process-global per-boot flat-field baseline. The sensor's fixed-pattern noise
+/* Per-instance flat-field baseline. The sensor's fixed-pattern noise
  * (~140 var, no finger) differs per power-cycle; subtracting it per-pixel makes
  * frames comparable ACROSS boots (without it a template enrolled one boot scores
  * exactly 0 against a probe from another boot, though within-boot it matches
@@ -206,23 +198,45 @@ flat_field (FpDeviceEgis0576 *self, const guint8 *raw, guint8 *out)
 /* Template blob <-> FpPrint fpi-data                                 */
 /* ------------------------------------------------------------------ */
 
+/* Template storage ("fpi-data"): a (qay) tuple, format version + the bytes
+ * egis_enroll_finish() produced, which are opaque to the driver. The version
+ * is bumped whenever the engine's bytes change meaning, so a print enrolled
+ * by an older build (or by another matcher flavour, which shares nothing but
+ * the frame size) fails cleanly with FP_DEVICE_ERROR_DATA_INVALID and the
+ * user re-enrols, instead of being scored on the wrong scale. Version 1 was
+ * a bare 'ay' with a 16-byte header inside it (v0.4.x). */
+#define EGIS0576_PRINT_VERSION 2
+
+static GVariant *
+print_wrap_blob (const guint8 *blob, gsize len)
+{
+  GVariant *data = g_variant_new_fixed_array (G_VARIANT_TYPE_BYTE, blob, len, 1);
+
+  return g_variant_new ("(q@ay)", (guint16) EGIS0576_PRINT_VERSION, data);
+}
+
 static const guint8 *
 print_get_blob (FpPrint *print, GVariant **var_out, gsize *len)
 {
-  GVariant *var = NULL;
+  g_autoptr(GVariant) var = NULL;
+  GVariant *data = NULL;
+  guint16 version = 0;
 
   g_object_get (print, "fpi-data", &var, NULL);
-  if (!var || !g_variant_is_of_type (var, G_VARIANT_TYPE ("ay")))
+  if (!var || !g_variant_is_of_type (var, G_VARIANT_TYPE ("(qay)")))
+    return NULL;
+  g_variant_get (var, "(q@ay)", &version, &data);
+  if (version != EGIS0576_PRINT_VERSION)
     {
-      g_clear_pointer (&var, g_variant_unref);
+      g_variant_unref (data);
       return NULL;
     }
-  *var_out = var;
-  return g_variant_get_fixed_array (var, len, 1);
+  *var_out = data;                       /* the caller owns this ref */
+  return g_variant_get_fixed_array (data, len, 1);
 }
 
 static gboolean
-load_one_print (FpPrint *print)
+load_one_print (FpDeviceEgis0576 *self, FpPrint *print)
 {
   g_autoptr(GVariant) var = NULL;
   gsize len = 0;
@@ -234,7 +248,7 @@ load_one_print (FpPrint *print)
     return FALSE;
   blobs[0] = blob;
   sizes[0] = (int) len;
-  return egis_gallery_load (blobs, sizes, 1) == 0;
+  return egis_gallery_load (self->engine, blobs, sizes, 1) == 0;
 }
 
 /* ------------------------------------------------------------------ */
@@ -337,9 +351,9 @@ idle_handle_msg (gpointer data)
           FpPrint *print = NULL;
           fpi_device_get_enroll_data (dev, &print);
           fpi_print_set_type (print, FPI_PRINT_RAW);
-          g_object_set (print, "fpi-data",
-                        g_variant_new_from_data (G_VARIANT_TYPE ("ay"), m->blob, m->size,
-                                                 TRUE, g_free, m->blob), NULL);
+          g_object_set (print, "fpi-data", print_wrap_blob (m->blob, m->size), NULL);
+          free (m->blob);                /* libc malloc'd by egis_enroll_finish */
+          m->blob = NULL;
           fpi_device_enroll_complete (dev, g_object_ref (print), NULL);
         }
       break;
@@ -577,8 +591,7 @@ capture_thread (gpointer data)
        * (min-subtract, invert, auto-brightness, Otsu-stretch, flip) — validated on
        * fp_final (8/10). Applied identically to enroll + verify + identify. */
       flat_field (self, self->frame, ffframe);
-      egis_preprocess (ffframe, self->corrected);
-      probe = self->corrected;
+      probe = ffframe;
 
       if (action == FPI_DEVICE_ACTION_ENROLL)
         {
@@ -590,7 +603,7 @@ capture_thread (gpointer data)
                   Msg *m;
                   int prog = 0;
                   int r;
-                  r = egis_enroll_add (probe, &prog);
+                  r = egis_enroll_add (self->engine, probe, &prog);
                   if (r == -2 && settle_tries < EGIS0576_ENROLL_SETTLE_FRAMES)
                     {
                       /* partial contact: let the press settle, try the next frame */
@@ -657,12 +670,12 @@ capture_thread (gpointer data)
                 if (action == FPI_DEVICE_ACTION_VERIFY)
                   {
                     idx = 0;
-                    score = egis_verify (probe, 0);
+                    score = egis_verify (self->engine, probe, 0);
                   }
                 else
                   {
                     idx = -1;
-                    score = egis_identify (probe, &idx);
+                    score = egis_identify (self->engine, probe, &idx);
                   }
                 if (score > best_score)
                   best_score = score;
@@ -677,7 +690,7 @@ capture_thread (gpointer data)
                       {
                         /* second consecutive frame over the threshold for the
                          * same print, and not a byte-identical re-serve */
-                        if (egis_verify_raw_ok (self->frame, idx))
+                        if (egis_verify_raw_ok (self->engine, self->frame, idx))
                           {
                             Msg *m = g_new0 (Msg, 1);
                             m->kind = action == FPI_DEVICE_ACTION_VERIFY
@@ -762,7 +775,7 @@ capture_thread (gpointer data)
     {
       Msg *m = g_new0 (Msg, 1);
       m->kind = M_ENROLL_DONE;
-      m->size = egis_enroll_finish (&m->blob);
+      m->size = egis_enroll_finish (self->engine, &m->blob);
       post_msg (dev, m);
     }
   else
@@ -819,11 +832,13 @@ egis0576_open (FpDevice *dev)
   FpDeviceEgis0576 *self = FPI_DEVICE_EGIS0576 (dev);
   GError *error = NULL;
 
-  if (egis_engine_init () != 0)
+  if (!self->engine)
+    self->engine = egis_engine_new ();
+  if (!self->engine)
     {
       fpi_device_open_complete (dev,
                                 fpi_device_error_new_msg (FP_DEVICE_ERROR_GENERAL,
-                                                          "Failed to initialise Egis match engine"));
+                                                          "Failed to initialise the match engine"));
       return;
     }
   g_usb_device_claim_interface (fpi_device_get_usb_device (dev),
@@ -911,7 +926,7 @@ egis0576_enroll (FpDevice *dev)
   FpDeviceEgis0576 *self = FPI_DEVICE_EGIS0576 (dev);
 
   self->enroll_count = 0;
-  if (egis_enroll_begin () != 0)
+  if (egis_enroll_begin (self->engine) != 0)
     {
       fpi_device_enroll_complete (dev, NULL,
                                   fpi_device_error_new_msg (FP_DEVICE_ERROR_GENERAL,
@@ -924,10 +939,11 @@ egis0576_enroll (FpDevice *dev)
 static void
 egis0576_verify (FpDevice *dev)
 {
+  FpDeviceEgis0576 *self = FPI_DEVICE_EGIS0576 (dev);
   FpPrint *print = NULL;
 
   fpi_device_get_verify_data (dev, &print);
-  if (!load_one_print (print))
+  if (!load_one_print (self, print))
     {
       fpi_device_verify_complete (dev,
                                   fpi_device_error_new_msg (FP_DEVICE_ERROR_DATA_INVALID,
@@ -945,7 +961,7 @@ egis0576_identify (FpDevice *dev)
   g_autofree const guint8 **blobs = NULL;
   g_autofree int *sizes = NULL;
   g_autoptr(GPtrArray) vars = g_ptr_array_new_with_free_func ((GDestroyNotify) g_variant_unref);
-  guint n = 0, cap = (guint) MAX (egis_gallery_capacity (), 1);
+  guint n = 0, cap = (guint) MAX (egis_gallery_capacity (self->engine), 1);
 
   g_clear_pointer (&self->gallery_prints, g_ptr_array_unref);
   self->gallery_prints = g_ptr_array_new ();   /* borrowed refs, gallery order */
@@ -989,7 +1005,7 @@ egis0576_identify (FpDevice *dev)
       fpi_device_identify_complete (dev, NULL);
       return;
     }
-  if (egis_gallery_load (blobs, sizes, n) != 0)
+  if (egis_gallery_load (self->engine, blobs, sizes, n) != 0)
     {
       g_clear_pointer (&self->gallery_prints, g_ptr_array_unref);
       fpi_device_identify_complete (dev,
@@ -1088,9 +1104,21 @@ fpi_device_egis0576_init (FpDeviceEgis0576 *self)
 }
 
 static void
+fpi_device_egis0576_finalize (GObject *object)
+{
+  FpDeviceEgis0576 *self = FPI_DEVICE_EGIS0576 (object);
+
+  g_clear_pointer (&self->engine, egis_engine_free);
+  G_OBJECT_CLASS (fpi_device_egis0576_parent_class)->finalize (object);
+}
+
+static void
 fpi_device_egis0576_class_init (FpDeviceEgis0576Class *klass)
 {
   FpDeviceClass *dev_class = FP_DEVICE_CLASS (klass);
+  GObjectClass *object_class = G_OBJECT_CLASS (klass);
+
+  object_class->finalize = fpi_device_egis0576_finalize;
 
   dev_class->id = "egis0576";
   dev_class->full_name = "Egis Technology Inc. (aka. LighTuning) EH576";
