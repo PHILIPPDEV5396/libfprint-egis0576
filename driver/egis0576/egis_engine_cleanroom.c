@@ -218,6 +218,16 @@
 #ifndef EGIS_CR_REDUNDANT_NCC
 #define EGIS_CR_REDUNDANT_NCC 0.95   /* enrol: reject same-press duplicate */
 #endif
+/* Enrolment frames are held to a higher coverage than probes: a probe only
+ * has to match, a template has to be worth matching against for years. The
+ * reference unit's first steered enrolment stored eight of twelve frames at
+ * coverage 0.37-0.53 -- first frames of edge placements, partial contact --
+ * and a normal press then matched them at only 0.78. The driver keeps
+ * sampling a press until a frame clears this gate (~300 ms), so the finger
+ * settles instead of the user pressing again. */
+#ifndef EGIS_CR_MIN_ENROL_COVERAGE
+#define EGIS_CR_MIN_ENROL_COVERAGE EGIS_CR_MIN_COVERAGE
+#endif
 /* Enrolment steering. Coverage decides the genuine floor: on the reference
  * unit a second session five days later matched the first session's
  * templates at a median of 0.94 / 0.92 / 0.83 on three fingers and 0.55 /
@@ -410,9 +420,9 @@ egis_enroll_add (const uint8_t *raw, int *progress)
         return 2;
     }
 
-    /* (b) quality gate */
+    /* (b) quality gate (stricter than the probe gate, see above) */
     em_frame_compute (raw, &enrol->scratch);
-    if (enrol->scratch.coverage < EGIS_CR_MIN_COVERAGE)
+    if (enrol->scratch.coverage < EGIS_CR_MIN_ENROL_COVERAGE)
         return -2;
 
     /* (c) same-press duplicate */

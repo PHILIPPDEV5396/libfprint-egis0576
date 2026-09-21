@@ -49,6 +49,7 @@
 
 #define EGIS_CR_ACCEPT_NCC 0.78
 #define EGIS_CR_MIN_COVERAGE 0.35
+#define EGIS_CR_MIN_ENROL_COVERAGE 0.60   /* well-placed frames: 0.70-0.75 */
 #define EGIS_CR_REDUNDANT_NCC 1.0
 /* Raw-frame corroboration of an accept (egis_verify_raw_ok, see
  * egis_engine.h for the hole it closes). Genuine un-flat-fielded probes
