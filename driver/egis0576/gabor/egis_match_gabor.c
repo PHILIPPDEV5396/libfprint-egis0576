@@ -114,8 +114,23 @@
  *     To exploit it an attacker must present the pattern to the sensor
  *     (physical access, a fabricated artefact), which also defeats every
  *     other matcher without presentation-attack detection -- but a
- *     minutiae-based matcher would reject a featureless grating, and this
- *     one does not. Countermeasures under measurement.
+ *     minutiae-based matcher would reject a featureless grating.
+ *     PARTLY CLOSED by the local-ridge-period consistency check at the end
+ *     of this file (egis_match_check.h): the probe's ridge period must vary
+ *     over the overlap and agree with the template's. Every blind family
+ *     of the review now scores below the threshold (sine 0.70, arc 0.70,
+ *     loop/delta 0.75, ridge noise 0.70) at a measured genuine cost of
+ *     0 of 60 presses (genuine min 0.812 -> 0.800, impostor max unchanged,
+ *     cross-fold still 0 / 0). NOT closed: an attacker who can read the
+ *     score and hill-climb a curved ridge model against it still reaches
+ *     0.93 on one finger, because the period map of a 2x2 mm patch is
+ *     smooth enough for a low-order polynomial to reproduce. A second,
+ *     independent check -- corroborating the fine structure the Gabor
+ *     smooths away (pores, ridge-width modulation) at the winning
+ *     alignment -- was built and measured too: it raises the oracle
+ *     attacker's cost materially, but costs 5-7 % genuine presses on the
+ *     kit protocol, so it is not shipped; the measurement is recorded in
+ *     docs/matcher-comparison.md for whoever needs that trade.
  *   - Poisoned flat-field baseline. If the driver's per-boot baseline is
  *     captured with the enrolled finger resting lightly on the sensor, the
  *     subtraction paints that finger's ridges, inverted, into every later
@@ -168,6 +183,7 @@
 #include <string.h>
 
 #include "egis_match.h"
+#include "egis_match_check.h"
 
 #define EG_PI 3.14159265358979323846   /* M_PI is not C99 */
 
@@ -665,13 +681,17 @@ eg_ncc (const double *ai, const uint8_t *am, const double *bi, const uint8_t *bm
   return cov / (sqrt (va * vb) + 1e-6);
 }
 
-/* ---- public: match -------------------------------------------------------*/
+/* ---- search core ----------------------------------------------------------*/
 /* a = the stored template frame, b = the probe. Only b is resampled (rotated),
- * so em_match(a, b) and em_match(b, a) differ slightly at the mask edge; the
- * adapter and the bench both call it template-first. */
-double
-em_match (const EmFrame *a, const EmFrame *b)
+ * so the two argument orders differ at the mask edge; the adapter and the
+ * bench both call template-first. Returns the best masked NCC and, through
+ * the out-parameters, the alignment it was found at (probe shifted by
+ * (dx, dy) in template coordinates after rotation index r on the fine grid),
+ * which the period-consistency check below needs. */
+static double
+eg_match_core (const EmFrame *a, const EmFrame *b, int *odx, int *ody, int *orot)
 {
+  int bdx = 0, bdy = 0, brot = EG_ROT_K;
   double cand_s[EG_REFINE];
   int cand_dx[EG_REFINE], cand_dy[EG_REFINE], cand_r[EG_REFINE];
   double rimg[EM_N];
@@ -698,7 +718,10 @@ em_match (const EmFrame *a, const EmFrame *b)
             double s = eg_ncc (a->img, a->mask, rimg, rmask, dx, dy, 1,
                                EG_MIN_OVERLAP);
             if (s > best)
-              best = s;
+              {
+                best = s;
+                bdx = dx; bdy = dy; brot = r;
+              }
           }
     }
   (void) cand_s; (void) cand_dx; (void) cand_dy; (void) cand_r;
@@ -763,10 +786,321 @@ em_match (const EmFrame *a, const EmFrame *b)
                 s = eg_ncc (a->img, a->mask, rimg, rmask, dx, dy, 1,
                             EG_MIN_OVERLAP);
                 if (s > best)
-                  best = s;
+                  {
+                    best = s;
+                    bdx = dx; bdy = dy; brot = r;
+                  }
               }
         }
     }
 #endif
+  if (odx) *odx = bdx;
+  if (ody) *ody = bdy;
+  if (orot) *orot = brot;
   return best;
+}
+
+
+/* =========================================================================
+ * LOCAL RIDGE-PERIOD CONSISTENCY CHECK (declarations: egis_match_check.h)
+ * =========================================================================
+ *
+ * WHAT IT TESTS. A real print's ridge period is not one number: over a
+ * 70x57 frame it varies by a few tenths of a pixel to 1.5 px (cell-period sd
+ * over 711 real frames: min 0.17, p5 0.25, median 0.60, max 1.40 px), and
+ * two presses of the same skin reproduce that variation (genuine pairs at
+ * NCC >= 0.78: mean |dT| 0.08 px median, map correlation 0.96 median). The
+ * review's synthetic textures have one period (sine, arc, loop, ridge noise:
+ * whole-frame sd 0.03-0.19) or a smooth chirp. em_match_ex() reruns the
+ * search, warps the probe onto the template at the winning shift/rotation,
+ * estimates the local period on a 4-px grid (12x12-px window) for both
+ * frames over the overlap, and em_match() returns -1 unless the probe's
+ * period varies (sd >= 0.25 px) over enough cells (>= 20) and agrees with the
+ * template's (mean |dT| <= 0.5 px).
+ *
+ * MEASURED (reference dataset; bench.c kit protocol; verify_master.c and the
+ * dictionary families of the adversarial review; own tools in the scratch
+ * dir):
+ *   check off:  genuine min 0.812 / p05 0.904 / median 0.970, impostor max
+ *               0.690, FRR@FAR0 0 %; blind synthetic best: sine 0.784, arc
+ *               0.909, loop/delta 0.883, ridge noise 0.849, curved stripes
+ *               0.904, wavy 0.805; hill-climb model 0.933-0.960.
+ *   check on:   genuine min 0.800 / p05 0.900 / median 0.968, impostor max
+ *               0.681, FRR@FAR0 0 %, cross-fold strict FRR 0 % / FAR 1.25 %,
+ *               mid-gap 0 / 0 (thresholds 0.740 / 0.747); raw-probe
+ *               corroboration min 0.756 (was 0.825; gate is 0.5). Every
+ *               blind family falls below 0.78: sine -1, arc -1, loop 0.752,
+ *               ridge noise 0.696, curved 0.614, wavy 0.612, review's
+ *               hill-climb pattern -1 (all 8 phases).
+ *   ADAPTIVE:   an attacker who sees the diagnostics and hill-climbs a
+ *               12-parameter cubic-phase ridge model (period, angle, phase,
+ *               centre, 7 polynomial coefficients) reaches 0.906 NCC WITH
+ *               the check passing (mad 0.12, p_spread 0.31) after ~250
+ *               coordinate-descent iterations (~15k score queries); on the
+ *               coarser 8-px map 0.92-0.96. Blind random smooth period
+ *               jitter (3 %) on a sine reaches 0.864 on the 8-px map.
+ *   So this closes the review's blind families at no measured genuine cost
+ *   on this unit, and does NOT close the oracle attack: the period map of
+ *   a 2x2 mm patch is smooth enough that a cubic polynomial reproduces it.
+ *
+ * COST: em_match_ex adds one eg_rotate, one warp and two period maps
+ * (3 blurs + 12 lags x 3990 bilinear samples each); measured idle, see the
+ * report (~2 ms on top of em_match's 4 ms).
+ */
+
+#ifndef EM_FQ_K0
+#define EM_FQ_K0 3.5      /* lag range of the block autocorrelation */
+#endif
+#ifndef EM_FQ_K1
+#define EM_FQ_K1 9.5
+#endif
+#define EM_FQ_NK ((int) ((EM_FQ_K1 - EM_FQ_K0) / 0.5 + 1.5))   /* 12 */
+#ifndef EM_FQ_HARM
+#define EM_FQ_HARM 0.6
+#endif
+#ifndef EM_FQ_SMOOTH
+#define EM_FQ_SMOOTH 1
+#endif
+#ifndef EM_FQ_MINPIX
+#define EM_FQ_MINPIX 160   /* block needs this many masked product pairs */
+#endif
+#ifndef EM_FQ_MINPEAK
+#define EM_FQ_MINPEAK 0.15 /* normalised ACF peak below this = no period */
+#endif
+
+/* Block period map of a (standardised, mask-zeroed) ridge image in its own
+ * coordinates. Orientation from the structure tensor of img itself; the
+ * period from the block-summed autocorrelation along the ridge normal,
+ * lags EM_FQ_K0..EM_FQ_K1 in 0.5 px, parabolic sub-step refinement.
+ * pmap[b] = period in px (0 = invalid), conf[b] = normalised peak height. */
+int
+em_period_map (const double *img, const uint8_t *mask, double *pmap, double *conf)
+{
+  double *gx = malloc (5 * EM_N * sizeof (double));
+  double *gy = gx + EM_N, *sxx = gx + 2 * EM_N, *syy = gx + 3 * EM_N, *sxy = gx + 4 * EM_N;
+  double *tmp = malloc (EM_N * sizeof (double));
+  double acc[EM_NB][EM_FQ_NK], e0[EM_NB];
+  int cnt[EM_NB];
+  int nvalid = 0;
+
+  if (!gx || !tmp)
+    {
+      free (gx); free (tmp);
+      for (int b = 0; b < EM_NB; b++) { pmap[b] = 0; conf[b] = 0; }
+      return 0;
+    }
+  for (int y = 0; y < EM_H; y++)
+    {
+      const double *r0 = img + eg_refl (y - 1, EM_H) * EM_W;
+      const double *r1 = img + y * EM_W;
+      const double *r2 = img + eg_refl (y + 1, EM_H) * EM_W;
+      for (int x = 0; x < EM_W; x++)
+        {
+          int xl = eg_refl (x - 1, EM_W), xr = eg_refl (x + 1, EM_W);
+          gx[y * EM_W + x] = (r1[xr] - r1[xl]) * 2 + r0[xr] - r0[xl] + r2[xr] - r2[xl];
+          gy[y * EM_W + x] = (r2[x] - r0[x]) * 2 + r2[xl] - r0[xl] + r2[xr] - r0[xr];
+        }
+    }
+  for (int i = 0; i < EM_N; i++)
+    {
+      sxx[i] = gx[i] * gx[i];
+      syy[i] = gy[i] * gy[i];
+      sxy[i] = gx[i] * gy[i];
+    }
+  eg_blur (sxx, sxx, 3.0, tmp);
+  eg_blur (syy, syy, 3.0, tmp);
+  eg_blur (sxy, sxy, 3.0, tmp);
+  /* unit normal per pixel, reuse gx/gy */
+  for (int i = 0; i < EM_N; i++)
+    {
+      double th = 0.5 * atan2 (2.0 * sxy[i], sxx[i] - syy[i]) + EG_PI / 2.0;
+      gy[i] = cos (th);
+      gx[i] = -sin (th);
+    }
+  memset (acc, 0, sizeof acc);
+  memset (cnt, 0, sizeof cnt);
+  memset (e0, 0, sizeof e0);
+  for (int y = 0; y < EM_H; y++)
+    for (int x = 0; x < EM_W; x++)
+      {
+        int i = y * EM_W + x;
+        int b = (y / EM_FB) * EM_FBX + x / EM_FB;
+        int ok = 1;
+        double v[EM_FQ_NK];
+        if (!mask[i])
+          continue;
+        for (int ki = 0; ki < EM_FQ_NK; ki++)
+          {
+            double k = EM_FQ_K0 + 0.5 * ki;
+            double sx = x + k * gx[i], sy = y + k * gy[i];
+            int ix = (int) lround (sx), iy = (int) lround (sy);
+            if (sx < 0 || sx > EM_W - 1 || sy < 0 || sy > EM_H - 1
+                || !mask[iy * EM_W + ix])
+              { ok = 0; break; }
+            v[ki] = img[i] * eg_bilinear (img, sx, sy);
+          }
+        if (!ok)
+          continue;
+        for (int ki = 0; ki < EM_FQ_NK; ki++)
+          acc[b][ki] += v[ki];
+        e0[b] += img[i] * img[i];
+        cnt[b]++;
+      }
+#if EM_FQ_SMOOTH
+  /* pool each block with its 8 neighbours (weights 1-2-1 x 1-2-1): the
+   * window becomes 3x3 blocks, sampled every block */
+  {
+    static const int w3[3] = { 1, 2, 1 };
+    double acc2[EM_NB][EM_FQ_NK], e02[EM_NB];
+    int cnt2[EM_NB];
+    for (int by = 0; by < EM_FBY; by++)
+      for (int bx = 0; bx < EM_FBX; bx++)
+        {
+          int b = by * EM_FBX + bx;
+          for (int ki = 0; ki < EM_FQ_NK; ki++) acc2[b][ki] = 0;
+          e02[b] = 0; cnt2[b] = 0;
+          for (int j = -1; j <= 1; j++)
+            for (int i = -1; i <= 1; i++)
+              {
+                int yy = by + j, xx = bx + i, w = w3[j + 1] * w3[i + 1];
+                if (yy < 0 || yy >= EM_FBY || xx < 0 || xx >= EM_FBX) continue;
+                int nb = yy * EM_FBX + xx;
+                for (int ki = 0; ki < EM_FQ_NK; ki++) acc2[b][ki] += w * acc[nb][ki];
+                e02[b] += w * e0[nb]; cnt2[b] += w * cnt[nb];
+              }
+        }
+    memcpy (acc, acc2, sizeof acc); memcpy (e0, e02, sizeof e0); memcpy (cnt, cnt2, sizeof cnt);
+  }
+#endif
+  for (int b = 0; b < EM_NB; b++)
+    {
+      int bi = 0;
+      double bv = -1e30, p;
+      pmap[b] = 0; conf[b] = 0;
+      if (cnt[b] < EM_FQ_MINPIX || e0[b] <= 0)
+        continue;
+      for (int ki = 0; ki < EM_FQ_NK; ki++)
+        if (acc[b][ki] > bv) { bv = acc[b][ki]; bi = ki; }
+      if (bv / e0[b] < EM_FQ_MINPEAK)
+        continue;
+      /* first local maximum that reaches EM_FQ_HARM of the global one: the
+       * lag range admits the second harmonic (2T) for T <= 4.75 px, and the
+       * global argmax picks it in a good fraction of blocks */
+      for (int ki = 1; ki < EM_FQ_NK - 1; ki++)
+        if (acc[b][ki] > acc[b][ki - 1] && acc[b][ki] >= acc[b][ki + 1]
+            && acc[b][ki] >= EM_FQ_HARM * bv)
+          { bi = ki; bv = acc[b][ki]; break; }
+      p = EM_FQ_K0 + 0.5 * bi;
+      if (bi > 0 && bi < EM_FQ_NK - 1)
+        {
+          double l = acc[b][bi - 1], c = acc[b][bi], r = acc[b][bi + 1];
+          double den = l - 2 * c + r;
+          if (den < 0)
+            p += 0.5 * (0.5 * (l - r) / den);
+        }
+      pmap[b] = p;
+      conf[b] = bv / e0[b];
+      nvalid++;
+    }
+  free (gx); free (tmp);
+  return nvalid;
+}
+
+double
+em_match_ex (const EmFrame *a, const EmFrame *b, EmMatchInfo *info)
+{
+  int dx, dy, r;
+  double s = eg_match_core (a, b, &dx, &dy, &r);
+  double *rimg, *pimg, tmap[EM_NB], tconf[EM_NB], pmap[EM_NB], pconf[EM_NB];
+  uint8_t *rmask, *pmask;
+  double th;
+
+  memset (info, 0, sizeof *info);
+  info->ncc = s;
+  info->dx = dx; info->dy = dy;
+  info->rot_deg = (r - EG_ROT_K) * EG_ROT_STEP;
+  if (s <= -1.0)
+    return s;
+
+  rimg = malloc (2 * EM_N * sizeof (double));
+  rmask = malloc (2 * EM_N);
+  if (!rimg || !rmask)
+    { free (rimg); free (rmask); return s; }
+  pimg = rimg + EM_N; pmask = rmask + EM_N;
+  th = info->rot_deg * EG_PI / 180.0;
+  eg_rotate (b, th, rimg, rmask);
+  /* probe warped into template coordinates: template (x,y) <-> probe (x-dx,y-dy) */
+  for (int y = 0; y < EM_H; y++)
+    for (int x = 0; x < EM_W; x++)
+      {
+        int i = y * EM_W + x, px = x - dx, py = y - dy;
+        if (px < 0 || px >= EM_W || py < 0 || py >= EM_H)
+          { pimg[i] = 0; pmask[i] = 0; continue; }
+        pmask[i] = rmask[py * EM_W + px] & a->mask[i];
+        pimg[i] = pmask[i] ? rimg[py * EM_W + px] : 0.0;
+      }
+  /* template restricted to the same overlap */
+  for (int i = 0; i < EM_N; i++)
+    {
+      rmask[i] = pmask[i];
+      rimg[i] = pmask[i] ? a->img[i] : 0.0;
+      info->overlap += pmask[i];
+    }
+  em_period_map (rimg, rmask, tmap, tconf);
+  em_period_map (pimg, pmask, pmap, pconf);
+  {
+    double st = 0, sp = 0, stt = 0, spp = 0, stp = 0, mad = 0;
+    int n = 0;
+    for (int bk = 0; bk < EM_NB; bk++)
+      if (tmap[bk] > 0 && pmap[bk] > 0)
+        {
+          st += tmap[bk]; sp += pmap[bk];
+          stt += tmap[bk] * tmap[bk]; spp += pmap[bk] * pmap[bk];
+          stp += tmap[bk] * pmap[bk];
+          mad += fabs (tmap[bk] - pmap[bk]);
+          n++;
+        }
+    info->nblk = n;
+    if (n >= 2)
+      {
+        double vt = stt - st * st / n, vp = spp - sp * sp / n, cv = stp - st * sp / n;
+        info->t_spread = sqrt (vt / n > 0 ? vt / n : 0);
+        info->p_spread = sqrt (vp / n > 0 ? vp / n : 0);
+        info->corr = (vt > 1e-12 && vp > 1e-12) ? cv / sqrt (vt * vp) : 0.0;
+        info->mad = mad / n;
+        info->dmean = (st - sp) / n;
+      }
+  }
+  free (rimg); free (rmask);
+  return s;
+}
+
+/* ---- decision (constants in em_check.h) ------------------------------- */
+double
+em_match (const EmFrame *a, const EmFrame *b)
+{
+  EmMatchInfo in;
+  double s;
+#if EM_FQ_ENABLE
+  {
+    int dx, dy, r;
+    s = eg_match_core (a, b, &dx, &dy, &r);
+    /* Below EM_FQ_GATE_FROM the pair is rejected anyway, so the period maps
+     * (~2 ms) are only computed for a pair that could be accepted. Scores
+     * under the gate are returned unchanged, which keeps the kit's impostor
+     * distribution comparable to the ungated front-end. */
+    if (s < EM_FQ_GATE_FROM)
+      return s;
+  }
+  s = em_match_ex (a, b, &in);
+  if (s > -1.0)
+    {
+      if (in.nblk < EM_FQ_MIN_NBLK || in.mad > EM_FQ_MAX_MAD
+          || in.p_spread < EM_FQ_MIN_PSPREAD || in.corr < EM_FQ_MIN_CORR)
+        return -1.0;
+    }
+#else
+  s = em_match_ex (a, b, &in);
+#endif
+  return s;
 }

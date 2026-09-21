@@ -240,7 +240,9 @@ into them: an orientation-selective Gabor enhancement, a per-pixel coherence
 mask and a rotation search
 ([`driver/egis0576/gabor/`](driver/egis0576/gabor/), own work, LGPL). On the
 reference unit its genuine and impostor populations do not overlap
-(**0 % / 0 %** at its own threshold, cross-fold checked); on a second unit,
+(**0 % / 0 %** at its own threshold, cross-fold checked — where "impostor"
+means the same person's other fingers: no false-accept figure in this
+project comes from a second person yet); on a second unit,
 Thaddeus Stepanovich's, it takes his matcher from 51.7 % to 6.9 % false rejects
 held-out, without reaching a clean gap. Since 2026-09-18 it is what the
 reference unit logs in with — the first login through this driver with no

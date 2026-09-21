@@ -368,6 +368,26 @@ side — genuine min 0.81 → 0.55 (2nd) → 0.30 (3rd) against impostor max
 0.69 → 0.67 → 0.64 — for the same reason it failed on his front-end: a
 genuine press overlaps one enrolled placement well, not two.
 
+**Hardening (2026-09-18 → 21), from an adversarial review of the vendor-free
+stack** — what it found, what closed it, and what it cost, all measured on the
+reference dataset:
+
+| finding | closed by | genuine cost |
+|---|---|---:|
+| a re-served stale frame of an earlier press unlocks at the first frame over the threshold | two-frame confirmation in the driver (next frame must also clear the threshold and differ byte-wise) | 0 / 60, +1 frame latency |
+| a per-boot flat-field baseline captured with the enrolled finger resting lightly paints its ridges, inverted, into every later frame; a featureless smudge then scores 0.92–0.94 | every accept is corroborated on the un-flat-fielded frame (`egis_verify_raw_ok`, NCC ≥ 0.5; genuine raw probes score ≥ 0.83) | 0 / 60 |
+| a smooth, ridge-free gradient gets full mask coverage and is enrolled | absolute ridge-evidence gate in the front-end (Gabor response sd ≥ 5 over the mask) | 0 / 60 |
+| computer-generated ridge textures (sine 0.78, arc 0.91, loop/delta 0.88, ridge noise 0.85 against real templates) | local-ridge-period consistency at the winning alignment (`egis_match_check.h`): all blind families now ≤ 0.75 | genuine min 0.812 → 0.800, 0 / 60 |
+
+Not closed: an attacker with a score oracle hill-climbing a curved ridge model
+still reaches 0.93; a second check that corroborates the fine structure the
+Gabor filter smooths away (pores, ridge-width modulation) raised that
+attacker's cost materially in the review's measurement but costs 5–7 % of
+genuine presses on the kit protocol, and is therefore not shipped. Presenting
+any of these patterns needs physical access and an artefact, which also
+defeats every matcher without presentation-attack detection; this sensor has
+none.
+
 Cost, for the driver's every-frame scoring loop: `em_frame_compute` 1.6 ms
 (his 0.17 ms), `em_match` 4.0 ms against 0.85 ms at ±6 and 6.4 ms at ±19 —
 the rotation search costs less than the wider translation search alone,
