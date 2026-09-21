@@ -1,5 +1,16 @@
 # The capture worker and gusb — and the lost wakeup of 2026-09-13
 
+> **Historical (v0.4.3 – v0.4.x).** Since the asynchronous rewrite for
+> v0.5.0 there is no capture thread and no private `GMainContext` any more:
+> the transport is a set of `FpiSsm` machines over `FpiUsbTransfer` on the
+> device main loop, exactly like every in-tree libfprint driver, and the
+> matcher is the only thing that runs on another thread (a `GTask`, as
+> `secugen` does). The lost wakeup described here cannot occur in that
+> design, because no thread ever waits for a transfer completion. The page
+> stays as the record of the bug, its diagnosis, and the rule it produced —
+> which still holds for anyone tempted to call gusb's synchronous API from a
+> driver.
+
 **TL;DR.** Every capture runs on a worker thread (`egis0576-capture`); only
 the one-time bring-up in `open()` runs on the fprintd main thread. Since
 v0.4.3 the transport talks to gusb through its **async** API on a **private

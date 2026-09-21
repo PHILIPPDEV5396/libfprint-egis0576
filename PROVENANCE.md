@@ -29,8 +29,8 @@ Written from scratch for libfprint:
 
 | File | What it is |
 |------|-----------|
-| `egis0576.c`, `egis0576.h` | The libfprint `FpDevice` driver: enroll/verify/identify state machines, capture worker thread, per-boot flat-field, software finger detection. |
-| `egis0576/egis0576_proto.c`, `.h` | The plaintext `EGIS`/`SIGE` transport over gusb, per-device exposure calibration, init orchestration. |
+| `egis0576.c`, `egis0576.h` | The libfprint `FpDevice` driver: the capture `FpiSsm` (enroll/verify/identify), the matcher `GTask`, per-boot flat-field, software finger detection. |
+| `egis0576/egis0576_proto.c`, `.h` | The plaintext `EGIS`/`SIGE` transport as `FpiSsm` machines over `FpiUsbTransfer` (bring-up, frame, exposure calibration). |
 | `egis0576/egis_rt.c`, `.h`, `egis_engine.c`, `.h` | The flat-memory runtime and the enroll/verify/gallery wrapper around the matcher. |
 | `egis0576/egis_engine_cleanroom.c` | Adapter that implements the `egis_engine.h` contract on top of Thaddeus Stepanovich's clean-room correlation matcher (see category 3); compiled with `-Degis0576_matcher=cleanroom` or `=gabor`. |
 | `egis0576/gabor/egis_match_gabor.c`, `egis_cr_tuning_gabor.h` | An alternative front-end for that adapter behind the same two-function interface (`em_frame_compute` / `em_match`): orientation-selective Gabor enhancement, per-pixel coherence mask, rotation-aware coarse-to-fine NCC search, and its operating point. Own work from public-domain building blocks (Hong, Wan & Jain 1998; structure-tensor orientation; masked NCC as in category 3); no vendor code or vendor-derived constant was consulted. Compiled only with `-Degis0576_matcher=gabor`. |

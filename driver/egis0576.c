@@ -1,24 +1,23 @@
 /*
  * Egis Technology Inc. (aka. LighTuning) EH576 (1c7a:0576) driver for libfprint
  *
- * A tiny press-type image sensor (70x57 px), driven with the vendor's own
- * plaintext EGIS/SIGE command protocol over the USB bulk endpoints — the same one
- * its Windows driver speaks. The transport, the vendor init/calibration replay and
- * GetFrame live in driver/egis0576/egis0576_proto.c.
+ * Copyright (C) 2026 Philipp Oster
  *
- * Captured 70x57 frames are matched host-side with Egis' own feature extractor +
- * matcher, reverse-engineered from the Windows driver and reimplemented as native
- * C (driver/egis0576/egis_engine.*). Templates are stored as opaque blobs in
- * each print's fpi-data (plaintext, like every other libfprint driver).
+ * A tiny press-type capacitive sensor (70x57 px, no hardware finger detect),
+ * driven with the vendor's own plaintext EGIS/SIGE command protocol over the
+ * USB bulk endpoints -- the same one its Windows driver speaks. The transport,
+ * the vendor init/calibration replay and GetFrame live in
+ * egis0576/egis0576_proto.c as FpiSsm machines over FpiUsbTransfer.
  *
- * The transport is blocking USB (each transfer parks the calling thread for up
- * to its timeout). The one-time bring-up in open() runs on the fprintd main
- * thread, as libfprint dispatches it; every capture runs in a worker thread and
- * marshals its results back with g_idle_add, so the main loop never stalls
- * while a finger is on the sensor. The transport drives gusb's async API on a
- * private GMainContext rather than gusb's sync wrappers, so neither caller
- * depends on the default context -- see docs/worker-thread.md for why that
- * matters.
+ * The driver polls frames while an action runs, tells finger-on from
+ * finger-off by frame variance, and matches host-side with the correlation
+ * matcher behind egis0576/egis_engine.h (a per-instance handle). Matching
+ * runs in a GTask thread; everything else -- USB, finger detection, the
+ * flat-field baseline, the enrolment state -- runs on the device main loop,
+ * one FpiSsm per action.
+ *
+ * Templates are stored as opaque bytes in each print's fpi-data (plaintext,
+ * like every other libfprint driver).
  *
  * This library is free software; you can redistribute it and/or modify it under
  * the terms of the GNU Lesser General Public License as published by the Free
@@ -32,6 +31,7 @@
 #include "egis0576/egis_engine.h"
 #include "egis0576/egis0576_proto.h"
 #include "drivers_api.h"
+#include <stdlib.h>
 
 #define EGIS0576_ENROLL_STAGES EGIS_ENROLL_STAGES   /* one source: egis_engine.h */
 /* Enrolment takes the first finger-on frame of a press, and on a press that
@@ -49,7 +49,7 @@
  * a real finger pushes it well past 300. Hysteresis: */
 #define EGIS0576_FINGER_ON_VAR  250.0
 #define EGIS0576_FINGER_OFF_VAR 215.0
-#define EGIS0576_POLL_SLEEP_US  5000    /* small gap between captures */
+#define EGIS0576_POLL_GAP_MS    5       /* small gap between captures */
 #define EGIS0576_BASELINE_FRAMES 8      /* no-finger frames averaged into the flat-field baseline */
 #define EGIS0576_BASELINE_MAX_VAR 210.0 /* stricter than FINGER_OFF but with headroom for the
                                           * calibrated-gain no-finger level; a hovering finger would
@@ -60,54 +60,90 @@ typedef enum {
   PH_AWAIT_OFF,    /* waiting for the finger to lift before the next touch */
 } CapturePhase;
 
+/* The flat-field baseline accumulator (see baseline_feed). */
+typedef struct {
+  guint32 acc[EGIS_IMG];
+  int     count;
+} BaselineAcc;
+
+/* The prints of a verify/identify action, decoded, for the gallery load that
+ * runs off the main loop at the start of the capture (load_thread). */
+typedef struct {
+  EgisEngine    *engine;        /* borrowed, exclusively the task's while it runs */
+  GPtrArray     *vars;          /* the GVariants the blobs point into (owned refs) */
+  const guint8 **blobs;
+  int           *sizes;
+  int            n;
+} LoadJob;
+
+/* One probe frame handed to the matcher (match_thread): a snapshot of the
+ * flat-fielded and the raw frame, the action, and what the two-frame
+ * confirmation needs; the results come back in the same struct. */
+typedef struct {
+  EgisEngine     *engine;       /* borrowed, exclusively the task's while it runs */
+  FpiDeviceAction action;
+  guint8          probe[EGIS_IMG];
+  guint8          raw[EGIS_IMG];
+  gboolean        check_raw;    /* a candidate for cand_idx is held, and this frame differs from it */
+  int             cand_idx;
+  /* results */
+  int             score;        /* verify/identify */
+  int             idx;          /* identify: gallery index, -1 = none */
+  gboolean        raw_ok;       /* raw corroboration, iff check_raw and score >= threshold for cand_idx */
+  int             ret;          /* enrol: egis_enroll_add's code */
+} MatchJob;
+
 struct _FpDeviceEgis0576
 {
   FpDevice      parent;
 
-  EgisDev      *sensor;         /* the plaintext channel to the sensor */
+  EgisDev      *sensor;         /* the plaintext channel to the sensor, open..close */
   EgisEngine   *engine;         /* the host matcher (egis_engine.h), per instance */
 
-  /* capture runs in a worker thread (blocking USB must not run in the main
-   * loop); results are marshalled back with g_idle_add. */
-  GThread      *thread;
-  gint          cancel;         /* atomic; set on main thread, read by worker */
+  gboolean      needs_reinit;   /* set by suspend/resume: the sensor does not
+                                 * reliably keep its bring-up state across s2idle
+                                 * (USB stays powered, but the capture pipeline
+                                 * comes back wedged), so it is re-initialised
+                                 * before the next frame */
 
-  /* Per-capture GCancellable the worker's transport polls at every transfer
-   * boundary (egis0576_proto.c never hands it to gusb: aborting an in-flight
-   * URB wedges this sensor at USB level, measured). Without it a cancel had to
-   * wait out whole *sequences* of transfers -- on a sensor that has stopped
-   * answering, a failed getframe (~2.6 s) followed by the re-init's readiness
-   * poll (10 x 850 ms) is ~11 s before a cancel was noticed, and a replay on a
-   * sensor that stops answering mid-way is 24 reads x 800 ms, ~19 s; now it
-   * waits for at most the one SEQUENCE in flight (a getframe: ~2.6 s on a dead
-   * sensor; the init replay: ~0.3 s; one readiness-poll iteration: 850 ms).
-   *
-   * OWNERSHIP: the main thread owns the one and only ref. It is created in
-   * start_capture (fresh object per capture, never g_cancellable_reset) and
-   * handed to the EgisDev as a borrowed pointer BEFORE g_thread_new, so the
-   * worker only ever sees a fully constructed object; it is cancelled from
-   * egis0576_cancel / egis0576_close on the main thread (GCancellable is
-   * thread-safe for that); and it is detached from the EgisDev and unreffed in
-   * finish_teardown / egis0576_close only AFTER g_thread_join has returned.
-   * The pointer therefore never changes while a worker exists, and the worker
-   * can never dereference a cancellable the main thread is freeing. */
-  GCancellable *capture_cancellable;
-
-  gint          needs_reinit;   /* atomic; set by suspend/resume on the main
-                                 * thread, consumed by the worker: the sensor
-                                 * does not reliably keep its bring-up state
-                                 * across s2idle (USB stays powered, but the
-                                 * capture pipeline comes back wedged), so it is
-                                 * re-initialised before the next capture */
-
-  guint8        frame[EGIS_IMG];
-  /* Per-instance, i.e. per fprintd process: the flat-field baseline (see
-   * baseline_feed) and the exposure calibration egis_dev_calibrate found in
-   * the first open(), re-applied to every later EgisDev the driver opens. */
+  /* Per instance, i.e. per fprintd process: the flat-field baseline (see
+   * baseline_feed) and the exposure calibration the first open() found,
+   * handed to every later EgisDev the driver opens. */
   guint8        baseline[EGIS_IMG];     /* no-finger reference, valid iff have_baseline */
   gboolean      have_baseline;
   int           dc_c_calibrated;        /* -1 until the first open() calibrated */
-  guint         enroll_count;
+
+  /* The running action's capture: its machine and state. */
+  FpiSsm         *ssm;
+  FpiDeviceAction action;
+  LoadJob        *load;         /* verify/identify: the gallery to load first */
+  guint8          frame[EGIS_IMG];      /* the raw frame just captured */
+  guint8          ffframe[EGIS_IMG];    /* its flat-fielded version, the matcher's probe */
+  gdouble         var;          /* its variance */
+  BaselineAcc     bl;           /* opportunistic no-finger baseline accumulator */
+  CapturePhase    phase;
+  gboolean        finger_present;       /* as last reported */
+  gboolean        frame_retried;        /* a frame failure was already answered with a re-init */
+  guint           enroll_count;
+  int             settle_tries;         /* enrol: coverage refusals on the current press */
+  gboolean        saw_finger;           /* verify/identify: a press is in progress */
+  int             best_score;           /* verify/identify: best score seen this press */
+  /* Two-frame confirmation (verify/identify). A frame over the threshold is
+   * held as a CANDIDATE; success is reported only when the NEXT finger-on
+   * frame also clears the threshold (identify: for the same print), differs
+   * from it byte-wise, and its raw bytes corroborate the accept
+   * (egis_verify_raw_ok). Why: the sensor has been seen re-serving a stale
+   * frame of an earlier press with fresh noise (tsteppy's driver guards for
+   * the same reason), and with "first frame over threshold wins" one such
+   * frame of the enrolled finger unlocks under any finger. A genuine press
+   * clears the threshold on consecutive frames -- measured 60 of 60 presses
+   * on the reference dataset, the accept moving from frame 0.07 to 1.10 on
+   * average, i.e. one frame (~35 ms) of latency. A candidate that the finger
+   * lifts on, or that the next frame contradicts, is never reported as a
+   * match. */
+  gboolean        cand_valid;
+  int             cand_score, cand_idx;
+  guint8          cand_raw[EGIS_IMG];
 
   /* identify: prints in gallery order (borrowed refs), for result mapping */
   GPtrArray    *gallery_prints;
@@ -145,15 +181,14 @@ frame_variance (const guint8 *buf)
  * "official" GNOME flow work: GNOME says "place your finger" immediately with no
  * dedicated finger-off window, so a blocking pre-capture would just hang; instead
  * the baseline builds itself from the natural no-finger moments and, once found,
- * is reused by every later enroll/verify without re-capturing. Single-sensor
- * driver, so a process global is fine. */
-typedef struct { guint32 acc[EGIS_IMG]; int count; } BaselineAcc;
+ * is reused by every later enroll/verify without re-capturing. */
 
-/* Feed one no-finger frame into the accumulator; publishes the global baseline
- * once EGIS0576_BASELINE_FRAMES have been gathered. No-op once already valid. */
+/* Feed one no-finger frame into the accumulator; publishes the baseline once
+ * EGIS0576_BASELINE_FRAMES have been gathered. No-op once already valid. */
 static void
-baseline_feed (FpDeviceEgis0576 *self, BaselineAcc *b, const guint8 *frame)
+baseline_feed (FpDeviceEgis0576 *self, const guint8 *frame)
 {
+  BaselineAcc *b = &self->bl;
   int i;
 
   if (self->have_baseline)
@@ -171,8 +206,8 @@ baseline_feed (FpDeviceEgis0576 *self, BaselineAcc *b, const guint8 *frame)
 }
 
 /* Apply the per-boot flat-field: out[i] = clamp(raw[i] - baseline[i] + mean).
- * Removes per-pixel fixed-pattern while preserving the DC level (min-subtract in
- * egis_preprocess re-zeroes DC afterwards). No-op until a baseline exists. */
+ * Removes per-pixel fixed-pattern while preserving the DC level. No-op until
+ * a baseline exists. */
 static void
 flat_field (FpDeviceEgis0576 *self, const guint8 *raw, guint8 *out)
 {
@@ -235,112 +270,558 @@ print_get_blob (FpPrint *print, GVariant **var_out, gsize *len)
   return g_variant_get_fixed_array (data, len, 1);
 }
 
-static gboolean
-load_one_print (FpDeviceEgis0576 *self, FpPrint *print)
+static void
+load_job_free (LoadJob *job)
 {
-  g_autoptr(GVariant) var = NULL;
-  gsize len = 0;
-  const guint8 *blob = print_get_blob (print, &var, &len);
-  const guint8 *blobs[1];
-  int sizes[1];
+  g_clear_pointer (&job->vars, g_ptr_array_unref);
+  g_free (job->blobs);
+  g_free (job->sizes);
+  g_free (job);
+}
 
-  if (!blob || len == 0)
-    return FALSE;
-  blobs[0] = blob;
-  sizes[0] = (int) len;
-  return egis_gallery_load (self->engine, blobs, sizes, 1) == 0;
+/* Decode the templates of @prints into a LoadJob (NULL if none is valid). The
+ * prints that decoded are listed, in gallery order, in self->gallery_prints. */
+static LoadJob *
+load_job_new (FpDeviceEgis0576 *self, GPtrArray *prints)
+{
+  LoadJob *job = g_new0 (LoadJob, 1);
+
+  g_clear_pointer (&self->gallery_prints, g_ptr_array_unref);
+  self->gallery_prints = g_ptr_array_new ();   /* borrowed refs, gallery order */
+  job->engine = self->engine;
+  job->vars = g_ptr_array_new_with_free_func ((GDestroyNotify) g_variant_unref);
+  job->blobs = g_new0 (const guint8 *, prints->len + 1);
+  job->sizes = g_new0 (int, prints->len + 1);
+  for (guint i = 0; i < prints->len; i++)
+    {
+      FpPrint *print = g_ptr_array_index (prints, i);
+      GVariant *var = NULL;
+      gsize len = 0;
+      const guint8 *blob = print_get_blob (print, &var, &len);
+
+      if (blob && len)
+        {
+          g_ptr_array_add (job->vars, var);
+          g_ptr_array_add (self->gallery_prints, print);
+          job->blobs[job->n] = blob;
+          job->sizes[job->n] = (int) len;
+          job->n++;
+        }
+    }
+  if (job->n == 0)
+    {
+      load_job_free (job);
+      return NULL;
+    }
+  return job;
 }
 
 /* ------------------------------------------------------------------ */
-/* Worker thread <-> main thread marshalling                          */
+/* Matcher threads                                                    */
 /* ------------------------------------------------------------------ */
 
-typedef enum {
-  M_ENROLL_PROGRESS,
-  M_ENROLL_RETRY,
-  M_ENROLL_DONE,
-  M_VERIFY_REPORT,
-  M_IDENTIFY_REPORT,
-  M_COMPLETE,        /* finish verify/identify (report already sent) */
-  M_ERROR,
-} MsgKind;
-
-typedef struct {
-  FpDevice *dev;
-  MsgKind   kind;
-  guint     stage;         /* enroll progress */
-  guint8   *blob;          /* enroll done (transfer) */
-  int       size;
-  int       score;         /* verify */
-  int       idx;           /* identify gallery index, -1 = none */
-  gboolean  extract_fail;  /* verify/identify: retry */
-  GError   *error;         /* M_ERROR (transfer) */
-} Msg;
+/* The engine handle is used from these thread functions only while their
+ * GTask runs, and from the main loop only between actions (enroll begin /
+ * finish) or after the task returned, so it is never touched concurrently.
+ * The functions get a heap snapshot and never see the FpDevice. */
 
 static void
-finish_teardown (FpDeviceEgis0576 *self, FpDevice *dev)
+load_thread (GTask *task, gpointer source, gpointer task_data, GCancellable *cancellable)
 {
-  if (self->thread)
+  LoadJob *job = task_data;
+
+  if (g_task_return_error_if_cancelled (task))
+    return;
+  if (egis_gallery_load (job->engine, job->blobs, job->sizes, job->n) != 0)
     {
-      g_thread_join (self->thread);
-      self->thread = NULL;
+      g_task_return_new_error (task, FP_DEVICE_ERROR, FP_DEVICE_ERROR_DATA_INVALID,
+                               "No valid egis0576 templates to match");
+      return;
     }
-  /* Worker is gone: nothing can be inside a transfer any more, so detach the
-   * borrowed pointer from the channel and drop our ref (see the struct). */
-  if (self->sensor)
-    egis_dev_set_cancellable (self->sensor, NULL);
-  g_clear_object (&self->capture_cancellable);
-  g_clear_pointer (&self->gallery_prints, g_ptr_array_unref);
-  fpi_device_report_finger_status (dev, FP_FINGER_STATUS_NONE);
+  g_task_return_boolean (task, TRUE);
 }
 
-/* runs on the main thread */
-static gboolean
-idle_handle_msg (gpointer data)
+static void
+match_thread (GTask *task, gpointer source, gpointer task_data, GCancellable *cancellable)
 {
-  Msg *m = data;
-  FpDevice *dev = m->dev;
+  MatchJob *j = task_data;
+
+  if (g_task_return_error_if_cancelled (task))
+    return;
+  if (j->action == FPI_DEVICE_ACTION_ENROLL)
+    {
+      j->ret = egis_enroll_add (j->engine, j->probe, NULL);
+    }
+  else if (j->action == FPI_DEVICE_ACTION_VERIFY)
+    {
+      j->idx = 0;
+      j->score = egis_verify (j->engine, j->probe, 0);
+    }
+  else
+    {
+      j->idx = -1;
+      j->score = egis_identify (j->engine, j->probe, &j->idx);
+    }
+  if (j->action != FPI_DEVICE_ACTION_ENROLL && j->check_raw &&
+      j->score >= EGIS_THRESHOLD && j->idx == j->cand_idx)
+    j->raw_ok = egis_verify_raw_ok (j->engine, j->raw, j->idx) != 0;
+  g_task_return_boolean (task, TRUE);
+}
+
+/* ------------------------------------------------------------------ */
+/* Capture                                                            */
+/* ------------------------------------------------------------------ */
+
+enum {
+  CAP_LOAD,          /* verify/identify: the gallery precompute, off the main loop */
+  CAP_REINIT,        /* the loop head: bring the sensor up again first if flagged */
+  CAP_FRAME,         /* one frame */
+  CAP_RECOVER,       /* the frame failed: re-init once, then retry it */
+  CAP_PROCESS,       /* finger detection, baseline, matching */
+  CAP_NUM_STATES,
+};
+
+/* Fail @ssm with G_IO_ERROR_CANCELLED iff the action was cancelled. The
+ * transport's machines do the same at their own boundaries; here it is the
+ * loop's boundary. */
+static gboolean
+capture_cancelled (FpiSsm *ssm, FpDevice *dev)
+{
+  if (!fpi_device_action_is_cancelled (dev))
+    return FALSE;
+  fpi_ssm_mark_failed (ssm, g_error_new_literal (G_IO_ERROR, G_IO_ERROR_CANCELLED,
+                                                 "cancelled"));
+  return TRUE;
+}
+
+static void
+capture_next (FpDeviceEgis0576 *self, FpiSsm *ssm)
+{
+  fpi_ssm_jump_to_state_delayed (ssm, CAP_REINIT, EGIS0576_POLL_GAP_MS);
+}
+
+static void
+report_finger (FpDeviceEgis0576 *self, gboolean present)
+{
+  if (present == self->finger_present)
+    return;
+  self->finger_present = present;
+  if (present)
+    fpi_device_report_finger_status_changes (FP_DEVICE (self),
+                                             FP_FINGER_STATUS_PRESENT,
+                                             FP_FINGER_STATUS_NONE);
+  else
+    fpi_device_report_finger_status_changes (FP_DEVICE (self),
+                                             FP_FINGER_STATUS_NONE,
+                                             FP_FINGER_STATUS_PRESENT);
+}
+
+/* Re-run the sensor bring-up on the already-claimed, still-enumerated device —
+ * the s2idle recovery, and the answer to a frame that failed. The USB device
+ * stayed powered and the interface is still claimed, but the sensor comes
+ * back from suspend with its capture pipeline in an unusable state, so the
+ * readiness poll + init replay are done again.
+ *
+ * Deliberately does NOT: re-claim the interface (still claimed -> EBUSY),
+ * re-init the host match engine (host state, intact), re-run exposure
+ * calibration (it needs a no-finger window we can't guarantee on resume; the
+ * init machine re-applies the value the first open()'s calibration found, so
+ * the exposure stays the calibrated one), or recapture the flat-field
+ * baseline (exposure-tied, per-boot, and still valid precisely because the
+ * exposure is re-applied) -- so cross-boot matching is preserved.
+ *
+ * Passes reset_if_stuck=FALSE: a ForceResetDevice here would take the device
+ * off the bus mid-action. */
+static void
+reinit_done (FpiSsm *init, FpDevice *dev, GError *error)
+{
   FpDeviceEgis0576 *self = FPI_DEVICE_EGIS0576 (dev);
 
-  switch (m->kind)
+  if (error)
     {
-    case M_ENROLL_PROGRESS:
-      fpi_device_enroll_progress (dev, m->stage, NULL, NULL);
-      break;
+      /* Left flagged: the next capture re-initialises eagerly rather than
+       * capturing into a dead pipeline. A cancel is reported as such. */
+      fpi_ssm_mark_failed (self->ssm, error);
+      return;
+    }
+  self->needs_reinit = FALSE;
+  fpi_ssm_jump_to_state (self->ssm, CAP_FRAME);
+}
 
-    case M_ENROLL_RETRY:
-      fpi_device_enroll_progress (dev, m->stage, NULL,
-                                  fpi_device_retry_new (FP_DEVICE_RETRY_CENTER_FINGER));
-      break;
+static void
+reinit_start (FpDeviceEgis0576 *self)
+{
+  /* Until the bring-up succeeds the sensor is in an unknown state (a failed
+   * record leaves a prefix of the vendor sequence, a cancel honoured before
+   * the replay leaves it un-initialised), so the next capture must re-init
+   * eagerly whichever path called us; cleared again on success. */
+  self->needs_reinit = TRUE;
+  fpi_ssm_start (egis_dev_init_ssm (self->sensor, FALSE), reinit_done);
+}
 
-    case M_VERIFY_REPORT:
-      if (m->extract_fail)
-        fpi_device_verify_report (dev, FPI_MATCH_ERROR, NULL,
-                                  fpi_device_retry_new (FP_DEVICE_RETRY_CENTER_FINGER));
-      else
-        fpi_device_verify_report (dev,
-                                  m->score >= EGIS_THRESHOLD ? FPI_MATCH_SUCCESS : FPI_MATCH_FAIL,
-                                  NULL, NULL);
-      break;
+static void
+frame_done (FpiSsm *frame, FpDevice *dev, GError *error)
+{
+  FpDeviceEgis0576 *self = FPI_DEVICE_EGIS0576 (dev);
 
-    case M_IDENTIFY_REPORT:
-      if (m->extract_fail)
+  if (!error)
+    {
+      self->frame_retried = FALSE;
+      fpi_ssm_jump_to_state (self->ssm, CAP_PROCESS);
+      return;
+    }
+  /* Covers the idle-at-suspend case (no vfunc fired, so needs_reinit was
+   * FALSE and the eager path was skipped) and any unfreeze race: on a dead or
+   * silent sensor the frame machine fails in bounded time (~2.6 s worst
+   * case). If we were cancelled meanwhile, leave with a clean cancel instead
+   * of running a re-init. Otherwise re-initialise the sensor once and retry;
+   * give up -- with the real device error -> password fallback -- only if the
+   * re-init or the retried frame also fails. */
+  if (fpi_device_action_is_cancelled (dev) &&
+      !g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
+    {
+      g_error_free (error);
+      error = g_error_new_literal (G_IO_ERROR, G_IO_ERROR_CANCELLED, "cancelled");
+    }
+  if (g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED) || self->frame_retried)
+    {
+      fpi_ssm_mark_failed (self->ssm, error);
+      return;
+    }
+  fp_dbg ("frame capture failed (%s); re-initialising the sensor and retrying",
+          error->message);
+  g_error_free (error);
+  self->frame_retried = TRUE;
+  fpi_ssm_jump_to_state (self->ssm, CAP_RECOVER);
+}
+
+static void
+load_done (GObject *source, GAsyncResult *result, gpointer user_data)
+{
+  FpiSsm *ssm = user_data;
+  GError *error = NULL;
+
+  if (!g_task_propagate_boolean (G_TASK (result), &error))
+    {
+      fpi_ssm_mark_failed (ssm, error);
+      return;
+    }
+  fpi_ssm_next_state (ssm);
+}
+
+static void
+enroll_result (FpDeviceEgis0576 *self, FpiSsm *ssm, const MatchJob *j)
+{
+  FpDevice *dev = FP_DEVICE (self);
+  int r = j->ret;
+
+  if (r == -2 && self->settle_tries < EGIS0576_ENROLL_SETTLE_FRAMES)
+    {
+      /* partial contact: let the press settle, try the next frame */
+      self->settle_tries++;
+      capture_next (self, ssm);
+      return;
+    }
+  self->settle_tries = 0;
+  self->phase = PH_AWAIT_OFF;
+  if (r == 1 || r == 2)
+    {
+      self->enroll_count++;
+      fp_dbg ("enroll stage %u/%u (var %.0f)", self->enroll_count,
+              EGIS0576_ENROLL_STAGES, self->var);
+      fpi_device_enroll_progress (dev, self->enroll_count, NULL, NULL);
+      if (self->enroll_count >= EGIS0576_ENROLL_STAGES)
         {
-          fpi_device_identify_report (dev, NULL, NULL,
-                                      fpi_device_retry_new (FP_DEVICE_RETRY_CENTER_FINGER));
+          fpi_ssm_mark_completed (ssm);
+          return;
+        }
+    }
+  else
+    {
+      /* -2: coverage under the gate; 4: same-press duplicate; 5: same
+       * placement as a stored frame -- all three come back to the user as
+       * "adjust your finger and try again", which is the right hint for
+       * each of them. */
+      fp_dbg ("enroll press refused (code %d) at stage %u/%u (var %.0f)%s",
+              r, self->enroll_count, EGIS0576_ENROLL_STAGES, self->var,
+              r == 5 ? " -- same placement, asking for a shifted press" : "");
+      fpi_device_enroll_progress (dev, self->enroll_count, NULL,
+                                  fpi_device_retry_new (FP_DEVICE_RETRY_CENTER_FINGER));
+    }
+  capture_next (self, ssm);
+}
+
+static void
+match_result (FpDeviceEgis0576 *self, FpiSsm *ssm, const MatchJob *j)
+{
+  FpDevice *dev = FP_DEVICE (self);
+  int score = j->score, idx = j->idx;
+
+  if (score > self->best_score)
+    self->best_score = score;
+  fp_dbg ("%s score %d idx %d (best %d, var %.0f)%s",
+          self->action == FPI_DEVICE_ACTION_VERIFY ? "verify" : "identify",
+          score, idx, self->best_score, self->var,
+          self->cand_valid ? " [candidate held]" : "");
+
+  if (score >= EGIS_THRESHOLD && idx >= 0)
+    {
+      if (j->check_raw && idx == self->cand_idx)
+        {
+          /* second consecutive frame over the threshold for the same print,
+           * and not a byte-identical re-serve */
+          if (j->raw_ok)
+            {
+              fp_dbg ("match confirmed by a second frame (%d, %d)", self->cand_score, score);
+              if (self->action == FPI_DEVICE_ACTION_VERIFY)
+                fpi_device_verify_report (dev, FPI_MATCH_SUCCESS, NULL, NULL);
+              else
+                fpi_device_identify_report (dev,
+                                            idx < (int) self->gallery_prints->len
+                                            ? g_ptr_array_index (self->gallery_prints, idx) : NULL,
+                                            NULL, NULL);
+              fpi_ssm_mark_completed (ssm);
+              return;
+            }
+          fp_dbg ("match not corroborated on the raw frame (flat-field baseline "
+                  "suspect) -- discarded");
+          self->cand_valid = FALSE;
         }
       else
         {
-          FpPrint *match = NULL;
-          if (m->idx >= 0 && self->gallery_prints && m->idx < (gint) self->gallery_prints->len)
-            match = g_ptr_array_index (self->gallery_prints, m->idx);
-          fpi_device_identify_report (dev, match, NULL, NULL);
+          self->cand_valid = TRUE;
+          self->cand_score = score;
+          self->cand_idx = idx;
+          memcpy (self->cand_raw, self->frame, EGIS_IMG);
+        }
+    }
+  else
+    {
+      /* a frame below the threshold breaks the chain: a stale frame stands
+       * alone, a genuine press does not */
+      if (self->cand_valid)
+        fp_dbg ("candidate frame (%d) not confirmed by the next frame (%d) "
+                "-- possible stale capture", self->cand_score, score);
+      self->cand_valid = FALSE;
+    }
+  capture_next (self, ssm);
+}
+
+static void
+match_done (GObject *source, GAsyncResult *result, gpointer user_data)
+{
+  FpDeviceEgis0576 *self = FPI_DEVICE_EGIS0576 (source);
+  FpiSsm *ssm = user_data;
+  const MatchJob *j = g_task_get_task_data (G_TASK (result));
+  GError *error = NULL;
+
+  if (!g_task_propagate_boolean (G_TASK (result), &error))
+    {
+      fpi_ssm_mark_failed (ssm, error);
+      return;
+    }
+  if (self->action == FPI_DEVICE_ACTION_ENROLL)
+    enroll_result (self, ssm, j);
+  else
+    match_result (self, ssm, j);
+}
+
+/* Hand the frame just captured to the matcher, off the main loop. */
+static void
+match_start (FpDeviceEgis0576 *self, FpiSsm *ssm)
+{
+  FpDevice *dev = FP_DEVICE (self);
+  g_autoptr(GTask) task = NULL;
+  MatchJob *j = g_new0 (MatchJob, 1);
+
+  j->engine = self->engine;
+  j->action = self->action;
+  memcpy (j->probe, self->ffframe, EGIS_IMG);
+  memcpy (j->raw, self->frame, EGIS_IMG);
+  j->check_raw = self->cand_valid && memcmp (self->cand_raw, self->frame, EGIS_IMG) != 0;
+  j->cand_idx = self->cand_idx;
+
+  task = g_task_new (dev, fpi_device_get_cancellable (dev), match_done, ssm);
+  g_task_set_source_tag (task, match_thread);
+  g_task_set_check_cancellable (task, TRUE);
+  g_task_set_task_data (task, j, g_free);
+  g_task_run_in_thread (task, match_thread);
+}
+
+/* The main-loop half of a frame: finger detection on the raw variance, the
+ * opportunistic baseline, the flat-field -- microsecond loops -- and the
+ * decision whether the matcher gets to see it. */
+static void
+capture_process (FpDeviceEgis0576 *self, FpiSsm *ssm)
+{
+  FpDevice *dev = FP_DEVICE (self);
+  gdouble var;
+
+  self->var = var = frame_variance (self->frame);   /* finger-on/off uses RAW variance */
+
+  /* Build the flat-field baseline opportunistically from no-finger frames
+   * (before the first press / between presses) -- never blocks, works with
+   * GNOME's immediate "place finger" flow, and caches for the whole boot. */
+  if (var < EGIS0576_BASELINE_MAX_VAR)
+    baseline_feed (self, self->frame);
+
+  /* Per-boot flat-field: subtract the fixed-pattern baseline so a template
+   * enrolled one boot matches a probe from another (without it, cross-boot=0);
+   * a no-op until the baseline exists. Applied identically to enroll + verify
+   * + identify; the matcher's own preprocessing is its own business. */
+  flat_field (self, self->frame, self->ffframe);
+
+  if (self->action == FPI_DEVICE_ACTION_ENROLL)
+    {
+      /* one add per finger press: capture on-press, then wait for lift */
+      if (self->phase == PH_AWAIT_ON)
+        {
+          if (var >= EGIS0576_FINGER_ON_VAR)
+            {
+              report_finger (self, TRUE);
+              match_start (self, ssm);
+              return;
+            }
+          if (var < EGIS0576_FINGER_OFF_VAR && self->settle_tries > 0)
+            {
+              /* lifted before any frame of the press reached the coverage
+               * gate: that press was too light or too partial, say so */
+              fp_dbg ("enroll press lifted after %d partial frames -- retry",
+                      self->settle_tries);
+              self->settle_tries = 0;
+              report_finger (self, FALSE);
+              fpi_device_enroll_progress (dev, self->enroll_count, NULL,
+                                          fpi_device_retry_new (FP_DEVICE_RETRY_CENTER_FINGER));
+            }
+        }
+      else if (var < EGIS0576_FINGER_OFF_VAR)   /* PH_AWAIT_OFF */
+        {
+          self->phase = PH_AWAIT_ON;
+          report_finger (self, FALSE);
+        }
+      capture_next (self, ssm);
+      return;
+    }
+
+  /* VERIFY / IDENTIFY: score EVERY frame while the finger is down. A single
+   * press moves through partial->full contact, and grabbing just the first
+   * frame often caught a poor transitional image; report the result when a
+   * frame pair confirms a match (match_result), or when the finger lifts. */
+  if (var >= EGIS0576_FINGER_ON_VAR)
+    {
+      self->saw_finger = TRUE;
+      report_finger (self, TRUE);
+      match_start (self, ssm);
+      return;
+    }
+  if (var < EGIS0576_FINGER_OFF_VAR && self->saw_finger)
+    {
+      /* finger lifted without a confirmed match. An unconfirmed candidate is
+       * NOT a match (see cand_valid). A press that produced nothing scorable
+       * at all (every frame -1: coverage under the gate) is a placement
+       * problem, not a failed attempt -- ask for a retry instead of spending
+       * one of fprintd's tries. */
+      gboolean nothing = self->best_score < 0;
+
+      if (self->cand_valid)
+        fp_dbg ("finger lifted on an unconfirmed candidate (%d) -- no match", self->cand_score);
+      fp_dbg ("finger lifted, final best %d -> %s", self->best_score,
+              nothing ? "nothing scorable, retry" : "no match");
+      report_finger (self, FALSE);
+      if (self->action == FPI_DEVICE_ACTION_VERIFY)
+        fpi_device_verify_report (dev, nothing ? FPI_MATCH_ERROR : FPI_MATCH_FAIL, NULL,
+                                  nothing ? fpi_device_retry_new (FP_DEVICE_RETRY_CENTER_FINGER) : NULL);
+      else
+        fpi_device_identify_report (dev, NULL, NULL,
+                                    nothing ? fpi_device_retry_new (FP_DEVICE_RETRY_CENTER_FINGER) : NULL);
+      fpi_ssm_mark_completed (ssm);
+      return;
+    }
+  capture_next (self, ssm);
+}
+
+static void
+capture_run_state (FpiSsm *ssm, FpDevice *dev)
+{
+  FpDeviceEgis0576 *self = FPI_DEVICE_EGIS0576 (dev);
+
+  switch (fpi_ssm_get_cur_state (ssm))
+    {
+    case CAP_LOAD:
+      if (self->load)
+        {
+          g_autoptr(GTask) task = g_task_new (dev, fpi_device_get_cancellable (dev),
+                                              load_done, ssm);
+
+          g_task_set_source_tag (task, load_thread);
+          g_task_set_check_cancellable (task, TRUE);
+          g_task_set_task_data (task, g_steal_pointer (&self->load),
+                                (GDestroyNotify) load_job_free);
+          g_task_run_in_thread (task, load_thread);
+        }
+      else
+        {
+          fpi_ssm_next_state (ssm);
         }
       break;
 
-    case M_ENROLL_DONE:
-      finish_teardown (self, dev);
-      if (m->size <= 0 || !m->blob)
+    case CAP_REINIT:
+      /* A suspend/resume since the last frame left the sensor needing
+       * re-initialisation (flag set by the vfuncs): do it before the frame,
+       * so as not to burn a frame timeout on a sensor that cannot answer.
+       * A concurrent cancel comes first: suspend cancels the action, and the
+       * re-init must not run in the fragile post-resume window while we are
+       * being torn down. */
+      if (capture_cancelled (ssm, dev))
+        break;
+      if (self->needs_reinit)
+        reinit_start (self);
+      else
+        fpi_ssm_next_state (ssm);
+      break;
+
+    case CAP_FRAME:
+      if (capture_cancelled (ssm, dev))
+        break;
+      fpi_ssm_start (egis_dev_frame_ssm (self->sensor, self->frame), frame_done);
+      break;
+
+    case CAP_RECOVER:
+      reinit_start (self);
+      break;
+
+    case CAP_PROCESS:
+      if (capture_cancelled (ssm, dev))
+        break;
+      capture_process (self, ssm);
+      break;
+
+    default:
+      g_assert_not_reached ();
+    }
+}
+
+static void
+capture_done (FpiSsm *ssm, FpDevice *dev, GError *error)
+{
+  FpDeviceEgis0576 *self = FPI_DEVICE_EGIS0576 (dev);
+
+  self->ssm = NULL;
+  g_clear_pointer (&self->load, load_job_free);
+  if (error)
+    {
+      g_clear_pointer (&self->gallery_prints, g_ptr_array_unref);
+      fpi_device_action_error (dev, error);
+      return;
+    }
+  g_clear_pointer (&self->gallery_prints, g_ptr_array_unref);
+  if (self->action == FPI_DEVICE_ACTION_ENROLL)
+    {
+      FpPrint *print = NULL;
+      guint8 *blob = NULL;
+      int size = egis_enroll_finish (self->engine, &blob);
+
+      if (size <= 0 || !blob)
         {
           fpi_device_enroll_complete (dev, NULL,
                                       fpi_device_error_new_msg (FP_DEVICE_ERROR_GENERAL,
@@ -348,443 +829,21 @@ idle_handle_msg (gpointer data)
         }
       else
         {
-          FpPrint *print = NULL;
           fpi_device_get_enroll_data (dev, &print);
           fpi_print_set_type (print, FPI_PRINT_RAW);
-          g_object_set (print, "fpi-data", print_wrap_blob (m->blob, m->size), NULL);
-          free (m->blob);                /* libc malloc'd by egis_enroll_finish */
-          m->blob = NULL;
+          g_object_set (print, "fpi-data", print_wrap_blob (blob, size), NULL);
           fpi_device_enroll_complete (dev, g_object_ref (print), NULL);
         }
-      break;
-
-    case M_COMPLETE:
-      {
-        FpiDeviceAction action = fpi_device_get_current_action (dev);
-        finish_teardown (self, dev);
-        if (action == FPI_DEVICE_ACTION_VERIFY)
-          fpi_device_verify_complete (dev, NULL);
-        else
-          fpi_device_identify_complete (dev, NULL);
-      }
-      break;
-
-    case M_ERROR:
-      finish_teardown (self, dev);
-      fpi_device_action_error (dev, g_steal_pointer (&m->error));
-      break;
+      free (blob);                       /* libc malloc'd by egis_enroll_finish */
     }
-
-  g_free (m);
-  return G_SOURCE_REMOVE;
-}
-
-static void
-post_msg (FpDevice *dev, Msg *m)
-{
-  m->dev = dev;
-  g_idle_add (idle_handle_msg, m);
-}
-
-/* Re-run the sensor bring-up on the already-claimed, still-enumerated device —
- * the s2idle recovery. The USB device stayed powered and the interface is still
- * claimed, but the sensor comes back from suspend with its capture pipeline in an
- * unusable state, so the readiness poll + init replay are done again.
- *
- * Deliberately does NOT: re-claim the interface (still claimed -> EBUSY),
- * re-init the host match engine (host state, intact), re-run exposure calibration
- * (it needs a no-finger window we can't guarantee on resume. NOTE: the replay's
- * record 25 block-writes regs 0x09..0x13 and so puts reg 0x0f back to the baked
- * 0x20 — see the register table at the top of egis0576_proto.c — but
- * egis_dev_open re-applies the value the first open()'s calibration found,
- * so the exposure stays the calibrated one across this re-init and across every
- * re-open), or recapture the flat-field baseline (exposure-tied, per-boot, and
- * still valid precisely because the exposure is re-applied) — so cross-boot
- * matching is preserved.
- *
- * Passes reset_if_stuck=FALSE: a ForceResetDevice here would take the device off
- * the bus mid-recovery. If the sensor is unresponsive the flag stays set and the
- * next worker tries again.
- *
- * Blocks ~0.3 s in USB transfers — safe ONLY because it runs in the capture
- * worker thread, never on the fprintd main loop. On failure the device is left
- * flagged so the next worker re-initialises eagerly rather than capturing into a
- * dead pipeline. */
-static gboolean
-worker_reinit (FpDeviceEgis0576 *self, GError **error)
-{
-  GUsbDevice *usb = fpi_device_get_usb_device (FP_DEVICE (self));
-
-  /* Until the bring-up below has succeeded the sensor is in an unknown state
-   * (a cancel is only honoured before or after the replay, never inside it,
-   * but a failed record leaves a prefix of the vendor sequence and a cancel
-   * honoured before the replay leaves the sensor un-initialised), so the NEXT
-   * worker must re-init eagerly whichever path called us; cleared again on
-   * success. */
-  g_atomic_int_set (&self->needs_reinit, TRUE);
-  g_clear_pointer (&self->sensor, egis_dev_free);
-  self->sensor = egis_dev_new (usb);
-  egis_dev_set_calibration (self->sensor, self->dc_c_calibrated);
-  /* The fresh channel must carry this capture's cancellable, or the re-init's
-   * own ~25 x 800 ms of transfers would be uncancellable again. */
-  egis_dev_set_cancellable (self->sensor, self->capture_cancellable);
-  if (!egis_dev_open (self->sensor, FALSE, error))
-    return FALSE;                            /* leave needs_reinit TRUE */
-  g_atomic_int_set (&self->needs_reinit, FALSE);
-  return TRUE;
-}
-
-/* Worker-side cancel test for a failed egis_dev_* call: TRUE if the capture was
- * cancelled — either the flag is up, or egis_dev_* reported
- * G_IO_ERROR_CANCELLED from one of its between-transfer checks. Both are set
- * from the same place (egis0576_cancel / close, flag first), so they agree in
- * practice; checking both keeps a cancelled call from ever being mistaken for
- * a sensor failure that warrants a re-init. Consumes *error when TRUE. */
-static gboolean
-worker_cancelled (FpDeviceEgis0576 *self, GError **error)
-{
-  if (g_atomic_int_get (&self->cancel) ||
-      g_error_matches (*error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
+  else if (self->action == FPI_DEVICE_ACTION_VERIFY)
     {
-      g_clear_error (error);
-      return TRUE;
-    }
-  return FALSE;
-}
-
-/* runs in the worker thread */
-static gpointer
-capture_thread (gpointer data)
-{
-  FpDevice *dev = data;
-  FpDeviceEgis0576 *self = FPI_DEVICE_EGIS0576 (dev);
-  FpiDeviceAction action = fpi_device_get_current_action (dev);
-  CapturePhase phase = PH_AWAIT_ON;
-  gboolean finishing = FALSE;
-  gboolean cancelled = FALSE;    /* left the loop because the capture was cancelled */
-  gboolean saw_finger = FALSE;   /* verify/identify: a press is in progress */
-  int best_score = -1;           /* verify/identify: best score seen this press */
-  /* Two-frame confirmation (verify/identify). A frame over the threshold is
-   * held as a CANDIDATE; success is reported only when the NEXT finger-on
-   * frame also clears the threshold (identify: for the same print), differs
-   * from it byte-wise, and its raw bytes corroborate the accept
-   * (egis_verify_raw_ok). Why: the sensor has been seen re-serving a stale
-   * frame of an earlier press with fresh noise (tsteppy's driver guards for
-   * the same reason), and with "first frame over threshold wins" one such
-   * frame of the enrolled finger unlocks under any finger. A genuine press
-   * clears the threshold on consecutive frames -- measured 60 of 60 presses
-   * on the reference dataset, the accept moving from frame 0.07 to 1.10 on
-   * average, i.e. one frame (~35 ms) of latency. A candidate that the finger
-   * lifts on, or that the next frame contradicts, is never reported as a
-   * match. */
-  gboolean cand_valid = FALSE;
-  int cand_score = -1, cand_idx = -1;
-  int settle_tries = 0;          /* enrol: coverage refusals on the current press */
-  guint8 cand_raw[EGIS_IMG];
-  guint8 ffframe[EGIS_IMG];  /* flat-fielded frame (baseline-subtracted) */
-  BaselineAcc bl = { { 0 }, 0 }; /* opportunistic no-finger baseline accumulator */
-
-  while (!finishing && !g_atomic_int_get (&self->cancel))
-    {
-      GError *error = NULL;
-      gdouble var;
-      const guint8 *probe;
-
-      /* Eager fast-path: a suspend/resume since the last frame left the sensor
-       * needing re-initialisation (flag set by the vfuncs). Re-init HERE (worker
-       * thread, blocking-safe) before getframe so we don't burn a getframe
-       * timeout on a sensor that cannot answer. Honour a concurrent cancel
-       * first: suspend cancels the action, and we must not run the re-init
-       * (~0.3 s of USB on a healthy sensor; on one that has stopped answering
-       * the readiness poll fails first, 10 x 850 ms, and a replay that goes
-       * silent mid-way costs up to 24 x 800 ms) in the fragile post-resume
-       * window when we're being torn down. */
-      if (g_atomic_int_get (&self->needs_reinit) &&
-          !g_atomic_int_get (&self->cancel))
-        {
-          if (!worker_reinit (self, &error))
-            {
-              Msg *m;
-              if (worker_cancelled (self, &error))  /* cancel mid-re-init: not a sensor fault */
-                {
-                  cancelled = TRUE;
-                  break;
-                }
-              m = g_new0 (Msg, 1);
-              m->kind = M_ERROR;
-              m->error = error;              /* -> fpi_device_action_error -> password fallback */
-              post_msg (dev, m);
-              return NULL;
-            }
-        }
-
-      if (!egis_dev_getframe (self->sensor, self->frame, &error))
-        {
-          /* Backstop that also covers the idle-at-suspend case (no vfunc fired,
-           * so needs_reinit was FALSE and the eager path was skipped) and any
-           * unfreeze race: on a dead or silent sensor getframe returns an error
-           * in bounded time (its bulk reads time out — 300 ms per preamble
-           * reply, 800 ms per frame chunk — ~2.6 s worst case). If we were
-           * cancelled (suspend, VerifyStop, close) — flag up, or a check between
-           * transfers saw the cancel — leave with a clean cancel instead of
-           * running a re-init. Otherwise re-initialise the sensor once via
-           * worker_reinit (readiness poll + vendor replay, reset_if_stuck=FALSE),
-           * in this worker thread, and retry, re-checking for a cancel between
-           * the two steps. Give up — with the real device error -> password
-           * fallback — only if the re-init or the retry getframe also fails for
-           * a reason other than a cancel. */
-          if (worker_cancelled (self, &error))
-            {
-              cancelled = TRUE;
-              break;
-            }
-          fp_dbg ("getframe failed (%s); re-initialising the sensor and retrying",
-                  error ? error->message : "?");
-          g_clear_error (&error);
-
-          if (!worker_reinit (self, &error))
-            {
-              Msg *m;
-              if (worker_cancelled (self, &error))
-                {
-                  cancelled = TRUE;
-                  break;
-                }
-              m = g_new0 (Msg, 1);
-              m->kind = M_ERROR;
-              m->error = error;
-              post_msg (dev, m);
-              return NULL;
-            }
-          if (g_atomic_int_get (&self->cancel))
-            {
-              cancelled = TRUE;
-              break;
-            }
-          if (!egis_dev_getframe (self->sensor, self->frame, &error))
-            {
-              Msg *m;
-              if (worker_cancelled (self, &error))
-                {
-                  cancelled = TRUE;
-                  break;
-                }
-              m = g_new0 (Msg, 1);
-              m->kind = M_ERROR;
-              m->error = error;
-              post_msg (dev, m);
-              return NULL;
-            }
-        }
-      var = frame_variance (self->frame);   /* finger-on/off uses RAW variance */
-
-
-      /* Build the flat-field baseline opportunistically from no-finger frames
-       * (before the first press / between presses) — never blocks, works with
-       * GNOME's immediate "place finger" flow, and caches for the whole boot. */
-      if (var < EGIS0576_BASELINE_MAX_VAR)
-        baseline_feed (self, &bl, self->frame);
-
-      /* (1) per-boot flat-field: subtract the fixed-pattern baseline so a template
-       * enrolled one boot matches a probe from another (without it, cross-boot=0);
-       * a no-op until the baseline exists. (2) BYTE-EXACT Windows preprocessing
-       * (min-subtract, invert, auto-brightness, Otsu-stretch, flip) — validated on
-       * fp_final (8/10). Applied identically to enroll + verify + identify. */
-      flat_field (self, self->frame, ffframe);
-      probe = ffframe;
-
-      if (action == FPI_DEVICE_ACTION_ENROLL)
-        {
-          /* one add per finger press: capture on-press, then wait for lift */
-          if (phase == PH_AWAIT_ON)
-            {
-              if (var >= EGIS0576_FINGER_ON_VAR)
-                {
-                  Msg *m;
-                  int prog = 0;
-                  int r;
-                  r = egis_enroll_add (self->engine, probe, &prog);
-                  if (r == -2 && settle_tries < EGIS0576_ENROLL_SETTLE_FRAMES)
-                    {
-                      /* partial contact: let the press settle, try the next frame */
-                      settle_tries++;
-                      g_usleep (EGIS0576_POLL_SLEEP_US);
-                      continue;
-                    }
-                  m = g_new0 (Msg, 1);
-                  settle_tries = 0;
-                  if (r == 1 || r == 2)
-                    {
-                      self->enroll_count++;
-                      fp_dbg ("enroll stage %u/%u (var %.0f)", self->enroll_count,
-                              EGIS0576_ENROLL_STAGES, var);
-                      m->kind = M_ENROLL_PROGRESS;
-                      m->stage = self->enroll_count;
-                      finishing = (self->enroll_count >= EGIS0576_ENROLL_STAGES);
-                    }
-                  else
-                    {
-                      /* -2: coverage under the gate; 4: same-press duplicate;
-                       * 5: same placement as a stored frame -- all three come
-                       * back to the user as "adjust your finger and try again",
-                       * which is the right hint for each of them. */
-                      fp_dbg ("enroll press refused (code %d) at stage %u/%u (var %.0f)%s",
-                              r, self->enroll_count, EGIS0576_ENROLL_STAGES, var,
-                              r == 5 ? " -- same placement, asking for a shifted press" : "");
-                      m->kind = M_ENROLL_RETRY;
-                      m->stage = self->enroll_count;
-                    }
-                  post_msg (dev, m);
-                  phase = PH_AWAIT_OFF;
-                }
-              else if (var < EGIS0576_FINGER_OFF_VAR && settle_tries > 0)
-                {
-                  /* lifted before any frame of the press reached the coverage
-                   * gate: that press was too light or too partial, say so */
-                  Msg *m = g_new0 (Msg, 1);
-                  fp_dbg ("enroll press lifted after %d partial frames -- retry", settle_tries);
-                  settle_tries = 0;
-                  m->kind = M_ENROLL_RETRY;
-                  m->stage = self->enroll_count;
-                  post_msg (dev, m);
-                }
-            }
-          else /* PH_AWAIT_OFF */
-            {
-              if (var < EGIS0576_FINGER_OFF_VAR)
-                phase = PH_AWAIT_ON;
-            }
-        }
-      else /* VERIFY / IDENTIFY: score EVERY frame while the finger is down and
-            * keep the best. A single press moves through partial->full contact;
-            * grabbing just the first frame (as before) often caught a poor
-            * transitional image (score 0). Report SUCCESS as soon as any frame
-            * crosses the threshold; report the final result when the finger
-            * lifts. This makes a genuine finger match reliably within one press. */
-        {
-          if (var >= EGIS0576_FINGER_ON_VAR)
-            {
-              saw_finger = TRUE;
-              {
-                int score, idx;
-                if (action == FPI_DEVICE_ACTION_VERIFY)
-                  {
-                    idx = 0;
-                    score = egis_verify (self->engine, probe, 0);
-                  }
-                else
-                  {
-                    idx = -1;
-                    score = egis_identify (self->engine, probe, &idx);
-                  }
-                if (score > best_score)
-                  best_score = score;
-                fp_dbg ("%s score %d idx %d (best %d, var %.0f)%s",
-                        action == FPI_DEVICE_ACTION_VERIFY ? "verify" : "identify",
-                        score, idx, best_score, var, cand_valid ? " [candidate held]" : "");
-
-                if (score >= EGIS_THRESHOLD && idx >= 0)
-                  {
-                    if (cand_valid && idx == cand_idx
-                        && memcmp (cand_raw, self->frame, EGIS_IMG) != 0)
-                      {
-                        /* second consecutive frame over the threshold for the
-                         * same print, and not a byte-identical re-serve */
-                        if (egis_verify_raw_ok (self->engine, self->frame, idx))
-                          {
-                            Msg *m = g_new0 (Msg, 1);
-                            m->kind = action == FPI_DEVICE_ACTION_VERIFY
-                                      ? M_VERIFY_REPORT : M_IDENTIFY_REPORT;
-                            m->score = MAX (score, cand_score);
-                            m->idx = idx;
-                            fp_dbg ("match confirmed by a second frame (%d, %d)",
-                                    cand_score, score);
-                            post_msg (dev, m);
-                            finishing = TRUE;
-                          }
-                        else
-                          {
-                            fp_warn ("match not corroborated on the raw frame "
-                                     "(flat-field baseline suspect) -- discarded");
-                            cand_valid = FALSE;
-                          }
-                      }
-                    else
-                      {
-                        cand_valid = TRUE;
-                        cand_score = score;
-                        cand_idx = idx;
-                        memcpy (cand_raw, self->frame, EGIS_IMG);
-                      }
-                  }
-                else
-                  {
-                    /* a frame below the threshold breaks the chain: a stale
-                     * frame stands alone, a genuine press does not */
-                    if (cand_valid)
-                      fp_warn ("candidate frame (%d) not confirmed by the next "
-                               "frame (%d) -- possible stale capture", cand_score, score);
-                    cand_valid = FALSE;
-                  }
-              }
-            }
-          else if (var < EGIS0576_FINGER_OFF_VAR && saw_finger)
-            {
-              /* finger lifted without a confirmed match. An unconfirmed
-               * candidate is NOT a match (see cand_valid above), so the
-               * reported score is capped below the threshold. A press that
-               * produced nothing scorable at all (every frame -1: coverage
-               * under the gate) is a placement problem, not a failed
-               * attempt -- ask for a retry instead of spending one of
-               * fprintd's tries. */
-              Msg *m = g_new0 (Msg, 1);
-              if (action == FPI_DEVICE_ACTION_VERIFY)
-                {
-                  m->kind = M_VERIFY_REPORT;
-                  m->score = best_score < 0 ? 0 : MIN (best_score, EGIS_THRESHOLD - 1);
-                }
-              else
-                {
-                  m->kind = M_IDENTIFY_REPORT;
-                  m->idx = -1;
-                }
-              m->extract_fail = (best_score < 0);
-              if (cand_valid)
-                fp_warn ("finger lifted on an unconfirmed candidate (%d) -- no match",
-                         cand_score);
-              fp_dbg ("finger lifted, final best %d -> %s", best_score,
-                      best_score < 0 ? "nothing scorable, retry" : "no match");
-              post_msg (dev, m);
-              finishing = TRUE;
-            }
-        }
-
-      g_usleep (EGIS0576_POLL_SLEEP_US);
-    }
-
-  if (cancelled || g_atomic_int_get (&self->cancel))
-    {
-      Msg *m = g_new0 (Msg, 1);
-      m->kind = M_ERROR;
-      m->error = g_error_new (G_IO_ERROR, G_IO_ERROR_CANCELLED, "cancelled");
-      post_msg (dev, m);
-      return NULL;
-    }
-
-  if (action == FPI_DEVICE_ACTION_ENROLL)
-    {
-      Msg *m = g_new0 (Msg, 1);
-      m->kind = M_ENROLL_DONE;
-      m->size = egis_enroll_finish (self->engine, &m->blob);
-      post_msg (dev, m);
+      fpi_device_verify_complete (dev, NULL);
     }
   else
     {
-      Msg *m = g_new0 (Msg, 1);
-      m->kind = M_COMPLETE;
-      post_msg (dev, m);
+      fpi_device_identify_complete (dev, NULL);
     }
-  return NULL;
 }
 
 static void
@@ -792,39 +851,80 @@ start_capture (FpDevice *dev)
 {
   FpDeviceEgis0576 *self = FPI_DEVICE_EGIS0576 (dev);
 
-  g_atomic_int_set (&self->cancel, FALSE);
-
-  /* Fresh cancellable per capture (see the struct for ownership). The previous
-   * one was released in finish_teardown after its worker was joined, so this
-   * can only be NULL here; a leftover would mean a worker is still running,
-   * which libfprint's one-action-at-a-time contract rules out. It is attached
-   * to the channel BEFORE the thread exists so the worker never observes it
-   * changing. */
-  if (G_UNLIKELY (self->capture_cancellable != NULL))
-    {
-      /* A leftover means a worker is (or was) still running: an invariant
-       * violation, not a state to continue from. But the action must not be
-       * abandoned either -- libfprint would keep it as current forever and
-       * every later call, close included, would fail BUSY. Fail it cleanly. */
-      g_warn_if_reached ();
-      fpi_device_action_error (dev, fpi_device_error_new_msg (FP_DEVICE_ERROR_BUSY,
-                                                              "EH576: a capture is already running"));
-      return;
-    }
-  self->capture_cancellable = g_cancellable_new ();
-  egis_dev_set_cancellable (self->sensor, self->capture_cancellable);
+  self->action = fpi_device_get_current_action (dev);
+  self->phase = PH_AWAIT_ON;
+  self->finger_present = FALSE;
+  self->frame_retried = FALSE;
+  self->settle_tries = 0;
+  self->saw_finger = FALSE;
+  self->best_score = -1;
+  self->cand_valid = FALSE;
+  self->cand_score = -1;
+  self->cand_idx = -1;
+  memset (&self->bl, 0, sizeof self->bl);
 
   fpi_device_report_finger_status_changes (dev,
                                            FP_FINGER_STATUS_NEEDED,
                                            FP_FINGER_STATUS_NONE);
-  self->thread = g_thread_new ("egis0576-capture", capture_thread, dev);
+  self->ssm = fpi_ssm_new_full (dev, capture_run_state, CAP_NUM_STATES,
+                                CAP_NUM_STATES, "capture");
+  fpi_ssm_start (self->ssm, capture_done);
 }
 
 /* ------------------------------------------------------------------ */
 /* Device vfuncs                                                      */
 /* ------------------------------------------------------------------ */
 
-static void egis0576_cancel (FpDevice *dev);   /* used by egis0576_close */
+static void
+open_fail (FpDevice *dev, GError *error)
+{
+  FpDeviceEgis0576 *self = FPI_DEVICE_EGIS0576 (dev);
+
+  g_clear_pointer (&self->sensor, egis_dev_free);
+  g_usb_device_release_interface (fpi_device_get_usb_device (dev), EGIS0576_INTF, 0, NULL);
+  fpi_device_open_complete (dev, error);
+}
+
+static void
+open_calibrate_done (FpiSsm *cal, FpDevice *dev, GError *error)
+{
+  FpDeviceEgis0576 *self = FPI_DEVICE_EGIS0576 (dev);
+
+  /* Non-fatal: the search is simply retried at the next open (see
+   * egis_dev_calibrate_ssm). */
+  if (error)
+    {
+      fp_dbg ("exposure calibration skipped: %s", error->message);
+      g_error_free (error);
+    }
+  self->dc_c_calibrated = egis_dev_get_calibration (self->sensor);
+  self->needs_reinit = FALSE;
+  fpi_device_open_complete (dev, NULL);
+}
+
+static void
+open_init_done (FpiSsm *init, FpDevice *dev, GError *error)
+{
+  FpDeviceEgis0576 *self = FPI_DEVICE_EGIS0576 (dev);
+
+  if (error)
+    {
+      open_fail (dev, error);
+      return;
+    }
+  if (egis_dev_get_calibration (self->sensor) >= 0)
+    {
+      open_calibrate_done (NULL, dev, NULL);
+      return;
+    }
+  /* One-time per-device exposure calibration (the vendor's calibrate_gain),
+   * before any capture and once per fprintd lifetime. A binary search over reg
+   * 0x0f converges the no-finger frame mean to a fixed target, so the exposure
+   * is the SAME on any EH576 unit -- this is what makes the driver
+   * device-independent (the baked init values belong to one unit). No finger
+   * is expected at open. */
+  fpi_ssm_start (egis_dev_calibrate_ssm (self->sensor), open_calibrate_done);
+}
 
 static void
 egis0576_open (FpDevice *dev)
@@ -841,40 +941,16 @@ egis0576_open (FpDevice *dev)
                                                           "Failed to initialise the match engine"));
       return;
     }
-  g_usb_device_claim_interface (fpi_device_get_usb_device (dev),
-                                EGIS0576_INTF, 0, &error);
-  if (error)
+  if (!g_usb_device_claim_interface (fpi_device_get_usb_device (dev),
+                                     EGIS0576_INTF, 0, &error))
     {
       fpi_device_open_complete (dev, error);
       return;
     }
 
-  self->sensor = egis_dev_new (fpi_device_get_usb_device (dev));
+  self->sensor = egis_dev_new (dev);
   egis_dev_set_calibration (self->sensor, self->dc_c_calibrated);
-  if (!egis_dev_open (self->sensor, TRUE, &error))
-    {
-      g_clear_pointer (&self->sensor, egis_dev_free);
-      g_usb_device_release_interface (fpi_device_get_usb_device (dev),
-                                      EGIS0576_INTF, 0, NULL);
-      fpi_device_open_complete (dev, error);
-      return;
-    }
-  /* One-time per-device exposure calibration (the vendor's calibrate_gain),
-   * before any capture and once per fprintd lifetime. A binary search over reg
-   * 0x0f converges the no-finger frame mean to a fixed target, so the exposure is
-   * the SAME on any EH576 unit — this is what makes the driver device-independent
-   * (the baked init values belong to one unit). Validated on the reference unit:
-   * reliable verify-match at ~7500. No finger is expected at open. Non-fatal
-   * (on error the search is simply retried at the next open; see
-   * egis_dev_calibrate). */
-  if (!egis_dev_calibrate (self->sensor, &error))
-    {
-      fp_dbg ("exposure calibration skipped: %s", error ? error->message : "?");
-      g_clear_error (&error);
-    }
-  self->dc_c_calibrated = egis_dev_get_calibration (self->sensor);
-  g_atomic_int_set (&self->needs_reinit, FALSE);
-  fpi_device_open_complete (dev, NULL);
+  fpi_ssm_start (egis_dev_init_ssm (self->sensor, TRUE), open_init_done);
 }
 
 static void
@@ -883,37 +959,8 @@ egis0576_close (FpDevice *dev)
   FpDeviceEgis0576 *self = FPI_DEVICE_EGIS0576 (dev);
   GError *error = NULL;
 
-  /* Normally unreachable: libfprint refuses close while an action is current,
-   * and the worker only exists between start_capture and the terminal message
-   * that completes the action (finish_teardown joins it first), so by the time
-   * close can run there is no thread. Kept as a defensive backstop should that
-   * ever change (a close racing a cancel/resume): the worker owns self->sensor,
-   * so it must be stopped and joined before the session is freed, or it would
-   * touch freed memory.
-   *
-   * If it ever IS reached while the worker is busy, the cancel below is seen
-   * at the worker's next cancellation point and this join blocks the main
-   * thread until it gets there. In the capture loop that is the end of the
-   * current transfer sequence (a getframe, ~2.6 s worst case on a silent
-   * sensor); inside worker_reinit it is the end of the vendor replay, which
-   * is deliberately uncancellable as a unit -- up to ~25 records x 800 ms if
-   * the sensor has stopped answering. The join cannot deadlock: the transport
-   * completes transfers on a private GMainContext the worker iterates itself,
-   * so it never needs this thread's default context (it did before v0.4.3,
-   * see docs/worker-thread.md). Stalling fprintd's main loop for seconds is
-   * still wrong, which is why the path must stay unreachable, and why it
-   * warns rather than pretending to be free. */
-  if (self->thread)
-    {
-      g_warn_if_reached ();              /* see above: must not happen */
-      egis0576_cancel (dev);
-      g_thread_join (self->thread);
-      self->thread = NULL;
-    }
-  /* Joined (or never started): safe to detach and release the cancellable. */
-  if (self->sensor)
-    egis_dev_set_cancellable (self->sensor, NULL);
-  g_clear_object (&self->capture_cancellable);
+  /* No action can be current here (libfprint refuses close while one is),
+   * so no machine of ours is running and no transfer is in flight. */
   g_clear_pointer (&self->sensor, egis_dev_free);
   g_usb_device_release_interface (fpi_device_get_usb_device (dev),
                                   EGIS0576_INTF, 0, &error);
@@ -941,10 +988,14 @@ egis0576_verify (FpDevice *dev)
 {
   FpDeviceEgis0576 *self = FPI_DEVICE_EGIS0576 (dev);
   FpPrint *print = NULL;
+  g_autoptr(GPtrArray) prints = g_ptr_array_new ();
 
   fpi_device_get_verify_data (dev, &print);
-  if (!load_one_print (self, print))
+  g_ptr_array_add (prints, print);
+  self->load = load_job_new (self, prints);
+  if (!self->load)
     {
+      g_clear_pointer (&self->gallery_prints, g_ptr_array_unref);
       fpi_device_verify_complete (dev,
                                   fpi_device_error_new_msg (FP_DEVICE_ERROR_DATA_INVALID,
                                                             "Stored print has no valid egis0576 template"));
@@ -958,59 +1009,28 @@ egis0576_identify (FpDevice *dev)
 {
   FpDeviceEgis0576 *self = FPI_DEVICE_EGIS0576 (dev);
   GPtrArray *prints = NULL;
-  g_autofree const guint8 **blobs = NULL;
-  g_autofree int *sizes = NULL;
-  g_autoptr(GPtrArray) vars = g_ptr_array_new_with_free_func ((GDestroyNotify) g_variant_unref);
-  guint n = 0, cap = (guint) MAX (egis_gallery_capacity (self->engine), 1);
-
-  g_clear_pointer (&self->gallery_prints, g_ptr_array_unref);
-  self->gallery_prints = g_ptr_array_new ();   /* borrowed refs, gallery order */
+  guint cap = (guint) MAX (egis_gallery_capacity (self->engine), 1);
 
   fpi_device_get_identify_data (dev, &prints);
   if (prints && prints->len > cap)
     {
       /* fprintd passes every print of the user; matching only a prefix would
        * make the later fingers silently unusable for login. Fail loudly
-       * instead (the vendor engine holds 5, the clean-room flavours 16). */
-      g_clear_pointer (&self->gallery_prints, g_ptr_array_unref);
+       * instead. */
       fpi_device_identify_complete (dev,
                                     fpi_device_error_new_msg (FP_DEVICE_ERROR_DATA_INVALID,
                                                               "%u prints to match but this matcher holds at most %u; "
                                                               "delete some enrolled fingers", prints->len, cap));
       return;
     }
-  blobs = g_new0 (const guint8 *, prints ? prints->len + 1 : 1);
-  sizes = g_new0 (int, prints ? prints->len + 1 : 1);
-  for (guint i = 0; prints && i < prints->len; i++)
+  self->load = prints ? load_job_new (self, prints) : NULL;
+  if (!self->load)
     {
-      FpPrint *print = g_ptr_array_index (prints, i);
-      GVariant *var = NULL;
-      gsize len = 0;
-      const guint8 *blob = print_get_blob (print, &var, &len);
-      if (blob && len)
-        {
-          g_ptr_array_add (vars, var);
-          g_ptr_array_add (self->gallery_prints, print);
-          blobs[n] = blob;
-          sizes[n] = (int) len;
-          n++;
-        }
-    }
-  if (n == 0)
-    {
-      /* Empty gallery — fprintd's pre-enroll duplicate check with nothing
+      /* Empty gallery -- fprintd's pre-enroll duplicate check with nothing
        * enrolled. Trivially "no match": finish without touching the sensor. */
       g_clear_pointer (&self->gallery_prints, g_ptr_array_unref);
       fpi_device_identify_report (dev, NULL, NULL, NULL);
       fpi_device_identify_complete (dev, NULL);
-      return;
-    }
-  if (egis_gallery_load (self->engine, blobs, sizes, n) != 0)
-    {
-      g_clear_pointer (&self->gallery_prints, g_ptr_array_unref);
-      fpi_device_identify_complete (dev,
-                                    fpi_device_error_new_msg (FP_DEVICE_ERROR_DATA_INVALID,
-                                                              "No valid egis0576 templates to match"));
       return;
     }
   start_capture (dev);
@@ -1019,29 +1039,14 @@ egis0576_identify (FpDevice *dev)
 static void
 egis0576_cancel (FpDevice *dev)
 {
-  FpDeviceEgis0576 *self = FPI_DEVICE_EGIS0576 (dev);
-
+  /* Nothing to do: the capture machine and the transport's machines consult
+   * the action's cancellable at every transfer-sequence boundary (they never
+   * hand it to a transfer, see egis0576_proto.c), and the matcher task checks
+   * it too. The action ends with G_IO_ERROR_CANCELLED at the next boundary:
+   * at most one frame sequence (~2.6 s on a sensor that has stopped
+   * answering, ~0.1 s on a healthy one), the init replay (~0.3 s), or one
+   * readiness-poll iteration (850 ms). */
   fp_dbg ("cancelling");
-
-  /* Order matters: the flag goes up first, then the cancellable is triggered.
-   * The worker's transport polls the cancellable between transfers (it is never
-   * handed to gusb, so nothing wakes the worker) and egis_dev_* then fail with
-   * G_IO_ERROR_CANCELLED, which worker_cancelled treats as "check the flag";
-   * g_cancellable_cancel is a full barrier, so a worker that sees the cancelled
-   * state is guaranteed to also see the flag. Setting only the flag (as before)
-   * left the worker to wait out whole transfer SEQUENCES -- on a sensor that
-   * stopped answering, a failed getframe plus the re-init's wait_ready is
-   * ~11 s, and a replay stalling mid-way is ~19 s (24 reads x 800 ms); the
-   * cancellable is polled at every transfer boundary, so now it waits for at
-   * most the one transfer SEQUENCE in flight (a getframe: ~2.6 s on a dead
-   * sensor; the init replay, which is one unit: ~0.3 s; one readiness-poll
-   * iteration: 850 ms -- see egis0576_proto.h; it is never handed to gusb --
-   * aborting a URB wedges this sensor, see egis0576_proto.c). NULL when no
-   * capture is running. Main thread only, like every other writer of these
-   * fields. */
-  g_atomic_int_set (&self->cancel, TRUE);
-  if (self->capture_cancellable)
-    g_cancellable_cancel (self->capture_cancellable);
 }
 
 static void
@@ -1051,23 +1056,19 @@ egis0576_suspend (FpDevice *dev)
 
   fp_dbg ("suspend: flagging the sensor for re-init, cancelling in-flight capture");
 
-  /* The sensor does not come back from s2idle usable (it stays powered, but the
-   * capture pipeline is wedged). Flag it so the next capture re-runs the vendor
-   * bring-up in the worker. */
-  g_atomic_int_set (&self->needs_reinit, TRUE);
+  /* The sensor does not come back from s2idle usable (it stays powered, but
+   * the capture pipeline is wedged). Flag it so the next capture re-runs the
+   * vendor bring-up first. */
+  self->needs_reinit = TRUE;
 
-  /* Cancel the running action exactly as egismoc does (egismoc.c:1571-1578):
-   * stop our worker via egis0576_cancel — which sets self->cancel AND cancels
-   * the per-capture cancellable, so the worker stops at the next transfer
-   * boundary instead of finishing a whole re-init sequence — and cancel the
-   * device cancellable so libfprint/fprintd sees the
-   * action end. Complete with NULL: we are NOT promising the *current* action
-   * survives (we are cancelling it), and NULL takes suspend_complete's immediate
-   * return path (fpi-device.c:1815-1823) without libfprint ALSO cancelling with
-   * its own FP_DEVICE_ERROR_BUSY. fprintd re-issues verify/identify on resume,
-   * which re-initialises the sensor (worker_reinit) in the worker thread. Do NO
-   * USB here — this is the fprintd main loop. */
-  egis0576_cancel (dev);
+  /* Cancel the running action, as egismoc does: the capture machine sees the
+   * cancellable at its next boundary and the action ends with
+   * G_IO_ERROR_CANCELLED. Complete with NULL: we are NOT promising the
+   * *current* action survives (we are cancelling it), and NULL takes
+   * suspend_complete's immediate return path without libfprint ALSO
+   * cancelling with its own FP_DEVICE_ERROR_BUSY. fprintd re-issues
+   * verify/identify on resume, which re-initialises the sensor in the
+   * capture machine. No USB here. */
   g_cancellable_cancel (fpi_device_get_cancellable (dev));
   fpi_device_suspend_complete (dev, NULL);
 }
@@ -1078,13 +1079,12 @@ egis0576_resume (FpDevice *dev)
   FpDeviceEgis0576 *self = FPI_DEVICE_EGIS0576 (dev);
 
   /* Defensive: also flag here in case an action somehow survived to resume
-   * (keep-alive / unfreeze race). No USB — this is the main loop. The worker
-   * consumes the flag; if a worker is mid-getframe on a dead sensor, its
-   * bounded getframe-failure path re-initialises the sensor and retries. In
-   * the normal flow suspend cancelled the action, so current_action == NONE
-   * and libfprint completes resume itself without ever calling this
-   * (fpi-device.c:1655-1666). */
-  g_atomic_int_set (&self->needs_reinit, TRUE);
+   * (keep-alive / unfreeze race). No USB. The capture machine consumes the
+   * flag; if one is mid-frame on a dead sensor, its bounded frame-failure
+   * path re-initialises the sensor and retries. In the normal flow suspend
+   * cancelled the action, so current_action == NONE and libfprint completes
+   * resume itself without ever calling this. */
+  self->needs_reinit = TRUE;
   fpi_device_resume_complete (dev, NULL);
 }
 

@@ -1,6 +1,15 @@
 /* egis0576_proto.c — plaintext EGIS/SIGE protocol to the EgisTec EH576.
- * Blocking gusb bulk transfers driven by the async API on a private
- * GMainContext (see the USB section); no crypto, no session state. */
+ * FpiSsm machines over FpiUsbTransfer on the device main loop; no crypto, no
+ * session state, no thread.
+ *
+ * This library is free software; you can redistribute it and/or modify it under
+ * the terms of the GNU Lesser General Public License as published by the Free
+ * Software Foundation; either version 2.1 of the License, or (at your option)
+ * any later version.
+ */
+#define FP_COMPONENT "egis0576"
+
+#include "drivers_api.h"
 #include "egis0576_proto.h"
 #include "egis_init.h"
 #include <string.h>
@@ -34,251 +43,663 @@
  * a per-finger auto-exposure pass; we anchor instead to the reference unit's
  * well-matching level (~0x58), which is a no-op there and adaptive elsewhere. */
 #define EGIS_EXPOSURE_TARGET 0x58
+#define EGIS_CAL_ITERATIONS  6
+
+/* Transfer sizes and timeouts (ms). The reply timeouts are the vendor's; a
+ * healthy sensor answers a register read in ~1 ms and delivers a frame in
+ * ~30 ms, so a timeout only ever fires on a sensor that has stopped talking. */
+#define EGIS_REPLY_LEN       64
+#define EGIS_CHUNK           4096
+#define EGIS_OUT_TIMEOUT     3000
+#define EGIS_READ_TIMEOUT    800    /* register read reply, init record reply, frame chunk */
+#define EGIS_WRITE_TIMEOUT   300    /* register write reply, frame preamble reply */
+#define EGIS_DRAIN_TIMEOUT   30
+#define EGIS_RESET_TIMEOUT   500
+#define EGIS_DRAIN_MAX       8
+#define EGIS_READY_TRIES     10
+#define EGIS_READY_GAP_MS    50
+#define EGIS_UPLOAD_CHUNKS   8      /* payload records following the record-15 upload command */
 
 struct EgisDev {
-  GUsbDevice   *usb;
-  GCancellable *cancellable; /* borrowed (see egis_dev_set_cancellable); NULL = uncancellable */
-  unsigned char dc_c;        /* cached reg 0x0f */
-  int           dc_c_calibrated; /* what egis_dev_calibrate found, or -1. Handed in by
-                                  * the owner (egis_dev_set_calibration) because it must
-                                  * outlive this EgisDev: the driver opens a fresh one per
-                                  * open() and per re-init, and the replay resets reg 0x0f
-                                  * to the baked value every time. */
+  FpDevice *dev;                /* borrowed */
+  int       dc_c;               /* cached reg 0x0f */
+  int       dc_c_calibrated;    /* what the calibration found, or -1. Handed in by the
+                                 * owner (egis_dev_set_calibration) because it must outlive
+                                 * this EgisDev: the driver opens a fresh one per open(),
+                                 * and the replay resets reg 0x0f to the baked value every
+                                 * time. */
+
+  /* Per-machine scratch. The machines below never run concurrently except
+   * calibrate, which runs frame as its sub-machine; their fields are disjoint. */
+  gboolean  reset_if_stuck;     /* init */
+  int       drains;
+  int       ready_tries;
+  int       record;
+  int       in_upload;
+  gboolean  in_critical;
+
+  guint8   *img;                /* frame */
+  int       got;
+  int       step;
+
+  guint8    cal_img[EGIS_IMG];  /* calibrate */
+  int       cal_lo, cal_hi, cal_mid, cal_best, cal_best_diff, cal_it;
 };
 
 /* ---------------------------------------------------------------- USB ---- */
 
-/* Every transfer below blocks the calling thread until it completes or times
- * out. The caller is the capture worker for everything a capture does
- * (re-init when needed, GetFrame), and the fprintd MAIN thread for the
- * one-time bring-up in the open() vfunc (readiness poll, ForceReset, replay,
- * exposure calibration) -- libfprint dispatches open() inline and this driver
- * does not spawn a thread for it. Blocking is done by running the ASYNC gusb
- * API against a private GMainContext, not by calling gusb's own synchronous
- * wrappers. The distinction matters -- it is the fix for a lost-wakeup hang
- * found on 2026-09-13 (docs/worker-thread.md):
- *
- * gusb's g_usb_device_bulk_transfer() spins a GMainLoop on the GUsbContext's
- * main context, which is the DEFAULT GMainContext -- the one the fprintd main
- * thread owns for the lifetime of its g_main_loop_run. The GTask behind the
- * transfer completes on the thread-default context of the thread that created
- * it, and on the worker that is also the default context. So the completion
- * idle -- and with it the g_main_loop_quit that is meant to release the worker
- * -- is dispatched by the MAIN thread. If that quit lands after
- * libusb_submit_transfer but before the worker has entered g_main_loop_run,
- * its effect is lost: g_main_loop_quit clears is_running (already clear) and
- * broadcasts the context's condition variable, but nobody is waiting on it
- * yet. The worker's g_main_loop_run then fails to acquire the context (the
- * main thread owns it), only THEN sets is_running = TRUE -- overwriting the
- * quit -- and waits on that condition variable forever (glib gmain.c,
- * g_main_loop_run / g_main_loop_quit). Seen on hardware: helper.ret already 7
- * (the bulk OUT had completed), libusb with no transfer in flight, the loop's
- * is_running set, the worker parked in
- * g_main_context_wait_internal, and fprintd never answering the verify.
- *
- * Verified against gusb 0.4.9 (gusb-device.c): g_usb_device_bulk_transfer_async
- * and g_usb_device_control_transfer_async both create their GTask with
- * g_task_new() after entry -- for the real (non-emulated) device path directly
- * before libusb_submit_transfer -- and neither pushes or pops a thread-default
- * context of its own. g_task_new captures g_main_context_ref_thread_default()
- * at that moment. So with a private context pushed as thread-default around the
- * async call, the completion idle is attached to THAT context, which only this
- * thread iterates, inside g_main_loop_run, i.e. after is_running is set. No
- * other thread can quit the loop, nothing can be lost, and the worker no longer
- * depends on the main thread making progress at all. (gusb's internal libusb
- * event thread, "GUsbEventThread", still signals completion via g_task_return;
- * it is not inside a source dispatch, so GTask always queues the completion
- * as an idle on the task's context -- ours -- instead of the default one.)
- *
- * On the main thread (open()) the same helper is safe for the same reason, and
- * it is a behaviour change worth knowing: the fresh context is unowned, so
- * g_main_loop_run acquires it and the completion lands on it. Before v0.4.3
- * gusb's sync wrapper nested a loop on the DEFAULT context here, re-entrantly
- * dispatching fprintd's own sources (D-Bus and all) from inside open(); now
- * they are simply not dispatched for the duration of the bring-up, which is
- * what a blocking open() should look like.
- *
- * RULE: never call the gusb sync API (g_usb_device_bulk_transfer,
- * _control_transfer, _interrupt_transfer) from a thread that does not own the
- * GUsbContext's main context. */
+/* Every transfer below is submitted with a NULL GCancellable, deliberately.
+ * fpi_usb_transfer_submit forwards a cancellable to gusb, which aborts the URB
+ * (libusb_cancel_transfer) when it fires. Measured on the reference unit
+ * (docs/sensor-tuning.md §4): aborting an in-flight bulk transfer wedged the
+ * sensor at USB level -- bulk OUT NAKed for 3 s timeouts, and afterwards the
+ * EP0 ForceReset was ignored, a sysfs deauthorize timed out, and a hub-port
+ * link reset only made it drop off the bus; nothing short of cutting board
+ * power brought it back. A timeout never does that (it only fires when no
+ * data is flowing), a cancel can hit mid-frame. So cancellation is a check of
+ * fpi_device_action_is_cancelled() between transfer sequences (the header
+ * lists them and their latency), and the action's cancellable -- which
+ * fpi_device_critical_enter() does not shield, only the vfuncs -- is never
+ * given to a transfer. */
+
+/* Fail @ssm with G_IO_ERROR_CANCELLED iff the current action was cancelled. */
+static gboolean
+egis_check_cancelled (FpiSsm *ssm, FpDevice *dev)
+{
+  if (!fpi_device_action_is_cancelled (dev))
+    return FALSE;
+  fpi_ssm_mark_failed (ssm, g_error_new_literal (G_IO_ERROR, G_IO_ERROR_CANCELLED,
+                                                 "EH576: cancelled"));
+  return TRUE;
+}
+
+/* One "EGIS" command: the OUT transfer and, if a reply is expected, the IN
+ * transfer that collects it. The reply callback gets the bytes and their
+ * count; n < 0 means the sensor said nothing within the timeout. That is an
+ * expected outcome (the readiness poll of a silent sensor, the ignored replies
+ * of the init replay and the frame preamble), so it is reported, not failed.
+ * Under umockdev a recorded timeout replays as a 0-byte completion, which the
+ * callers treat the same way. An OUT failure marks @ssm failed and the
+ * callback is not called. */
+typedef void (*EgisReplyCb) (FpiSsm       *ssm,
+                             EgisDev      *d,
+                             const guint8 *reply,
+                             gssize        n);
 
 typedef struct {
-  GMainLoop *loop;
-  gssize     ret;
-  GError   **error;
-} SyncXfer;
+  EgisDev    *d;
+  FpiSsm     *ssm;
+  guint       reply_timeout;    /* 0: no reply expected */
+  EgisReplyCb cb;
+} EgisCmd;
 
 static void
-bulk_done (GObject *src, GAsyncResult *res, gpointer ud)
+egis_cmd_in_cb (FpiUsbTransfer *t, FpDevice *dev, gpointer ud, GError *error)
 {
-  SyncXfer *x = ud;
+  EgisCmd *c = ud;
+  gssize n = error ? -1 : t->actual_length;
 
-  x->ret = g_usb_device_bulk_transfer_finish (G_USB_DEVICE (src), res, x->error);
-  g_main_loop_quit (x->loop);
+  g_clear_error (&error);
+  c->cb (c->ssm, c->d, t->buffer, n);
+  g_free (c);
 }
 
 static void
-control_done (GObject *src, GAsyncResult *res, gpointer ud)
+egis_cmd_out_cb (FpiUsbTransfer *t, FpDevice *dev, gpointer ud, GError *error)
 {
-  SyncXfer *x = ud;
+  EgisCmd *c = ud;
+  FpiUsbTransfer *in;
 
-  x->ret = g_usb_device_control_transfer_finish (G_USB_DEVICE (src), res, x->error);
-  g_main_loop_quit (x->loop);
+  if (error)
+    {
+      fpi_ssm_mark_failed (c->ssm, error);
+      g_free (c);
+      return;
+    }
+  if (c->reply_timeout == 0)
+    {
+      c->cb (c->ssm, c->d, NULL, 0);
+      g_free (c);
+      return;
+    }
+  in = fpi_usb_transfer_new (dev);
+  in->ssm = c->ssm;
+  fpi_usb_transfer_fill_bulk (in, EP_IN, EGIS_REPLY_LEN);
+  fpi_usb_transfer_submit (in, c->reply_timeout, NULL, egis_cmd_in_cb, c);
 }
 
-/* Bulk transfer on @ep, blocking until done. Returns the byte count, or -1 on
- * error/timeout (with *error set). @cancellable is deliberately always NULL
- * (see the comment above usb_out). */
-static gssize
-egis_bulk (EgisDev *d, guint8 ep, guint8 *buf, gsize len, guint timeout_ms,
-           GError **error)
-{
-  g_autoptr(GMainContext) ctx = g_main_context_new ();
-  SyncXfer x = { NULL, -1, error };
-
-  g_main_context_push_thread_default (ctx);
-  x.loop = g_main_loop_new (ctx, FALSE);
-  g_usb_device_bulk_transfer_async (d->usb, ep, buf, len, timeout_ms, NULL,
-                                    bulk_done, &x);
-  g_main_loop_run (x.loop);
-  g_main_loop_unref (x.loop);
-  g_main_context_pop_thread_default (ctx);
-  return x.ret;
-}
-
-/* Control transfer, same shape as egis_bulk. */
-static gssize
-egis_control (EgisDev *d, GUsbDeviceDirection dir, GUsbDeviceRequestType type,
-              GUsbDeviceRecipient recipient, guint8 request, guint16 value,
-              guint16 idx, guint8 *buf, gsize len, guint timeout_ms,
-              GError **error)
-{
-  g_autoptr(GMainContext) ctx = g_main_context_new ();
-  SyncXfer x = { NULL, -1, error };
-
-  g_main_context_push_thread_default (ctx);
-  x.loop = g_main_loop_new (ctx, FALSE);
-  g_usb_device_control_transfer_async (d->usb, dir, type, recipient, request,
-                                       value, idx, buf, len, timeout_ms, NULL,
-                                       control_done, &x);
-  g_main_loop_run (x.loop);
-  g_main_loop_unref (x.loop);
-  g_main_context_pop_thread_default (ctx);
-  return x.ret;
-}
-
-/* The cancellable is consulted BETWEEN transfers only -- it is never handed to
- * gusb. Measured on the reference unit: aborting an in-flight bulk transfer
- * (libusb_cancel_transfer, which is what gusb does with a cancelled
- * GCancellable) wedged the sensor at USB level -- bulk OUT NAKed for 3 s
- * timeouts, and afterwards the EP0 ForceReset was ignored, a sysfs deauthorize
- * timed out, and a hub-port link reset only made it drop off the bus; nothing
- * short of cutting board power brought it back. A timeout never does that
- * (it only fires when no data is flowing), a cancel can hit mid-frame. So a
- * cancel costs at most one transfer timeout of latency (800 ms read, 3 s
- * write) inside a sequence -- and the two sequences that must not be
- * interrupted (the init replay, and getframe's preamble + read, which arms the
- * sensor for a frame) are checked only at their boundaries: up to ~2.6 s for a
- * getframe on a sensor that has stopped answering. Abandoning either half-way
- * would be a new, untested sensor state; that is a deliberate trade. */
-
-/* TRUE iff the transfer completed (any byte count), exactly as the gusb sync
- * wrapper's "helper.ret != -1" used to report it. */
-static gboolean
-usb_out (EgisDev *d, const unsigned char *b, int n)
-{
-  return egis_bulk (d, EP_OUT, (guint8 *) b, n, 3000, NULL) != -1;
-}
-
-/* Bytes read, or -1 on error/timeout. */
-static int
-usb_in (EgisDev *d, unsigned char *b, int cap, int timeout)
-{
-  return (int) egis_bulk (d, EP_IN, b, cap, timeout, NULL);
-}
-
-/* TRUE (and *error set to G_IO_ERROR_CANCELLED) iff the attached cancellable has
- * been triggered. Safe with a NULL cancellable (never cancelled). */
-static gboolean
-egis_cancelled (EgisDev *d, GError **error)
-{
-  return g_cancellable_set_error_if_cancelled (d->cancellable, error);
-}
-
-/* Discard whatever a previous session left queued on the IN endpoint. */
 static void
-flush_in (EgisDev *d)
+egis_cmd (FpiSsm *ssm, EgisDev *d, const guint8 *body, gsize n,
+          guint reply_timeout, EgisReplyCb cb)
 {
-  unsigned char tmp[4096];
+  FpiUsbTransfer *out = fpi_usb_transfer_new (d->dev);
+  EgisCmd *c = g_new0 (EgisCmd, 1);
+  guint8 *buf = g_malloc (4 + n);
 
-  for (int i = 0; i < 8 && usb_in (d, tmp, sizeof tmp, 30) > 0; i++)
-    ;
-}
-
-/* ------------------------------------------------------------ commands ---- */
-
-/* Send one "EGIS" command and collect its reply. Returns the reply length, or
- * -1 if the sensor said nothing. */
-static int
-egis_cmd (EgisDev *d, const unsigned char *body, int n,
-          unsigned char *reply, int reply_cap, int timeout)
-{
-  unsigned char buf[32] = { 0x45, 0x47, 0x49, 0x53 };   /* "EGIS" */
-
-  g_assert (n <= (int) sizeof buf - 4);
+  memcpy (buf, "EGIS", 4);
   memcpy (buf + 4, body, n);
-  if (!usb_out (d, buf, 4 + n))
-    return -1;
-  if (!reply)
-    return 0;
-  return usb_in (d, reply, reply_cap, timeout);
+  c->d = d;
+  c->ssm = ssm;
+  c->reply_timeout = reply_timeout;
+  c->cb = cb;
+  out->ssm = ssm;
+  fpi_usb_transfer_fill_bulk_full (out, EP_OUT, buf, 4 + n, g_free);
+  fpi_usb_transfer_submit (out, EGIS_OUT_TIMEOUT, NULL, egis_cmd_out_cb, c);
 }
 
 /* ReadRegister(reg): "EGIS" 60 reg 00 -> "SIGE" reg <value> <status>. */
-static int
-egis_readreg (EgisDev *d, int reg)
+static void
+egis_readreg (FpiSsm *ssm, EgisDev *d, guint8 reg, EgisReplyCb cb)
 {
-  unsigned char body[3] = { 0x60, (unsigned char) reg, 0x00 };
-  unsigned char r[64];
-  int n = egis_cmd (d, body, 3, r, sizeof r, 800);
+  guint8 body[3] = { 0x60, reg, 0x00 };
 
+  egis_cmd (ssm, d, body, sizeof body, EGIS_READ_TIMEOUT, cb);
+}
+
+/* The register value out of a ReadRegister reply, or -1 if there was none. */
+static int
+egis_reg_value (const guint8 *r, gssize n)
+{
   return (n >= 6 && r[0] == 'S') ? r[5] : -1;
 }
 
+/* WriteRegister(reg, val): "EGIS" 61 reg val; the reply is not looked at. */
 static void
-egis_writereg (EgisDev *d, int reg, int val)
+egis_writereg (FpiSsm *ssm, EgisDev *d, guint8 reg, guint8 val, EgisReplyCb cb)
 {
-  unsigned char body[3] = { 0x61, (unsigned char) reg, (unsigned char) val };
-  unsigned char r[64];
+  guint8 body[3] = { 0x61, reg, val };
 
-  egis_cmd (d, body, 3, r, sizeof r, 300);
+  egis_cmd (ssm, d, body, sizeof body, EGIS_WRITE_TIMEOUT, cb);
+}
+
+/* ---------------------------------------------------------------- init ---- */
+
+enum {
+  INIT_DRAIN,        /* discard whatever a previous session left queued on EP IN */
+  INIT_READY,        /* poll register 0 until the sensor reports ready */
+  INIT_NOT_READY,    /* it never did: optionally ForceReset, then fail */
+  INIT_REPLAY,       /* the vendor bring-up, one unit */
+  INIT_READ_DC_C,    /* cache the exposure register the replay left */
+  INIT_REAPPLY,      /* put the calibrated exposure back, if one is known */
+  INIT_NUM_STATES,
+};
+
+static void
+init_drain_cb (FpiUsbTransfer *t, FpDevice *dev, gpointer ud, GError *error)
+{
+  EgisDev *d = ud;
+  /* The n <= 0 exit (a timeout, or the 0-byte completion umockdev replays for
+   * one) is the normal end of the drain; the bound is for leftover replies. */
+  gboolean more = error == NULL && t->actual_length > 0;
+
+  g_clear_error (&error);
+  if (more && ++d->drains < EGIS_DRAIN_MAX)
+    fpi_ssm_jump_to_state (t->ssm, INIT_DRAIN);
+  else
+    fpi_ssm_next_state (t->ssm);
 }
 
 /* The vendor's check_and_recovery (egis_fp_common_5XX.c): poll register 0 until
  * it reports ready before touching the sensor at all. The vendor polls up to
  * 3000 times; a healthy sensor answers on the first try (measured: ~1 ms), and
- * one that is in session mode never answers, so a short budget is enough to tell
- * the two apart without stalling an authentication. */
-static gboolean
-egis_wait_ready (EgisDev *d)
+ * one that is in session mode never answers, so a short budget is enough to
+ * tell the two apart without stalling an authentication. */
+static void
+init_ready_cb (FpiSsm *ssm, EgisDev *d, const guint8 *r, gssize n)
 {
-  for (int i = 0; i < 10; i++)
-    {
-      int v;
+  int v = egis_reg_value (r, n);
 
-      /* Once cancelled, the remaining iterations (850 ms each on a silent
-       * sensor) are pointless -- stop at this boundary. */
-      if (g_cancellable_is_cancelled (d->cancellable))
-        return FALSE;
-      v = egis_readreg (d, 0x00);
-      if (v >= 0 && (v & 0xfe) == 0xaa)
-        return TRUE;
-      g_usleep (50 * 1000);
-    }
-  return FALSE;
+  if (v >= 0 && (v & 0xfe) == 0xaa)
+    fpi_ssm_jump_to_state (ssm, INIT_REPLAY);
+  else if (++d->ready_tries < EGIS_READY_TRIES)
+    fpi_ssm_jump_to_state_delayed (ssm, INIT_READY, EGIS_READY_GAP_MS);
+  else
+    fpi_ssm_next_state (ssm);                /* INIT_NOT_READY */
 }
 
-/* ---------------------------------------------------------------- open ---- */
+static void
+init_not_ready_fail (FpiSsm *ssm, EgisDev *d)
+{
+  fpi_ssm_mark_failed (ssm,
+                       g_error_new (G_IO_ERROR, G_IO_ERROR_NOT_INITIALIZED,
+                                    "EH576: sensor did not answer the readiness poll%s",
+                                    d->reset_if_stuck
+                                    ? " -- reset issued, retry once it re-enumerates" : ""));
+}
+
+static void
+init_reset_cb (FpiUsbTransfer *t, FpDevice *dev, gpointer ud, GError *error)
+{
+  /* The request is accepted immediately and the device drops off the bus on
+   * the next transfer to it (header); its own outcome is of no interest. */
+  g_clear_error (&error);
+  init_not_ready_fail (t->ssm, ud);
+}
+
+static void init_replay_send (FpiSsm *ssm, EgisDev *d);
+
+static void
+init_replay_leave (EgisDev *d)
+{
+  if (d->in_critical)
+    fpi_device_critical_leave (d->dev);
+  d->in_critical = FALSE;
+}
+
+static void
+init_replay_advance (FpiSsm *ssm, EgisDev *d)
+{
+  if (++d->record < EGIS_INIT_RECORD_COUNT)
+    {
+      init_replay_send (ssm, d);
+      return;
+    }
+  init_replay_leave (d);
+  fpi_ssm_next_state (ssm);
+}
+
+static void
+init_replay_in_cb (FpiUsbTransfer *t, FpDevice *dev, gpointer ud, GError *error)
+{
+  g_clear_error (&error);                    /* the SIGE reply is consumed, not read */
+  init_replay_advance (t->ssm, ud);
+}
+
+static void
+init_replay_out_cb (FpiUsbTransfer *t, FpDevice *dev, gpointer ud, GError *error)
+{
+  EgisDev *d = ud;
+  const guint8 *rec = t->buffer;
+  gboolean is_cmd = t->length >= 5 && memcmp (rec, "EGIS", 4) == 0;
+  gboolean is_upload = is_cmd && rec[4] == 0x73;
+
+  if (error)
+    {
+      init_replay_leave (d);
+      fpi_ssm_mark_failed (t->ssm,
+                           g_error_new (G_IO_ERROR, G_IO_ERROR_FAILED,
+                                        "EH576: init record %d failed: %s",
+                                        d->record, error->message));
+      g_error_free (error);
+      return;
+    }
+
+  /* Record 15 ("EGIS 73 0f 96") is an upload: its 3990-byte payload follows
+   * immediately in the next eight records and the sensor answers only once
+   * that is complete, so nothing may be read in between -- doing so stalls
+   * the upload and wedges the sensor. Every other command gets its reply
+   * consumed. */
+  if (is_upload)
+    d->in_upload = EGIS_UPLOAD_CHUNKS;
+  else if (d->in_upload > 0)
+    d->in_upload--;
+  else if (is_cmd)
+    {
+      FpiUsbTransfer *in = fpi_usb_transfer_new (dev);
+
+      in->ssm = t->ssm;
+      fpi_usb_transfer_fill_bulk (in, EP_IN, EGIS_REPLY_LEN);
+      fpi_usb_transfer_submit (in, EGIS_READ_TIMEOUT, NULL, init_replay_in_cb, d);
+      return;
+    }
+  init_replay_advance (t->ssm, d);
+}
+
+static void
+init_replay_send (FpiSsm *ssm, EgisDev *d)
+{
+  FpiUsbTransfer *out = fpi_usb_transfer_new (d->dev);
+
+  out->ssm = ssm;
+  fpi_usb_transfer_fill_bulk_full (out, EP_OUT,
+                                   (guint8 *) egis_init_records[d->record].data,
+                                   egis_init_records[d->record].len, NULL);
+  fpi_usb_transfer_submit (out, EGIS_OUT_TIMEOUT, NULL, init_replay_out_cb, d);
+}
+
+static void
+init_dc_c_cb (FpiSsm *ssm, EgisDev *d, const guint8 *r, gssize n)
+{
+  int v = egis_reg_value (r, n);
+
+  d->dc_c = MAX (v, 0);
+  /* Record 25 of the replay block-writes regs 0x09..0x13 and so puts reg 0x0f
+   * back to the baked value. The calibrated exposure lives only in the sensor
+   * and in this cache, both of which the replay just overwrote, so re-apply
+   * the value the calibration found earlier in this process -- every open
+   * after the first (fprintd opens on each claim) and every post-resume
+   * re-init would otherwise run with the baked value, and the per-boot
+   * flat-field baseline is exposure-tied. */
+  if (d->dc_c_calibrated < 0 || d->dc_c == d->dc_c_calibrated)
+    {
+      fpi_ssm_mark_completed (ssm);
+      return;
+    }
+  if (v < 0)
+    fp_dbg ("re-applying calibrated dc_c 0x%02x after bring-up "
+            "(could not read the register back)", d->dc_c_calibrated);
+  else
+    fp_dbg ("re-applied calibrated dc_c 0x%02x after bring-up (replay left 0x%02x)",
+            d->dc_c_calibrated, v);
+  fpi_ssm_next_state (ssm);                  /* INIT_REAPPLY */
+}
+
+static void
+init_reapply_cb (FpiSsm *ssm, EgisDev *d, const guint8 *r, gssize n)
+{
+  d->dc_c = d->dc_c_calibrated;
+  fpi_ssm_mark_completed (ssm);
+}
+
+static void
+init_run_state (FpiSsm *ssm, FpDevice *dev)
+{
+  EgisDev *d = fpi_ssm_get_data (ssm);
+
+  switch (fpi_ssm_get_cur_state (ssm))
+    {
+    case INIT_DRAIN:
+      {
+        FpiUsbTransfer *in = fpi_usb_transfer_new (dev);
+
+        in->ssm = ssm;
+        fpi_usb_transfer_fill_bulk (in, EP_IN, EGIS_CHUNK);
+        fpi_usb_transfer_submit (in, EGIS_DRAIN_TIMEOUT, NULL, init_drain_cb, d);
+        break;
+      }
+
+    case INIT_READY:
+      /* Once cancelled, the remaining iterations (850 ms each on a silent
+       * sensor) are pointless -- stop at this boundary. Failing here also
+       * keeps a cancel from firing the ForceReset below: taking the device
+       * off the bus is not what a cancel asked for. */
+      if (egis_check_cancelled (ssm, dev))
+        break;
+      egis_readreg (ssm, d, 0x00, init_ready_cb);
+      break;
+
+    case INIT_NOT_READY:
+      if (d->reset_if_stuck)
+        {
+          FpiUsbTransfer *ctl = fpi_usb_transfer_new (dev);
+
+          ctl->ssm = ssm;
+          fpi_usb_transfer_fill_control (ctl, G_USB_DEVICE_DIRECTION_HOST_TO_DEVICE,
+                                         G_USB_DEVICE_REQUEST_TYPE_CLASS,
+                                         G_USB_DEVICE_RECIPIENT_INTERFACE,
+                                         MODE_REQUEST, FORCE_RESET, INTF, 0);
+          fpi_usb_transfer_submit (ctl, EGIS_RESET_TIMEOUT, NULL, init_reset_cb, d);
+        }
+      else
+        {
+          init_not_ready_fail (ssm, d);
+        }
+      break;
+
+    case INIT_REPLAY:
+      /* The WHOLE replay is one unit: a cancel is honoured before the first
+       * record and after the last, never in between, and the critical section
+       * has libfprint hold back suspend for its duration (~0.3 s on a healthy
+       * sensor). Stopping half-way would leave the sensor with a prefix of the
+       * vendor sequence, a state nobody has tested it in. */
+      if (egis_check_cancelled (ssm, dev))
+        break;
+      fpi_device_critical_enter (dev);
+      d->in_critical = TRUE;
+      d->record = 0;
+      d->in_upload = 0;
+      init_replay_send (ssm, d);
+      break;
+
+    case INIT_READ_DC_C:
+      /* The sensor is fully initialised here; a cancel that landed during the
+       * replay is honoured now, before the cache read (800 ms on a silent
+       * sensor). */
+      if (egis_check_cancelled (ssm, dev))
+        break;
+      egis_readreg (ssm, d, REG_DC_C, init_dc_c_cb);
+      break;
+
+    case INIT_REAPPLY:
+      egis_writereg (ssm, d, REG_DC_C, (guint8) d->dc_c_calibrated, init_reapply_cb);
+      break;
+
+    default:
+      g_assert_not_reached ();
+    }
+}
+
+FpiSsm *
+egis_dev_init_ssm (EgisDev *d, gboolean reset_if_stuck)
+{
+  FpiSsm *ssm = fpi_ssm_new_full (d->dev, init_run_state, INIT_NUM_STATES,
+                                  INIT_NUM_STATES, "init");
+
+  d->reset_if_stuck = reset_if_stuck;
+  d->drains = 0;
+  d->ready_tries = 0;
+  d->in_critical = FALSE;
+  fpi_ssm_set_data (ssm, d, NULL);
+  return ssm;
+}
+
+/* --------------------------------------------------------------- frame ---- */
+
+enum {
+  FRAME_PREAMBLE,    /* the per-frame trigger sequence */
+  FRAME_REQUEST,     /* GetFrame */
+  FRAME_READ,        /* the 3990 bytes, in however many chunks they come */
+  FRAME_NUM_STATES,
+};
+
+static const struct { guint8 b[5]; gsize n; } FRAME_PREAMBLE_CMDS[] = {
+  { { 0x63, 0x2c, 0x02, 0x00, 0x57 }, 5 },
+  { { 0x60, 0x2d, 0x00 },             3 },
+  { { 0x62, 0x67, 0x03 },             3 },
+  { { 0x60, 0x0f, 0x00 },             3 },
+  { { 0x63, 0x2c, 0x02, 0x00, 0x13 }, 5 },
+  { { 0x60, 0x00, 0x00 },             3 },
+};
+
+static void
+frame_preamble_cb (FpiSsm *ssm, EgisDev *d, const guint8 *r, gssize n)
+{
+  if (++d->step < (int) G_N_ELEMENTS (FRAME_PREAMBLE_CMDS))
+    egis_cmd (ssm, d, FRAME_PREAMBLE_CMDS[d->step].b, FRAME_PREAMBLE_CMDS[d->step].n,
+              EGIS_WRITE_TIMEOUT, frame_preamble_cb);
+  else
+    fpi_ssm_next_state (ssm);
+}
+
+static void
+frame_request_cb (FpiSsm *ssm, EgisDev *d, const guint8 *r, gssize n)
+{
+  fpi_ssm_next_state (ssm);
+}
+
+static void frame_read (FpiSsm *ssm, EgisDev *d);
+
+static void
+frame_read_cb (FpiUsbTransfer *t, FpDevice *dev, gpointer ud, GError *error)
+{
+  EgisDev *d = ud;
+  gssize n = error ? -1 : t->actual_length;
+
+  g_clear_error (&error);
+  if (n > 0)
+    {
+      n = MIN (n, EGIS_IMG - d->got);
+      memcpy (d->img + d->got, t->buffer, n);
+      d->got += n;
+    }
+  if (d->got >= EGIS_IMG)
+    fpi_ssm_mark_completed (t->ssm);
+  else if (n <= 0)
+    fpi_ssm_mark_failed (t->ssm,
+                         g_error_new (G_IO_ERROR, G_IO_ERROR_FAILED,
+                                      "EH576: short frame (%d of %d)", d->got, EGIS_IMG));
+  else
+    frame_read (t->ssm, d);
+}
+
+static void
+frame_read (FpiSsm *ssm, EgisDev *d)
+{
+  FpiUsbTransfer *in = fpi_usb_transfer_new (d->dev);
+
+  in->ssm = ssm;
+  fpi_usb_transfer_fill_bulk (in, EP_IN, EGIS_CHUNK);
+  fpi_usb_transfer_submit (in, EGIS_READ_TIMEOUT, NULL, frame_read_cb, d);
+}
+
+static void
+frame_run_state (FpiSsm *ssm, FpDevice *dev)
+{
+  EgisDev *d = fpi_ssm_get_data (ssm);
+  static const guint8 getframe[3] = { 0x64, 0x0f, 0x96 };
+
+  switch (fpi_ssm_get_cur_state (ssm))
+    {
+    case FRAME_PREAMBLE:
+      /* The preamble arms the sensor for a frame and the read collects it;
+       * the two are one sequence, checked for a cancel only here. */
+      if (egis_check_cancelled (ssm, dev))
+        break;
+      d->step = 0;
+      egis_cmd (ssm, d, FRAME_PREAMBLE_CMDS[0].b, FRAME_PREAMBLE_CMDS[0].n,
+                EGIS_WRITE_TIMEOUT, frame_preamble_cb);
+      break;
+
+    case FRAME_REQUEST:
+      egis_cmd (ssm, d, getframe, sizeof getframe, 0, frame_request_cb);
+      break;
+
+    case FRAME_READ:
+      d->got = 0;
+      frame_read (ssm, d);
+      break;
+
+    default:
+      g_assert_not_reached ();
+    }
+}
+
+FpiSsm *
+egis_dev_frame_ssm (EgisDev *d, guint8 *img)
+{
+  FpiSsm *ssm = fpi_ssm_new_full (d->dev, frame_run_state, FRAME_NUM_STATES,
+                                  FRAME_NUM_STATES, "frame");
+
+  d->img = img;
+  fpi_ssm_set_data (ssm, d, NULL);
+  return ssm;
+}
+
+/* ------------------------------------------------------------ exposure ---- */
+
+/* Full range [0,0x3f], no unit-specific cap: the search finds each unit's own
+ * operating point. best tracks the closest-to-target mean seen, so a unit that
+ * saturates early still converges somewhere sane.
+ *
+ * MEASURED on the reference unit (see docs/sensor-tuning.md): this register's
+ * transfer curve is far steeper than the search range suggests --
+ * 0x18 -> frame mean 0, 0x20 -> 94, 0x28 -> 255 -- so the usable window is only
+ * about 0x1C..0x24 and most of [0,0x3f] is saturation. The search still
+ * converges because the mean is monotonic in the register, but do not read the
+ * wide range as evidence that the sensor tolerates a wide range. The target
+ * is within a few counts of what the baked init value produces unaided, which
+ * is why this is close to a no-op here and adaptive elsewhere. */
+
+enum {
+  CAL_WRITE,         /* try the midpoint */
+  CAL_FRAME,         /* one no-finger frame at it */
+  CAL_EVAL,          /* narrow the bracket */
+  CAL_APPLY,         /* settle on the best value seen */
+  CAL_NUM_STATES,
+};
+
+static void
+cal_write_cb (FpiSsm *ssm, EgisDev *d, const guint8 *r, gssize n)
+{
+  d->dc_c = d->cal_mid;
+  fpi_ssm_next_state (ssm);
+}
+
+static void
+cal_apply_cb (FpiSsm *ssm, EgisDev *d, const guint8 *r, gssize n)
+{
+  d->dc_c = d->cal_best;
+  d->dc_c_calibrated = d->cal_best;
+  fp_dbg ("exposure calibrated: dc_c 0x%02x", d->cal_best);
+  fpi_ssm_mark_completed (ssm);
+}
+
+static void
+cal_run_state (FpiSsm *ssm, FpDevice *dev)
+{
+  EgisDev *d = fpi_ssm_get_data (ssm);
+
+  switch (fpi_ssm_get_cur_state (ssm))
+    {
+    case CAL_WRITE:
+      d->cal_mid = (d->cal_lo + d->cal_hi) >> 1;
+      egis_writereg (ssm, d, REG_DC_C, (guint8) d->cal_mid, cal_write_cb);
+      break;
+
+    case CAL_FRAME:
+      /* A capture failure fails the search, leaving reg 0x0f at the last
+       * value tried and the calibration unset (header). */
+      fpi_ssm_start_subsm (ssm, egis_dev_frame_ssm (d, d->cal_img));
+      break;
+
+    case CAL_EVAL:
+      {
+        long sum = 0;
+        int level, diff;
+
+        for (int i = 0; i < EGIS_IMG; i++)
+          sum += d->cal_img[i];
+        level = (int) (sum / EGIS_IMG);        /* mean of the no-finger frame */
+        diff = ABS (level - EGIS_EXPOSURE_TARGET);
+        if (diff < d->cal_best_diff)
+          {
+            d->cal_best_diff = diff;
+            d->cal_best = d->cal_mid;
+          }
+        if (level > EGIS_EXPOSURE_TARGET)
+          d->cal_hi = d->cal_mid;
+        else
+          d->cal_lo = d->cal_mid;
+        if (++d->cal_it < EGIS_CAL_ITERATIONS)
+          fpi_ssm_jump_to_state (ssm, CAL_WRITE);
+        else
+          fpi_ssm_next_state (ssm);
+        break;
+      }
+
+    case CAL_APPLY:
+      egis_writereg (ssm, d, REG_DC_C, (guint8) d->cal_best, cal_apply_cb);
+      break;
+
+    default:
+      g_assert_not_reached ();
+    }
+}
+
+FpiSsm *
+egis_dev_calibrate_ssm (EgisDev *d)
+{
+  FpiSsm *ssm = fpi_ssm_new_full (d->dev, cal_run_state, CAL_NUM_STATES,
+                                  CAL_NUM_STATES, "calibrate");
+
+  d->cal_lo = 0;
+  d->cal_hi = 0x3f;
+  d->cal_best = 0x1f;
+  d->cal_best_diff = 0x100;
+  d->cal_it = 0;
+  fpi_ssm_set_data (ssm, d, NULL);
+  return ssm;
+}
 
 void
 egis_dev_set_calibration (EgisDev *d, int dc_c)
@@ -292,223 +713,20 @@ egis_dev_get_calibration (EgisDev *d)
   return d->dc_c_calibrated;
 }
 
-gboolean
-egis_dev_open (EgisDev *d, gboolean reset_if_stuck, GError **error)
-{
-  if (egis_cancelled (d, error))
-    return FALSE;
-  flush_in (d);
-
-  if (!egis_wait_ready (d))
-    {
-      /* Cancelled while polling: report that, and above all do NOT fire the
-       * ForceReset — it takes the device off the bus, which is not what a
-       * cancel (or a close racing a worker) asked for. */
-      if (egis_cancelled (d, error))
-        return FALSE;
-      if (reset_if_stuck)
-        egis_control (d, G_USB_DEVICE_DIRECTION_HOST_TO_DEVICE,
-                      G_USB_DEVICE_REQUEST_TYPE_CLASS,
-                      G_USB_DEVICE_RECIPIENT_INTERFACE,
-                      MODE_REQUEST, FORCE_RESET, INTF,
-                      NULL, 0, 500, NULL);
-      g_set_error (error, G_IO_ERROR, G_IO_ERROR_NOT_INITIALIZED,
-                   "EH576: sensor did not answer the readiness poll%s",
-                   reset_if_stuck ? " — reset issued, retry once it re-enumerates"
-                                  : "");
-      return FALSE;
-    }
-
-  /* Replay the vendor bring-up. Record 15 ("EGIS 73 0f 96") is an upload: its
-   * 3990-byte payload follows immediately in the next eight records and the
-   * sensor answers only once that is complete, so nothing may be read in
-   * between -- doing so stalls the upload and wedges the sensor. For the same
-   * reason the command and its eight payload records are sent as one unit.
-   *
-   * The WHOLE replay is treated as one unit for cancellation: a cancel is
-   * honoured before the first record and after the last, never in between.
-   * Stopping half-way would leave the sensor with a prefix of the vendor
-   * sequence, a state nobody has tested it in, and the entire replay takes
-   * ~0.3 s on a healthy sensor, so the latency gained would be negligible. */
-  if (egis_cancelled (d, error))
-    return FALSE;
-  int in_upload = 0;
-  for (int i = 0; i < EGIS_INIT_RECORD_COUNT; i++)
-    {
-      const unsigned char *rec = egis_init_records[i].data;
-      int len = egis_init_records[i].len;
-      gboolean is_cmd = len >= 5 && memcmp (rec, "EGIS", 4) == 0;
-      gboolean is_upload = is_cmd && rec[4] == 0x73;
-      unsigned char r[64];
-
-      if (!usb_out (d, rec, len))
-        {
-          g_set_error (error, G_IO_ERROR, G_IO_ERROR_FAILED,
-                       "EH576: init record %d failed", i);
-          return FALSE;
-        }
-      if (is_upload)
-        in_upload = 8;                       /* the payload chunks that follow */
-      else if (in_upload > 0)
-        in_upload--;
-      else if (is_cmd)
-        usb_in (d, r, sizeof r, 800);        /* consume the SIGE reply */
-    }
-
-  /* The sensor is fully initialised here; a cancel that landed during the
-   * replay is honoured now, before the two cache reads (800 ms each on a
-   * silent sensor) and before the caller clears its re-init flag. */
-  if (egis_cancelled (d, error))
-    return FALSE;
-  int dc_c_read = egis_readreg (d, REG_DC_C);
-
-  d->dc_c = (unsigned char) MAX (dc_c_read, 0);
-  /* Record 25 of the replay block-writes regs 0x09..0x13 and so puts reg 0x0f
-   * back to the baked value. The calibrated exposure lives only in the sensor
-   * and in this cache, both of which the replay just overwrote, so re-apply
-   * the value egis_dev_calibrate found earlier in this process -- every open
-   * after the first (fprintd opens on each claim) and every post-resume
-   * re-init would otherwise run with the baked value, and the per-boot
-   * flat-field baseline is exposure-tied. */
-  if (d->dc_c_calibrated >= 0 && d->dc_c != d->dc_c_calibrated)
-    {
-      if (dc_c_read < 0)
-        g_debug ("EH576: re-applying calibrated dc_c 0x%02x after bring-up "
-                 "(could not read the register back)", d->dc_c_calibrated);
-      else
-        g_debug ("EH576: re-applied calibrated dc_c 0x%02x after bring-up "
-                 "(replay left 0x%02x)", d->dc_c_calibrated, dc_c_read);
-      egis_writereg (d, REG_DC_C, d->dc_c_calibrated);
-      d->dc_c = (unsigned char) d->dc_c_calibrated;
-    }
-  return TRUE;
-}
-
-/* ------------------------------------------------------------- capture ---- */
-
-/* Per-frame trigger sequence, then GetFrame. */
-static const struct { unsigned char b[5]; int n; } FRAME_PREAMBLE[] = {
-  { { 0x63, 0x2c, 0x02, 0x00, 0x57 }, 5 },
-  { { 0x60, 0x2d, 0x00 },             3 },
-  { { 0x62, 0x67, 0x03 },             3 },
-  { { 0x60, 0x0f, 0x00 },             3 },
-  { { 0x63, 0x2c, 0x02, 0x00, 0x13 }, 5 },
-  { { 0x60, 0x00, 0x00 },             3 },
-};
-
-gboolean
-egis_dev_getframe (EgisDev *d, guint8 *img, GError **error)
-{
-  unsigned char req[3] = { 0x64, 0x0f, 0x96 };
-  unsigned char o[4096];
-  int got = 0;
-
-  if (egis_cancelled (d, error))
-    return FALSE;
-  for (guint i = 0; i < G_N_ELEMENTS (FRAME_PREAMBLE); i++)
-    {
-      unsigned char r[64];
-      egis_cmd (d, FRAME_PREAMBLE[i].b, FRAME_PREAMBLE[i].n, r, sizeof r, 300);
-    }
-  if (egis_cmd (d, req, 3, NULL, 0, 0) < 0)
-    {
-      if (egis_cancelled (d, error))
-        return FALSE;
-      g_set_error (error, G_IO_ERROR, G_IO_ERROR_FAILED, "EH576: GetFrame failed");
-      return FALSE;
-    }
-  while (got < EGIS_IMG)
-    {
-      int n = usb_in (d, o, sizeof o, 800);
-
-      if (n <= 0)
-        break;
-      if (n > EGIS_IMG - got)
-        n = EGIS_IMG - got;
-      memcpy (img + got, o, n);
-      got += n;
-    }
-  if (got < EGIS_IMG)
-    {
-      /* A cancelled read shows up here as a short frame; report it as the
-       * cancel it is so the caller does not mistake it for a dead sensor. */
-      if (egis_cancelled (d, error))
-        return FALSE;
-      g_set_error (error, G_IO_ERROR, G_IO_ERROR_FAILED,
-                   "EH576: short frame (%d of %d)", got, EGIS_IMG);
-      return FALSE;
-    }
-  return TRUE;
-}
-
-/* ------------------------------------------------------------ exposure ---- */
-
-gboolean
-egis_dev_calibrate (EgisDev *d, GError **error)
-{
-  unsigned char img[EGIS_IMG];
-  /* Full range [0,0x3f], no unit-specific cap: the search finds each unit's own
-   * operating point. best tracks the closest-to-target mean seen, so a unit that
-   * saturates early still converges somewhere sane.
-   *
-   * MEASURED on the reference unit (see docs/sensor-tuning.md): this register's
-   * transfer curve is far steeper than the search range suggests --
-   * 0x18 -> frame mean 0, 0x20 -> 94, 0x28 -> 255 -- so the usable window is only
-   * about 0x1C..0x24 and most of [0,0x3f] is saturation. The search still
-   * converges because the mean is monotonic in the register, but do not read the
-   * wide range as evidence that the sensor tolerates a wide range. The target
-   * below is within a few counts of what the baked init value produces unaided,
-   * which is why this is close to a no-op here and adaptive elsewhere. */
-  int lo = 0, hi = 0x3f, best = 0x1f, best_diff = 0x100;
-
-  if (d->dc_c_calibrated >= 0)
-    return TRUE;                        /* already found by the owner; egis_dev_open re-applies it */
-  for (int it = 0; it < 6; it++)
-    {
-      int mid = (lo + hi) >> 1, level, diff;
-      long sum = 0;
-
-      egis_writereg (d, REG_DC_C, mid);
-      d->dc_c = (unsigned char) mid;
-      if (!egis_dev_getframe (d, img, error))
-        return FALSE;                   /* leaves reg 0x0f at the last value tried;
-                                           the flag stays FALSE, so the next open's
-                                           replay restores the baked value and the
-                                           search is retried */
-      for (int i = 0; i < EGIS_IMG; i++)
-        sum += img[i];
-      level = (int) (sum / EGIS_IMG);   /* mean of the no-finger frame */
-      diff = ABS (level - EGIS_EXPOSURE_TARGET);
-      if (diff < best_diff) { best_diff = diff; best = mid; }
-      if (level > EGIS_EXPOSURE_TARGET) hi = mid;
-      else                              lo = mid;
-    }
-  egis_writereg (d, REG_DC_C, best);
-  d->dc_c = (unsigned char) best;
-  d->dc_c_calibrated = best;
-  return TRUE;
-}
-
 /* -------------------------------------------------------------- object ---- */
 
 EgisDev *
-egis_dev_new (GUsbDevice *usb)
+egis_dev_new (FpDevice *dev)
 {
   EgisDev *d = g_new0 (EgisDev, 1);
 
-  d->usb = usb;
+  d->dev = dev;
   d->dc_c_calibrated = -1;
   return d;
 }
 
 void
-egis_dev_set_cancellable (EgisDev *d, GCancellable *cancellable)
-{
-  d->cancellable = cancellable;         /* borrowed, see the header */
-}
-
-void
 egis_dev_free (EgisDev *d)
 {
-  g_free (d);                           /* cancellable is not ours to unref */
+  g_free (d);
 }

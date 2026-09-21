@@ -385,11 +385,14 @@ driver shortcoming. Details and the full investigation:
   measured and found to be at its limit, are in
   [`docs/sensor-tuning.md`](docs/sensor-tuning.md).
 
-- **Every capture runs on a worker thread**, never on the fprintd main loop
-  (only the one-time bring-up in `open()` runs there), and the transport drives
-  gusb's async API on a private `GMainContext` rather than gusb's synchronous
-  wrappers. Why that distinction matters — the lost-wakeup hang it fixed in
-  v0.4.3 — is in [`docs/worker-thread.md`](docs/worker-thread.md).
+- **Nothing blocks the fprintd main loop.** The transport is a set of
+  `FpiSsm` machines over `FpiUsbTransfer` — the in-tree libfprint model —
+  and only the matcher runs on another thread (a `GTask`, as `secugen`
+  does). `open()` completes asynchronously too. Cancellation is honoured
+  between transfer sequences and never handed to gusb: aborting an in-flight
+  URB wedges this sensor until board power is cut (measured). The worker
+  thread of v0.4.x and the lost-wakeup hang it once had are history, kept in
+  [`docs/worker-thread.md`](docs/worker-thread.md).
 
 - **Press firmly, flat, centred, and hold ~2 s.** Verification scores every frame
   while the finger is down and takes the best; light or brief taps on a 70×57 sensor
