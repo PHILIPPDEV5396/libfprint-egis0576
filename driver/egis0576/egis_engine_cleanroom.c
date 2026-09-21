@@ -157,6 +157,9 @@
  *      4  redundant: NCC >= EGIS_CR_REDUNDANT_NCC (0.95) against a frame already
  *         in the session (same-press duplicate; his best genuine cross-press
  *         score is 0.923, same-press agreement 0.997-0.998)
+ *      5  same placement as a stored frame (from the 3rd frame on): not
+ *         stored, the driver asks for an adjusted press; after two refusals in
+ *         a row the next such press is stored anyway (see EGIS_CR_STEER_*)
  *      1  stored, more wanted        2  stored, session full (12 frames)
  *   Once the session holds EGIS_CR_MAX_FRAMES frames every further add returns
  *   2 without storing, so the driver's counter and ours can never deadlock.
@@ -180,6 +183,12 @@
 
 #include "egis_engine.h"
 #include "egis_match.h"
+#ifdef __has_include
+#if __has_include("egis_match_check.h")
+#include "egis_match_check.h"      /* Gabor front-end: em_match_ex() with the alignment */
+#define EGIS_CR_HAVE_MATCH_EX 1
+#endif
+#endif
 
 /* Must equal EGIS0576_ENROLL_STAGES in driver/egis0576.c. If the driver asks
  * for more presses than this, enrolment still terminates (extra adds return 2)
@@ -208,6 +217,34 @@
 #endif
 #ifndef EGIS_CR_REDUNDANT_NCC
 #define EGIS_CR_REDUNDANT_NCC 0.95   /* enrol: reject same-press duplicate */
+#endif
+/* Enrolment steering. Coverage decides the genuine floor: on the reference
+ * unit a second session five days later matched the first session's
+ * templates at a median of 0.94 / 0.92 / 0.83 on three fingers and 0.55 /
+ * 0.15 on two, because those two landed on skin the twelve enrolment presses
+ * never covered -- and enrolling from a session whose presses were spread
+ * out lifted the cross-session minimum from 0.52-0.59 to 0.82-0.92 on the
+ * fingers that overlap at all. tsteppy saw the same on his unit. The driver
+ * cannot say "a bit to the left", but it can refuse to spend a stage on a
+ * press that lands where one already is: from the EGIS_CR_STEER_FROM-th
+ * stored frame on, a candidate whose best template match is at NCC >=
+ * EGIS_CR_STEER_NCC AND within EGIS_CR_STEER_SHIFT px of that template is
+ * returned as 5 (same placement, move the finger) instead of stored; the
+ * driver shows the "adjust your finger" retry. After EGIS_CR_STEER_MAX_RETRY
+ * consecutive refusals the press is stored anyway, so enrolment cannot
+ * stall on a user who keeps landing in the same place. Only with a
+ * front-end that reports the alignment (em_match_ex). */
+#ifndef EGIS_CR_STEER_FROM
+#define EGIS_CR_STEER_FROM 3
+#endif
+#ifndef EGIS_CR_STEER_NCC
+#define EGIS_CR_STEER_NCC 0.90
+#endif
+#ifndef EGIS_CR_STEER_SHIFT
+#define EGIS_CR_STEER_SHIFT 6
+#endif
+#ifndef EGIS_CR_STEER_MAX_RETRY
+#define EGIS_CR_STEER_MAX_RETRY 2
 #endif
 /* Raw-frame corroboration (egis_verify_raw_ok): the un-flat-fielded confirming
  * frame must reach this NCC against the accepted gallery entry, else the
@@ -239,6 +276,7 @@ typedef struct {
 static struct {
     int active;
     int count;
+    int steer_refusals;                           /* consecutive code-5 returns */
     uint8_t raw[EGIS_CR_MAX_FRAMES][EGIS_IMG_SIZE];
     EmFrame frames[EGIS_CR_MAX_FRAMES];
     EmFrame scratch;
@@ -353,6 +391,7 @@ egis_enroll_begin (void)
         return -1;
     enrol->active = 1;
     enrol->count = 0;
+    enrol->steer_refusals = 0;
     return 0;
 }
 
@@ -380,6 +419,24 @@ egis_enroll_add (const uint8_t *raw, int *progress)
     for (int i = 0; i < enrol->count; i++)
         if (em_match (&enrol->frames[i], &enrol->scratch) >= EGIS_CR_REDUNDANT_NCC)
             return 4;
+
+#ifdef EGIS_CR_HAVE_MATCH_EX
+    /* (c2) same placement as a stored frame: ask for a shifted press */
+    if (enrol->count >= EGIS_CR_STEER_FROM
+        && enrol->steer_refusals < EGIS_CR_STEER_MAX_RETRY) {
+        for (int i = 0; i < enrol->count; i++) {
+            EmMatchInfo in;
+            double v = em_match_ex (&enrol->frames[i], &enrol->scratch, &in);
+            if (v >= EGIS_CR_STEER_NCC
+                && abs (in.dx) <= EGIS_CR_STEER_SHIFT
+                && abs (in.dy) <= EGIS_CR_STEER_SHIFT) {
+                enrol->steer_refusals++;
+                return 5;
+            }
+        }
+    }
+    enrol->steer_refusals = 0;
+#endif
 
     /* (d) store */
     memcpy (enrol->raw[enrol->count], raw, EGIS_IMG_SIZE);

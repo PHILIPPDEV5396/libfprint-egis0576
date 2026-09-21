@@ -388,6 +388,27 @@ any of these patterns needs physical access and an artefact, which also
 defeats every matcher without presentation-attack detection; this sensor has
 none.
 
+**Across sessions (2026-09-18, second capture on the reference unit five days
+after the first):** templates from the first session, probes from the second,
+twelve templates per finger as the driver enrols — medians 0.94 / 0.92 / 0.83
+on three fingers, **0.55 and 0.15** on the other two, because those landed on
+skin the first session's twelve presses never covered (the two sessions'
+thumb regions do not overlap at all). The reverse direction, enrolling from
+the second session whose presses were deliberately spread out, lifts the
+cross-session *minimum* on the three overlapping fingers from 0.52–0.59 to
+0.82–0.92. That, and tsteppy's identical finding on his unit, is why the
+clean-room adapter now steers enrolment: from the third stored frame on, a
+press that lands where a stored frame already is (NCC ≥ 0.90 within 6 px) is
+refused with the "adjust your finger" hint instead of spending a stage, at
+most twice in a row. On the first session's twelve first-frames the rule
+would have refused 3–5 presses per finger; on the spread-out session 1–3.
+The second session also measured a same-session **impostor pair at 0.90**
+(right thumb vs right index, 12 of 24 pairings ≥ 0.78) that no other pair on
+either session comes near; cross-session, that "thumb" recording resembles
+the first session's *index* finger (0.72) far more than its thumb (0.15).
+The recorder reports using the correct fingers. Until that is understood the
+second session is used for the coverage question only, not for FAR.
+
 Cost, for the driver's every-frame scoring loop: `em_frame_compute` 1.6 ms
 (his 0.17 ms), `em_match` 4.0 ms against 0.85 ms at ±6 and 6.4 ms at ±19 —
 the rotation search costs less than the wider translation search alone,

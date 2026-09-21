@@ -27,7 +27,9 @@ int egis_engine_init(void);            /* map + configure (mode 5). 0 = ok */
 
 /* --- enrollment: build a template from several placements --- */
 int egis_enroll_begin(void);
-/* add one captured frame; returns 1=need more, 2=done, 4=redundant, <0 error.
+/* add one captured frame; returns 1=need more, 2=done, 4=redundant (same
+ * press), 5=same placement as a stored frame (clean-room flavours only: not
+ * stored, ask the user to shift the finger), <0 error.
  * *progress (0..100) is set if non-NULL. */
 int egis_enroll_add(const uint8_t *raw, int *progress);
 /* finalize -> serialized template blob copied into caller's buffer.

@@ -590,6 +590,13 @@ capture_thread (gpointer data)
                     }
                   else
                     {
+                      /* -2: coverage under the gate; 4: same-press duplicate;
+                       * 5: same placement as a stored frame -- all three come
+                       * back to the user as "adjust your finger and try again",
+                       * which is the right hint for each of them. */
+                      fp_dbg ("enroll press refused (code %d) at stage %u/%u (var %.0f)%s",
+                              r, self->enroll_count, EGIS0576_ENROLL_STAGES, var,
+                              r == 5 ? " -- same placement, asking for a shifted press" : "");
                       m->kind = M_ENROLL_RETRY;
                       m->stage = self->enroll_count;
                     }
