@@ -101,8 +101,12 @@ struct _FpDeviceEgis0576
 
   guint8        frame[EGIS_IMG];
   guint8        corrected[EGIS_IMG];    /* flat-field corrected frame */
-  guint8        baseline[EGIS_IMG];     /* per-session no-finger reference */
+  /* Per-instance, i.e. per fprintd process: the flat-field baseline (see
+   * baseline_feed) and the exposure calibration egis_dev_calibrate found in
+   * the first open(), re-applied to every later EgisDev the driver opens. */
+  guint8        baseline[EGIS_IMG];     /* no-finger reference, valid iff have_baseline */
   gboolean      have_baseline;
+  int           dc_c_calibrated;        /* -1 until the first open() calibrated */
   guint         enroll_count;
 
   /* identify: prints in gallery order (borrowed refs), for result mapping */
@@ -151,19 +155,16 @@ frame_variance (const guint8 *buf)
  * the baseline builds itself from the natural no-finger moments and, once found,
  * is reused by every later enroll/verify without re-capturing. Single-sensor
  * driver, so a process global is fine. */
-static guint8   g_baseline[EGIS_IMG];
-static gboolean g_baseline_valid = FALSE;
-
 typedef struct { guint32 acc[EGIS_IMG]; int count; } BaselineAcc;
 
 /* Feed one no-finger frame into the accumulator; publishes the global baseline
  * once EGIS0576_BASELINE_FRAMES have been gathered. No-op once already valid. */
 static void
-baseline_feed (BaselineAcc *b, const guint8 *frame)
+baseline_feed (FpDeviceEgis0576 *self, BaselineAcc *b, const guint8 *frame)
 {
   int i;
 
-  if (g_baseline_valid)
+  if (self->have_baseline)
     return;
   for (i = 0; i < EGIS_IMG; i++)
     b->acc[i] += frame[i];
@@ -171,8 +172,8 @@ baseline_feed (BaselineAcc *b, const guint8 *frame)
   if (b->count >= EGIS0576_BASELINE_FRAMES)
     {
       for (i = 0; i < EGIS_IMG; i++)
-        g_baseline[i] = (guint8) (b->acc[i] / b->count);
-      g_baseline_valid = TRUE;
+        self->baseline[i] = (guint8) (b->acc[i] / b->count);
+      self->have_baseline = TRUE;
       fp_dbg ("flat-field baseline built from %d no-finger frames (cached for boot)", b->count);
     }
 }
@@ -181,22 +182,22 @@ baseline_feed (BaselineAcc *b, const guint8 *frame)
  * Removes per-pixel fixed-pattern while preserving the DC level (min-subtract in
  * egis_preprocess re-zeroes DC afterwards). No-op until a baseline exists. */
 static void
-flat_field (const guint8 *raw, guint8 *out)
+flat_field (FpDeviceEgis0576 *self, const guint8 *raw, guint8 *out)
 {
   long sum = 0;
   int i, mean;
 
-  if (!g_baseline_valid)
+  if (!self->have_baseline)
     {
       memcpy (out, raw, EGIS_IMG);
       return;
     }
   for (i = 0; i < EGIS_IMG; i++)
-    sum += g_baseline[i];
+    sum += self->baseline[i];
   mean = (int) (sum / EGIS_IMG);
   for (i = 0; i < EGIS_IMG; i++)
     {
-      int v = (int) raw[i] - (int) g_baseline[i] + mean;
+      int v = (int) raw[i] - (int) self->baseline[i] + mean;
       out[i] = v < 0 ? 0 : (v > 255 ? 255 : v);
     }
 }
@@ -380,8 +381,8 @@ post_msg (FpDevice *dev, Msg *m)
  * re-init the host match engine (host state, intact), re-run exposure calibration
  * (it needs a no-finger window we can't guarantee on resume. NOTE: the replay's
  * record 25 block-writes regs 0x09..0x13 and so puts reg 0x0f back to the baked
- * 0x20 — see the register table above auto_expose_mm in egis0576_proto.c — but
- * egis_dev_open re-applies the value the once-per-process calibration found,
+ * 0x20 — see the register table at the top of egis0576_proto.c — but
+ * egis_dev_open re-applies the value the first open()'s calibration found,
  * so the exposure stays the calibrated one across this re-init and across every
  * re-open), or recapture the flat-field baseline (exposure-tied, per-boot, and
  * still valid precisely because the exposure is re-applied) — so cross-boot
@@ -409,6 +410,7 @@ worker_reinit (FpDeviceEgis0576 *self, GError **error)
   g_atomic_int_set (&self->needs_reinit, TRUE);
   g_clear_pointer (&self->sensor, egis_dev_free);
   self->sensor = egis_dev_new (usb);
+  egis_dev_set_calibration (self->sensor, self->dc_c_calibrated);
   /* The fresh channel must carry this capture's cancellable, or the re-init's
    * own ~25 x 800 ms of transfers would be uncancellable again. */
   egis_dev_set_cancellable (self->sensor, self->capture_cancellable);
@@ -567,14 +569,14 @@ capture_thread (gpointer data)
        * (before the first press / between presses) — never blocks, works with
        * GNOME's immediate "place finger" flow, and caches for the whole boot. */
       if (var < EGIS0576_BASELINE_MAX_VAR)
-        baseline_feed (&bl, self->frame);
+        baseline_feed (self, &bl, self->frame);
 
       /* (1) per-boot flat-field: subtract the fixed-pattern baseline so a template
        * enrolled one boot matches a probe from another (without it, cross-boot=0);
        * a no-op until the baseline exists. (2) BYTE-EXACT Windows preprocessing
        * (min-subtract, invert, auto-brightness, Otsu-stretch, flip) — validated on
        * fp_final (8/10). Applied identically to enroll + verify + identify. */
-      flat_field (self->frame, ffframe);
+      flat_field (self, self->frame, ffframe);
       egis_preprocess (ffframe, self->corrected);
       probe = self->corrected;
 
@@ -833,6 +835,7 @@ egis0576_open (FpDevice *dev)
     }
 
   self->sensor = egis_dev_new (fpi_device_get_usb_device (dev));
+  egis_dev_set_calibration (self->sensor, self->dc_c_calibrated);
   if (!egis_dev_open (self->sensor, TRUE, &error))
     {
       g_clear_pointer (&self->sensor, egis_dev_free);
@@ -848,13 +851,13 @@ egis0576_open (FpDevice *dev)
    * (the baked init values belong to one unit). Validated on the reference unit:
    * reliable verify-match at ~7500. No finger is expected at open. Non-fatal
    * (on error the search is simply retried at the next open; see
-   * egis_dev_calibrate). Set EGIS0576_NO_CALIBRATE=1 to fall back to
-   * the fixed value on a unit where calibration misbehaves. */
-  if (!g_getenv ("EGIS0576_NO_CALIBRATE") && !egis_dev_calibrate (self->sensor, &error))
+   * egis_dev_calibrate). */
+  if (!egis_dev_calibrate (self->sensor, &error))
     {
       fp_dbg ("exposure calibration skipped: %s", error ? error->message : "?");
       g_clear_error (&error);
     }
+  self->dc_c_calibrated = egis_dev_get_calibration (self->sensor);
   g_atomic_int_set (&self->needs_reinit, FALSE);
   fpi_device_open_complete (dev, NULL);
 }
@@ -1081,6 +1084,7 @@ static const FpIdEntry id_table[] = {
 static void
 fpi_device_egis0576_init (FpDeviceEgis0576 *self)
 {
+  self->dc_c_calibrated = -1;
 }
 
 static void

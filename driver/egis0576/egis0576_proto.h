@@ -68,23 +68,20 @@ gboolean egis_dev_open (EgisDev *d, gboolean reset_if_stuck, GError **error);
  * Blocks ~0.1 s. img must hold EGIS_IMG bytes. */
 gboolean egis_dev_getframe (EgisDev *d, guint8 *img, GError **error);
 
-/* One-time per-device exposure calibration (the vendor's calibrate_gain): a
- * binary search over register 0x0f so the no-finger frame mean is the same on
- * any EH576 unit, whatever per-unit values the baked init carries. Runs once per
- * fprintd process, before any capture; the value found is cached process-wide
- * and re-applied by egis_dev_open after every later bring-up (the sensor itself
- * does not keep it -- the replay overwrites it). Templates must be re-enrolled
- * if it moves the exposure. Returns FALSE on capture error, leaving the
- * register at the last value the search tried and the process-wide cache unset,
- * so the next open's replay restores the baked value and the search is retried. */
+/* Per-unit exposure calibration: a bounded binary search over register 0x0f so
+ * the no-finger frame mean is the same on any EH576 unit, whatever per-unit
+ * values the baked init carries. Needs a no-finger window, so the driver runs
+ * it once, in the first open(). The value found is kept in this EgisDev and
+ * must also be kept by the OWNER across EgisDev instances (egis_dev_get/
+ * set_calibration): the driver opens a fresh EgisDev per open() and per
+ * re-init, and the bring-up replay puts reg 0x0f back to the baked value each
+ * time, so egis_dev_open re-applies the handed-in value after every replay.
+ * Templates must be re-enrolled if it moves the exposure. Returns FALSE on
+ * capture error, leaving the register at the last value tried and the
+ * calibration unset, so the next open's replay restores the baked value and
+ * the search is retried. A no-op when a calibration was handed in. */
 gboolean egis_dev_calibrate (EgisDev *d, GError **error);
-
-/* One auto-exposure step from a frame's min/max; TRUE iff the exposure changed,
- * so the caller can re-take its flat-field baseline. Mechanically possible
- * since the plaintext migration (register reads may interleave with capture),
- * but deliberately NOT wired into the capture loop: its step-table jumps would
- * overshoot reg 0x0f's ~8-count usable window into saturation. See the comment
- * on the definition in egis0576_proto.c and docs/sensor-tuning.md. */
-gboolean egis_dev_autoexpose (EgisDev *d, int frame_min, int frame_max);
+void     egis_dev_set_calibration (EgisDev *d, int dc_c);   /* -1 = none */
+int      egis_dev_get_calibration (EgisDev *d);              /* -1 = none */
 
 #endif

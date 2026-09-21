@@ -15,11 +15,20 @@
 #define MODE_REQUEST 9
 #define FORCE_RESET  0x00ff
 
-/* Exposure registers, from the vendor's own per-unit values (see the naming note
- * on auto_expose_mm below): 0x0f is sensor_dc_c, a DC offset; 0x12 is
- * sensor_gain. Both move the exposure. */
+/* Exposure register. Init record 25 ("EGIS 63 09 0b" + 11 data bytes) is a
+ * block write to registers 0x09..0x13, and four of those bytes are exactly the
+ * per-unit values Windows keeps for this sensor in the device's registry
+ * Device Parameters (Enum -> USB -> VID_1C7A&PID_0576 -> <serial>):
+ *
+ *     reg 0x0d = sensor_vref_sel (0x0f)
+ *     reg 0x0e = sensor_dc_p     (0x08)
+ *     reg 0x0f = sensor_dc_c     (0x20)   <- a DC offset; what the calibration moves
+ *     reg 0x12 = sensor_gain     (0x05)   <- the gain; left at the baked value
+ *
+ * Both move the exposure. reg 0x0f has a usable window of only ~8 counts on
+ * the reference unit (docs/sensor-tuning.md), which is why the calibration
+ * below is a bounded binary search on it and nothing touches reg 0x12. */
 #define REG_DC_C 0x0f
-#define REG_GAIN 0x12
 
 /* Target no-finger frame mean for the exposure search. The vendor uses 0x40 plus
  * a per-finger auto-exposure pass; we anchor instead to the reference unit's
@@ -29,15 +38,12 @@
 struct EgisDev {
   GUsbDevice   *usb;
   GCancellable *cancellable; /* borrowed (see egis_dev_set_cancellable); NULL = uncancellable */
-  unsigned char dc_c;      /* cached reg 0x0f */
-  unsigned char gain;      /* cached reg 0x12 (indexes EGIS_STEP_TABLE) */
-};
-
-/* reg 0x12 indexes this per-step table (byte-exact from the vendor driver's
- * .rdata @0x180077170). */
-static const int EGIS_STEP_TABLE[16] = {
-  2048, 14684, 17121, 19558, 20623, 24371, 26829, 29286,
-  31744, 34202, 36454, 38912, 41370, 43827, 46285, 48742
+  unsigned char dc_c;        /* cached reg 0x0f */
+  int           dc_c_calibrated; /* what egis_dev_calibrate found, or -1. Handed in by
+                                  * the owner (egis_dev_set_calibration) because it must
+                                  * outlive this EgisDev: the driver opens a fresh one per
+                                  * open() and per re-init, and the replay resets reg 0x0f
+                                  * to the baked value every time. */
 };
 
 /* ---------------------------------------------------------------- USB ---- */
@@ -274,19 +280,17 @@ egis_wait_ready (EgisDev *d)
 
 /* ---------------------------------------------------------------- open ---- */
 
-/* Process-global: the exposure calibration runs once per fprintd process
- * (it needs a no-finger window, which only the first open can guarantee), and
- * the value it found is cached here so egis_dev_open can re-apply it after
- * every later bring-up -- the vendor replay resets reg 0x0f to the baked value
- * and each EgisDev has its own dc_c cache, so neither survives a re-open on
- * its own. THREADING: written only by egis_dev_calibrate, which libfprint
- * dispatches inside the open() vfunc on the main thread, at a point where no
- * capture worker exists (one action at a time; the worker is created after
- * open and joined before close). Read later by egis_dev_open on both threads
- * -- main thread for each open(), worker thread for a post-resume re-init --
- * with g_thread_new / g_thread_join providing the ordering. */
-static gboolean g_exposure_calibrated = FALSE;
-static unsigned char g_dc_c_calibrated;
+void
+egis_dev_set_calibration (EgisDev *d, int dc_c)
+{
+  d->dc_c_calibrated = dc_c;
+}
+
+int
+egis_dev_get_calibration (EgisDev *d)
+{
+  return d->dc_c_calibrated;
+}
 
 gboolean
 egis_dev_open (EgisDev *d, gboolean reset_if_stuck, GError **error)
@@ -366,18 +370,17 @@ egis_dev_open (EgisDev *d, gboolean reset_if_stuck, GError **error)
    * after the first (fprintd opens on each claim) and every post-resume
    * re-init would otherwise run with the baked value, and the per-boot
    * flat-field baseline is exposure-tied. */
-  if (g_exposure_calibrated && d->dc_c != g_dc_c_calibrated)
+  if (d->dc_c_calibrated >= 0 && d->dc_c != d->dc_c_calibrated)
     {
       if (dc_c_read < 0)
         g_debug ("EH576: re-applying calibrated dc_c 0x%02x after bring-up "
-                 "(could not read the register back)", g_dc_c_calibrated);
+                 "(could not read the register back)", d->dc_c_calibrated);
       else
         g_debug ("EH576: re-applied calibrated dc_c 0x%02x after bring-up "
-                 "(replay left 0x%02x)", g_dc_c_calibrated, dc_c_read);
-      egis_writereg (d, REG_DC_C, g_dc_c_calibrated);
-      d->dc_c = g_dc_c_calibrated;
+                 "(replay left 0x%02x)", d->dc_c_calibrated, dc_c_read);
+      egis_writereg (d, REG_DC_C, d->dc_c_calibrated);
+      d->dc_c = (unsigned char) d->dc_c_calibrated;
     }
-  d->gain = (unsigned char) MAX (egis_readreg (d, REG_GAIN), 0);
   return TRUE;
 }
 
@@ -440,80 +443,6 @@ egis_dev_getframe (EgisDev *d, guint8 *img, GError **error)
 
 /* ------------------------------------------------------------ exposure ---- */
 
-/* One auto-exposure step: nudge the exposure from the frame min/max so the frame
- * spans 0..0xff. Adapts PER DEVICE — the baked init values belong to one unit.
- * Returns 1 if something changed, 0 if the frame was already well exposed.
- *
- * REGISTER NAMING, resolved from the vendor's own data — do not re-litigate:
- * 0x0f and 0x12 are not both gain registers. Init record 25 is "EGIS 63 09 0b"
- * + 83 24 00 44 0f 08 20 20 01 05 12, an 11-byte block written to registers
- * 0x09..0x13. Four of those bytes are exactly the per-unit values Windows stores
- * for this sensor (registry: Enum -> USB -> VID_1C7A&PID_0576 -> <serial> ->
- * Device Parameters), three landing consecutively in the order the vendor's
- * registry loader FUN_18000b2d0 reads them:
- *
- *     reg 0x0d = sensor_vref_sel (0x0f)
- *     reg 0x0e = sensor_dc_p     (0x08)
- *     reg 0x0f = sensor_dc_c     (0x20)   <- a DC offset, NOT a "fine gain"
- *     reg 0x12 = sensor_gain     (0x05)   <- the actual gain
- *
- * Both move exposure, which is why the coarse/fine treatment works: the vendor's
- * own auto-exposure (FUN_180008cd0) decrements reg 0x12 by one on an over-bright
- * frame and otherwise trims reg 0x0f, and those two are the only registers it
- * ever writes with computed rather than constant values. */
-static int
-auto_expose_mm (EgisDev *d, int mn, int mx)
-{
-  int step, v;
-
-  if (mn > 0 && mx < 0xff)              /* already well exposed */
-    return 0;
-  if (mn == 0 && mx == 0xff)            /* full span: back the gain off a step */
-    {
-      if (d->gain > 1)
-        {
-          egis_writereg (d, REG_GAIN, d->gain - 1);
-          d->gain--;
-          return 1;
-        }
-      return 0;
-    }
-  step = EGIS_STEP_TABLE[d->gain & 0x0f];
-  v = d->dc_c;
-  if (mx == 0xff)                       /* too bright: trim the offset down */
-    {
-      int target = mn << 10;
-      while (v > 0 && target >= step) { target -= step; v--; }
-    }
-  else                                  /* too dark: raise it, cap 0x40 */
-    {
-      int target = (0xff - mx) << 10;
-      while (v < 0x40 && target >= step) { v++; target -= step; }
-    }
-  if ((unsigned char) v != d->dc_c)
-    {
-      egis_writereg (d, REG_DC_C, v);
-      d->dc_c = (unsigned char) v;
-      return 1;
-    }
-  return 0;
-}
-
-/* NOT wired into the capture loop, deliberately. Since the plaintext migration a
- * register read may interleave with capture (measured: frame variance 140.1
- * before, 140.4 after), so this is mechanically possible for the first time. But
- * reg 0x0f has a usable window of only ~8 counts (docs/sensor-tuning.md), and the
- * step-table arithmetic above computes jumps that would overshoot it straight
- * into saturation. No unit with a badly-exposed starting point is available to
- * test that on, and shipping an untested behaviour change to other people's
- * hardware is exactly the mistake that produced the TLS transport. Kept because
- * the mechanism is sound and a future maintainer with such a unit will want it. */
-gboolean
-egis_dev_autoexpose (EgisDev *d, int frame_min, int frame_max)
-{
-  return auto_expose_mm (d, frame_min, frame_max) != 0;
-}
-
 gboolean
 egis_dev_calibrate (EgisDev *d, GError **error)
 {
@@ -532,8 +461,8 @@ egis_dev_calibrate (EgisDev *d, GError **error)
    * which is why this is close to a no-op here and adaptive elsewhere. */
   int lo = 0, hi = 0x3f, best = 0x1f, best_diff = 0x100;
 
-  if (g_exposure_calibrated)
-    return TRUE;                        /* once per process; egis_dev_open re-applies it */
+  if (d->dc_c_calibrated >= 0)
+    return TRUE;                        /* already found by the owner; egis_dev_open re-applies it */
   for (int it = 0; it < 6; it++)
     {
       int mid = (lo + hi) >> 1, level, diff;
@@ -556,8 +485,7 @@ egis_dev_calibrate (EgisDev *d, GError **error)
     }
   egis_writereg (d, REG_DC_C, best);
   d->dc_c = (unsigned char) best;
-  g_dc_c_calibrated = (unsigned char) best;
-  g_exposure_calibrated = TRUE;
+  d->dc_c_calibrated = best;
   return TRUE;
 }
 
@@ -569,6 +497,7 @@ egis_dev_new (GUsbDevice *usb)
   EgisDev *d = g_new0 (EgisDev, 1);
 
   d->usb = usb;
+  d->dc_c_calibrated = -1;
   return d;
 }
 
