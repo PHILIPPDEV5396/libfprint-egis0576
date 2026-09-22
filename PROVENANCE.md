@@ -84,12 +84,14 @@ here is exactly what of it is and is not in this one:
 - **Taken at the start, gone since:** the first version of this driver
   (`3b6f850`, 2026-07-19) transcribed that project's packet lists into
   `driver/egis0576.h` (`egis0576_init_pkts`, `egis0576_repeat_pkts`,
-  `egis0576_poll_pkt`, `egis0576_image_pkt`) as a starting point. The
-  bring-up they described was replaced in v0.4.0 (`94ca704`, 2026-09-09) by
-  the sequence in `egis_init.h`, recovered by this project from a decrypted
-  session of the vendor's own driver, and the transcribed tables sat unused
-  until `0e5f7bb` (2026-09-21) deleted them. No line of that project's code
-  — no function, structure, comment or table — is in the tree now.
+  `egis0576_poll_pkt`, `egis0576_image_pkt`) as reference material. The
+  driver never sent them: from that first commit it brought the sensor up
+  with the vendor driver's own sequence, recovered by this project from a
+  decrypted session (`egis_tls_init.h` then, `egis_init.h` since v0.4.0,
+  `94ca704`, sends the same records in the clear), and the transcribed
+  tables sat unused until `0e5f7bb` (2026-09-21) deleted them. No line of
+  that project's code — no function, structure, comment or table — is in
+  the tree now.
 - **Still the same, because it is the device:** the per-frame command
   sequence the transport sends before every `GetFrame` (five register
   accesses, `egis0576_proto.c` `FRAME_PREAMBLE`) is byte for byte the sequence
