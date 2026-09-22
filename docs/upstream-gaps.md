@@ -13,7 +13,7 @@ This file is the definition of v0.5.0: the release is cut when every blocker and
 |---|---|---|
 | 1 tree, provenance, instance state, contract | done | `0e5f7bb`, `000afc5`, `8cbfc6a`, `a60fd36` (2026-09-21) |
 | 2 asynchronous I/O | done, hardware-validated 2026-09-22 (enrol 12/12 with two steering refusals, genuine press 0.88/0.95 confirmed by the second frame, other finger 0.55 rejected, cancel answered in 3 ms, open 0.37 s) | `c81516a` (2026-09-21): FpiSsm over FpiUsbTransfer, matcher in a GTask |
-| 3 suspend/resume/autosuspend in the driver | open | |
+| 3 suspend/resume/autosuspend in the driver | done, hardware-validated 2026-09-22 (s2idle with the sleep hook disabled and a verify running: parked 1.5 s before `PM: suspend entry`, resumed, re-initialised, the same verify matched 0.86/0.86; the following GNOME unlock matched 0.93/0.91; autosuspend from runtime-suspended state ok) | `6b9835c`, `ae537ab`, `ee16468` |
 | 4 umockdev test | open | |
 | 5 style, headers, statement, MR text | open | |
 
