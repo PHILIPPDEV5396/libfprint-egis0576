@@ -148,28 +148,43 @@ sequence, which both projects observed from the vendor driver independently).
 
 ### Testing
 
-- `tests/egis0576/custom.py` with a umockdev recording made with a textured
-  non-finger object — no fingerprint is committed to a public pcap. It pins
-  open with the exposure calibration, an empty-gallery identify that must
-  not touch the sensor, twelve enrolment stages including the settle loop
-  and the placement steering, template serialisation, a verify and an
-  asynchronous identify that must **not** match, a print with no egis0576
-  template refused with `DATA_INVALID`, the finger-status transitions and a
-  clean close. It cannot pin the successful-match report: no household
-  object reproduces a fingerprint's ridge-period statistics, which is the
-  matcher's check doing its job — the best candidate enrols at 0.63 coverage
-  with its two presses correlating at 0.947 and is still rejected, because
-  its grooves are finer than the 0.27–0.74 mm the period estimator can
-  measure. The match path is covered by the hardware runs quoted above. If a
-  matching recording is wanted, say so and I will look for a co-operative
-  artefact rather than put a fingerprint in the repository.
-- Hardware, reference unit: enrol / verify / identify through fprintd and
-  the GNOME lock screen; cancel answered within one transfer sequence
-  (3 ms measured); s2idle with a verify running (above); autosuspend with
-  `power/control=auto`; no warning or critical in `G_MESSAGES_DEBUG=all`
-  runs.
-- `scripts/uncrustify.sh --check` passes; `meson test` 38 ok / 0 fail on
-  master with the driver laid in.
+Hardware, reference unit (Yoga 7 14ARB7, AMD): enrol, verify and identify
+through fprintd and the GNOME lock screen; a cancel answered within one
+transfer sequence (3 ms measured); s2idle with a verify running, which
+parks 1.5 s before the kernel's suspend entry and matches on the first
+press after waking; USB autosuspend with `power/control=auto`; no warning
+or critical in `G_MESSAGES_DEBUG=all` runs. Three further units are
+reported working by their owners (issues linked from the out-of-tree
+README), two of them with accuracy datasets.
+
+`scripts/uncrustify.sh --check` passes, and `meson test` on master with
+this driver laid in is 38 ok / 0 fail.
+
+**There is no `tests/egis0576/` in this MR, and I would like your view on
+what should go in it.** A umockdev recording contains every frame the
+sensor delivered, so recording one with a finger would publish a
+fingerprint of mine in this repository, which I am not willing to do. The
+alternative is a textured non-finger object, and that limits what the test
+can assert: this driver matches by correlating ridge texture and checking
+that the probe's local ridge period reproduces the template's, and no
+household object reproduces a fingerprint's ridge-period statistics — the
+best candidate I measured enrols cleanly (coverage 0.63 against a 0.60
+gate) with its two presses correlating at 0.947, and the driver still
+rejects it, because the period estimator finds 2 usable blocks of 270: its
+grooves are finer than the 0.27–0.74 mm the estimator can measure.
+
+So a recording I can make covers open with the exposure calibration, an
+empty-gallery identify, twelve enrolment stages including the settle loop
+and the placement steering, template serialisation, a verify and an
+asynchronous identify that must **not** match, a print with no template
+refused with `DATA_INVALID`, the finger-status transitions and a clean
+close — everything except the successful-match report, which is covered
+by the hardware runs above. The script for exactly that is written and
+ready (`tools/upstream/tests/egis0576/custom.py` in the out-of-tree
+repository); it needs about fourteen presses at the machine and I will
+record it on request. If you would rather have a recording in which the
+object matches, that needs a co-operative artefact I have not found, and
+I would want to agree with you first that it is worth publishing one.
 
 The wiki's Unsupported-Devices page needs 1c7a:0576 removed (I cannot edit
 it).
@@ -178,4 +193,6 @@ it).
 
 Thaddeus Stepanovich (correlation matcher design, second-unit measurements
 and review), the testers sam-dant and irvingpop (datasets from two more
-units), and Pengu601 (the first plaintext protocol description).
+units), and Pengu601 (the first plaintext protocol description), anthonythayes and
+sam-dant (compatibility reports and the long-lock measurement that produced
+the capture loop's back-off).
