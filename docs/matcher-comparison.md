@@ -439,8 +439,8 @@ Reference dataset, 714 frames (2026-09-16, libfprint 1.94.100,
 `bozorth3` needs on the order of a dozen paired minutiae for a decision; a
 70×57 px frame (3.5 × 2.9 mm of skin) yields a median of one. Upscaling
 (`NBIS_SCALE`), contrast normalisation (`NBIS_NORM`) and other `ppmm` values
-were tried during the same session and move the median to at most 2–3. An own
-extractor tuned to the frame size found ~7 per frame, of which only ~50 %
+were tried in the same session; the best of the variants is the second row.
+An own extractor tuned to the frame size found ~7 per frame, of which only ~50 %
 repeated between adjacent frames of the same press, so a minutiae matcher was
 not viable either; mosaicking several presses was measured useless because
 presses land on the same spot (about 1.2× the frame area in total). What the
