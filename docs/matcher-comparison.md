@@ -414,6 +414,39 @@ Cost, for the driver's every-frame scoring loop: `em_frame_compute` 1.6 ms
 the rotation search costs less than the wider translation search alone,
 because its coarse pass is decimated and one NCC pass accumulates raw sums.
 
+## Why not minutiae (the number behind the driver design)
+
+libfprint's own way to support an image sensor is `FpImageDevice`: the driver
+hands over images, libfprint's bundled NBIS (`mindtct`) extracts minutiae and
+`bozorth3` matches them. That is not an option on this sensor, and the reason
+is one measurement, reproducible with the kit's `nbis_count` (libfprint's own
+`mindtct` sources plus the driver's documented flat-field step; only counts
+leave the machine):
+
+```
+make -C tools/accuracy nbis-count LIBFPRINT_SRC=/path/to/libfprint
+tools/accuracy/nbis-count <dataset>/baseline.npy <dataset>/*.npy
+```
+
+Reference dataset, 714 frames (2026-09-16, libfprint 1.94.100,
+`g_lfsparms_V2`, 12.8 px/mm from the measured 6.4 px ridge period):
+
+| configuration | minutiae per frame, min / median / mean / max | frames with 0 | frames with ≥ 8 |
+|---|---|---|---|
+| mindtct defaults (perimeter points removed) | 0 / **1** / 1.52 / 7 | 236 (33 %) | 0 |
+| perimeter points kept (`NBIS_KEEP_PERIM=1`) | 0 / 2 / 2.31 / 9 | 164 | 6 |
+
+`bozorth3` needs on the order of a dozen paired minutiae for a decision; a
+70×57 px frame (3.5 × 2.9 mm of skin) yields a median of one. Upscaling
+(`NBIS_SCALE`), contrast normalisation (`NBIS_NORM`) and other `ppmm` values
+were tried during the same session and move the median to at most 2–3. An own
+extractor tuned to the frame size found ~7 per frame, of which only ~50 %
+repeated between adjacent frames of the same press, so a minutiae matcher was
+not viable either; mosaicking several presses was measured useless because
+presses land on the same spot (about 1.2× the frame area in total). What the
+sensor's size leaves is correlation on the ridge texture, which is what the
+Gabor front-end does.
+
 ## What the three runs agree on, and where they do not
 
 **Agree.** The vendor matcher beats the clean-room matcher on false rejects on

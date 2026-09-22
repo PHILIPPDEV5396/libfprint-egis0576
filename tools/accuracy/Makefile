@@ -82,6 +82,20 @@ $(OBJ)/cleanroom/egis_match.o: $(DRV)/tsteppy/egis_match.c
 	$(CC) $(CLEAN_CFLAGS) -c -o $@ $<
 
 clean:
-	rm -rf $(OBJ) $(HERE)score-vendor $(HERE)score-cleanroom $(HERE)score-gabor
+	rm -rf $(OBJ) $(HERE)score-vendor $(HERE)score-cleanroom $(HERE)score-gabor $(HERE)nbis-count
 
-.PHONY: all clean
+# How many minutiae NBIS mindtct finds per frame (the "why not an image
+# driver" number, docs/matcher-comparison.md). Needs a libfprint source tree
+# for its bundled nbis and its meson version string:
+#   make nbis-count LIBFPRINT_SRC=/path/to/libfprint
+LIBFPRINT_SRC ?=
+NBIS := $(LIBFPRINT_SRC)/libfprint/nbis
+NBIS_VERSION := $(shell sed -n "s/^ *version: *'\([^']*\)'.*/\1/p" $(LIBFPRINT_SRC)/meson.build 2>/dev/null | head -1)
+nbis-count: $(HERE)nbis_count.c
+	@test -n "$(LIBFPRINT_SRC)" || { echo "make nbis-count LIBFPRINT_SRC=<libfprint checkout>"; exit 1; }
+	$(CC) -O2 -w -o $(HERE)nbis-count $(HERE)nbis_count.c \
+	    -DNBIS_LIBFPRINT_VERSION='"$(NBIS_VERSION)"' \
+	    -I$(NBIS)/include -I$(NBIS)/libfprint-include -I$(LIBFPRINT_SRC)/libfprint \
+	    $(wildcard $(NBIS)/mindtct/*.c) $$(pkg-config --cflags --libs glib-2.0) -lm
+
+.PHONY: all clean nbis-count
