@@ -31,8 +31,14 @@ enrolment:
 tools/upstream/objprobe.py
 ```
 
-It prints the matcher's coverage per frame and the best NCC between the two
-presses, and says whether the object is usable. What it is looking for:
+It prints the matcher's coverage per frame and two scores that are not the
+same thing: the **correlation** between the two presses (how alike they are)
+and the **decision** the driver would see, which is that correlation or -1
+when the ridge-period consistency check rejects the pair as
+synthetic-looking. A tool that reads only the decision cannot tell "these
+presses do not match" from "these presses match and the check threw it
+away", and its maximum lands just under the check's 0.70 gate. What the
+probe is looking for:
 
 - **coverage ≥ 0.60 on both presses** — the object must produce ridge-*like*
   structure, not just contrast. A rigid metal part gives plenty of variance
@@ -45,11 +51,18 @@ presses, and says whether the object is usable. What it is looking for:
   every time. Measured on one candidate: 12 enrolment frames that correlated
   0.16–0.67 *with each other*, against 0.82–0.97 for a finger.
 
+- **no rejections by the period check** — the driver rejects a pair whose
+  ridge periods are not consistent with the template's. That is the
+  anti-spoofing check, and it fires on two kinds of object: one whose texture
+  is a regular grating (what it was built for), and one whose contact patch
+  is too small to give the check enough blocks to look at. The probe says
+  which, per pair.
+
 So the useful shape is **elastic, with irregular ridge-like texture at
-0.2–0.5 mm**: textured rubber or silicone, an eraser with a pattern pressed
-into it, a piece of leather. Avoid regular gratings (a coin's reeded edge):
-the driver's ridge-period consistency check exists to reject exactly those,
-and it will reject them here too.
+0.2–0.5 mm, and a contact patch as large as a fingertip's**: textured rubber
+or silicone, an eraser with a pattern pressed into it, a piece of leather.
+Avoid regular gratings (a coin's reeded edge): the period check exists to
+reject exactly those.
 
 Recording, from a libfprint build directory with the driver laid in
 (needs `umockdev`, `tshark`, `usbmon` loaded, root):
