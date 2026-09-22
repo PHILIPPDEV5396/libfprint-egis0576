@@ -1,170 +1,108 @@
-/* egis_engine_cleanroom.c -- clean-room matcher adapter for the egis0576 driver
+/*
+ * egis_engine_cleanroom.c -- the host matcher behind egis_engine.h
+ * Copyright (C) 2026 Philipp Oster
  *
- * Copyright (C) 2026 Philipp Oster (adapter)
- * Matcher: Copyright (C) 2026 Thaddeus Stepanovich, see tsteppy/egis_match.c
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
  *
- * This library is free software; you can redistribute it and/or modify it
- * under the terms of the GNU Lesser General Public License as published by the
- * Free Software Foundation; either version 2.1 of the License, or (at your
- * option) any later version.
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
  *
- * ---------------------------------------------------------------------------
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
+ *
  * WHAT THIS FILE IS
  *
- * The egis0576 driver (driver/egis0576.c) talks to its host matcher only
- * through the small contract in egis_engine.h. Three flavours exist:
+ * The egis0576 driver talks to its matcher only through egis_engine.h. This
+ * file implements that contract as an image-correlation matcher: each
+ * enrolment press is kept as a 70x57 frame, a probe frame is compared with
+ * every stored frame by masked normalised cross-correlation over a shift and
+ * rotation search, and the best score decides. The frame representation
+ * (EmFrame) and the two functions em_frame_compute() / em_match() are the
+ * interface Thaddeus Stepanovich designed for his LGPL correlation matcher
+ * (egis_match.h, his file, unchanged); the implementation compiled here is
+ * the Gabor front-end in egis_match_gabor.c, with its operating-point
+ * constants in egis_cr_tuning.h and the alignment report of
+ * egis_match_check.h that the enrolment steering below uses.
  *
- *   egis_engine.c            "vendor"    Egis' own extractor/matcher, machine-
- *                                        translated from the Windows driver
- *                                        (egis_funcs.c). Default. Not upstreamable.
- *   egis_engine_cleanroom.c  "cleanroom" THIS FILE: the same contract on top of
- *                                        Thaddeus Stepanovich's LGPL-2.1-or-later
- *                                        correlation matcher em_frame_compute()
- *                                        / em_match() (tsteppy/egis_match.{c,h}).
- *   egis_engine_cleanroom.c  "gabor"     THIS FILE again, on the same two-function
- *     + gabor/                           contract implemented by gabor/
- *                                        egis_match_gabor.c (own work, LGPL):
- *                                        orientation-selective front-end and a
- *                                        rotation search. Its three operating-
- *                                        point constants come from
- *                                        gabor/egis_cr_tuning_gabor.h, force-
- *                                        included by the build (see below).
+ * Why not minutiae: on a 70x57 sensor (3.5 x 2.9 mm) NBIS mindtct finds a
+ * median of one minutia per frame, and an own extractor about seven with
+ * only ~50 % of them repeating between adjacent frames of the same press;
+ * there is nothing to match. Correlation on the ridge texture is what the
+ * sensor's size leaves.
  *
- * The flavour is chosen at BUILD time with the meson option
+ * MEASURED (tools/accuracy of the out-of-tree repository, one person per
+ * unit, twelve-press enrolment, every frame of a press scored, impostors =
+ * the same person's other fingers; scores are NCC):
  *
- *     -Degis0576_matcher=vendor      (default, today's behaviour, byte-identical)
- *     -Degis0576_matcher=cleanroom   (this file + tsteppy/egis_match.c)
- *     -Degis0576_matcher=gabor       (this file + gabor/egis_match_gabor.c)
+ *   reference unit, 60 genuine / 480 impostor presses:
+ *     genuine 0.80 / 0.97 / 0.99 (min / median / max), impostor 0.06 / 0.41 /
+ *     0.69 -> at the shipped 0.78: 0 rejects, 0 accepts; held-out threshold
+ *     across folds 0.75 with the same result
+ *   second unit (T. Stepanovich, flat-fielded frames): 6.9 % FRR, 0 % FAR
+ *   a session five days later on the reference unit: fingers whose presses
+ *     covered the enrolled skin matched at 0.83-0.94, two placed on skin the
+ *     enrolment never saw did not -- which is what the steering addresses
+ *   live through fprintd: genuine presses 0.86-0.95, another finger 0.55
  *
- * Exactly one flavour is compiled into libfprint; the other flavours' sources
- * are not built at all (see the 'egis0576' block in libfprint/meson.build).
- * The driver source and egis_engine.h are identical in all flavours. Numbers
- * quoted in this header (thresholds, stack, timings, template counts) are
- * for tsteppy's front-end unless they say otherwise; the Gabor front-end's
- * are in its own two files.
- *
- * PROVENANCE OF tsteppy/egis_match.{c,h}
- *
- *   Upstream: https://github.com/tsteppy/egistec-eh576-libfprint.git
- *   Commit:   0a3cb68ebd31fb3a82018267d99ec9150a8efb8a  (driver/egis_match.{c,h})
- *   Copied byte-for-byte (license header intact); re-sync with plain `cp`.
- *   Its `#ifdef EGIS_MATCH_MAIN` evaluator is inert in this build.
- *
- * INPUT FRAMES / PREPROCESSING POLICY
- *
- *   em_frame_compute() is specified for RAW 8-bit 70x57 sensor bytes and does
- *   its own high-pass enhancement, coherence mask and standardisation. In this
- *   flavour egis_preprocess() is therefore an identity copy: the Windows-style
- *   per-frame preprocessing (egis_preprocess.c: min-subtract, invert, auto-
- *   brightness, Otsu stretch, row flip) is treated as part of the VENDOR
- *   matcher's input contract and is not compiled here.
- *
- *   What the engine still receives from the driver is the per-boot flat-field
- *   corrected frame (driver/egis0576.c: flat_field() runs before
- *   egis_preprocess() on every frame and cannot be bypassed from the engine
- *   side). "Same captures" for the A/B comparison therefore means: same sensor
- *   bytes, same flat-field correction, same finger on/off gating and the same
- *   every-frame scoring policy of THIS driver; only the matcher differs.
- *   Thaddeus' published numbers (0 % FAR / ~10 % FRR at NCC 0.53) were measured
- *   on un-flat-fielded raw frames with ONE settled, ghost-checked frame per
- *   press; this driver scores EVERY frame while the finger is down and accepts
- *   on the first one over threshold. Measured on THIS pipeline (identical
- *   captures for both flavours, 60 presses per run, impostors = the same
- *   person's other fingers) on THREE units, one person each
- *   (docs/matcher-comparison.md). At the shipped threshold 5000 (NCC 0.53),
- *   this flavour against the vendor flavour on the same captures:
- *
- *     reference unit (714 frames)  FRR 35.0 % / FAR 0.0 %   vendor  0 / 60, 0 / 480
- *       genuine 1220 / 6961 / 9135, impostor 710 / 1638 / 4470; EER 15 % (NCC 0.24)
- *     sam-dant       (720 frames)  FRR 73.3 % / FAR 0.0 %   vendor  2 / 60, 0 / 480
- *       genuine 965 / 2425.5 / 8994, impostor 698 / 1697.5 / 4232; EER 35 %
- *     irvingpop      (720 frames)  FRR 93.3 % / FAR 1.04 %  vendor 37 / 60, 0 / 480
- *       genuine 1248 / 2865 / 7532, impostor 770 / 2517 / 5481; EER 45 %
- *
- *   So the 35 % / 0 % above is the BEST of the three runs, not this flavour's
- *   error rate: on irvingpop's unit five of the 480 impostor comparisons reach
- *   the threshold (5238..5481) while 57 of the 60 genuine presses score below
- *   the largest impostor, i.e. the two populations are not separated there at
- *   any threshold. The vendor flavour's impostor scores were 0 in all 1440
- *   comparisons across the three units; its genuine side is run-dependent too
- *   (0 / 2 / 37 rejects of 60). Each run is one person, one unit, one session,
- *   and the kit enrols 6 presses per fold against the driver's 12 stages, so
- *   none of these is a population rate or the shipped driver's rate. Reproduce
- *   with tools/accuracy/ (score-cleanroom / score-vendor + evaluate.py).
+ * The same-person impostor set is the ceiling this could be measured
+ * against; nobody else's fingers were available. Physical artefacts were not
+ * tried.
  *
  * SCORE MAPPING
  *
- *   The contract is an int score, higher is better, accept iff
- *   score >= EGIS_THRESHOLD (5000), < 0 means "nothing to score". em_match()
- *   returns an NCC in [-1, 1] (or exactly -1.0 when the masked overlap is too
- *   small). It is scaled so that Thaddeus' operating point lands exactly on
- *   the driver's threshold:
+ *   The contract is an int score, accept iff score >= EGIS_THRESHOLD (5000),
+ *   < 0 means "nothing to score". The NCC in [-1, 1] is scaled so that the
+ *   front-end's threshold (em_match_threshold, 0.78) lands exactly on it:
+ *   score = lround (ncc * 5000 / 0.78), i.e. 6410 per unit NCC; a perfect
+ *   1.0 logs as 6410. -1 is returned verbatim for the front-end's overlap
+ *   sentinel, a probe under the coverage gate, an empty slot or a bad index;
+ *   the driver treats it as a plain non-match.
  *
- *       score = lround(ncc * EGIS_THRESHOLD / EGIS_CR_ACCEPT_NCC)
- *             = lround(ncc * 9433.96...)         (EGIS_CR_ACCEPT_NCC = 0.53)
+ * TEMPLATE BYTES
  *
- *       ncc 0.530 -> 5000 (accept)     ncc 1.000 -> 9434
- *       ncc 0.528 -> 4981 (reject; his best impostor)
- *       ncc 0.421 -> 3972
+ *   egis_enroll_finish() hands the driver the stored frames back to back,
+ *   nframes x 3990 bytes and nothing else (47,880 bytes for twelve presses);
+ *   the driver wraps them in a versioned GVariant. A blob is valid iff it is
+ *   a whole number of frames, 1..EGIS_CR_MAX_FRAMES of them. EmFrames are
+ *   recomputed from the bytes once per action in egis_gallery_load()
+ *   (~1.6 ms each), never per probe.
  *
- *   To convert a logged score back to an NCC divide by 9433.96. The Gabor
- *   flavour uses the same formula with its own EGIS_CR_ACCEPT_NCC (0.78, see
- *   gabor/egis_cr_tuning_gabor.h): 5000 / 0.78 = 6410.26 per unit NCC, so a
- *   perfect 1.0 logs as 6410 there and scores are NOT comparable across the
- *   two flavours except through the threshold. A negative
- *   result (-1) is returned verbatim, never scaled, for: em_match's overlap
- *   sentinel, a probe whose coverage is below EGIS_CR_MIN_COVERAGE (his probe
- *   quality gate), an empty gallery slot or a bad index. The driver already
- *   treats < 0 as a plain non-match.
+ *   PRIVACY: these bytes are images of the fingertip, flat-fielded. A
+ *   minutiae driver stores coordinates that cannot be turned back into an
+ *   image; a correlation matcher has nothing but the image to match against.
+ *   They live in fprintd's store (root only, mode 0700), like every other
+ *   driver's template.
  *
- * TEMPLATE BYTES (what egis_enroll_finish() hands the driver)
+ * ENROLMENT (egis_enroll_add return codes, see egis_engine.h)
  *
- *   The stored frames of every accepted enrolment press, back to back,
- *   exactly as handed to egis_enroll_add(): nframes x 3990 bytes, nothing
- *   else. A full 12-press print is 47,880 bytes. Versioning and validation
- *   of what fprintd hands back are the driver's (it wraps these bytes in a
- *   (qay) GVariant with a format version); here a blob is valid iff it is a
- *   whole number of frames, 1..EGIS_CR_MAX_FRAMES of them. Storing frames
- *   (rather than EmFrames) keeps the blob 9x smaller and independent of the
- *   front-end: the two clean-room front-ends read the same bytes -- and score
- *   them on different scales, which is why the driver's version guards a
- *   flavour switch and the user re-enrols. EmFrames are recomputed once per
- *   action in egis_gallery_load() (~0.2 ms each with tsteppy's front-end,
- *   ~1.6 ms with the Gabor one), never per probe.
- *
- *   PRIVACY: these bytes are sensor images of the fingertip, flat-fielded.
- *   Minutiae-based drivers store coordinates that cannot be turned back into
- *   an image; a correlation matcher has nothing but the image to match
- *   against. The store is fprintd's (root-only, mode 0700); the argument for
- *   accepting that trade-off is in docs/matcher-comparison.md.
- *
- * ENROLMENT MAPPING (egis_enroll_add return codes, see egis_engine.h)
- *
- *   The driver counts accepted presses itself (EGIS0576_ENROLL_STAGES = 12) and
- *   treats 1 and 2 both as "accepted"; anything else becomes a CENTER_FINGER
- *   retry. This adapter returns:
- *     -2  probe coverage < EGIS_CR_MIN_COVERAGE (0.55, his enrolment gate)
- *      4  redundant: NCC >= EGIS_CR_REDUNDANT_NCC (0.95) against a frame already
- *         in the session (same-press duplicate; his best genuine cross-press
- *         score is 0.923, same-press agreement 0.997-0.998)
- *      5  same placement as a stored frame (from the 3rd frame on): not
- *         stored, the driver asks for an adjusted press; after two refusals in
- *         a row the next such press is stored anyway (see EGIS_CR_STEER_*)
- *      1  stored, more wanted        2  stored, session full (12 frames)
- *   Once the session holds EGIS_CR_MAX_FRAMES frames every further add returns
- *   2 without storing, so the driver's counter and ours can never deadlock.
+ *   The driver counts accepted presses (EGIS_ENROLL_STAGES = 12), treats 1
+ *   and 2 as accepted and everything else as a "adjust your finger" retry:
+ *     -2  coverage below EGIS_CR_MIN_ENROL_COVERAGE (the driver keeps
+ *         sampling the same press for a few frames first, so a settling
+ *         finger gets its chance)
+ *      4  same-press duplicate: NCC >= EGIS_CR_REDUNDANT_NCC against a stored
+ *         frame
+ *      5  same placement as a stored frame (steering, from the third frame
+ *         on): not stored; after EGIS_CR_STEER_MAX_RETRY refusals in a row
+ *         the press is stored anyway
+ *      1  stored, more wanted        2  stored, session full
+ *   Once the session is full every further add returns 2 without storing,
+ *   so the driver's counter and this one cannot deadlock.
  *
  * THREADING
  *
- *   All state lives in the EgisEngine the driver's device instance owns
- *   (egis_engine_new / egis_engine_free); nothing is static. The driver
- *   calls egis_enroll_begin / egis_gallery_load on the main thread before
- *   the capture worker starts, and egis_enroll_add / egis_verify /
- *   egis_identify / egis_enroll_finish from the worker; actions never
- *   overlap, so no locking. All EmFrames live on the heap (35,920 bytes each; tsteppy's
- *   em_frame_compute uses ~64 KB of stack transiently, the Gabor one < 8 KB
- *   and a malloc'd scratch block).
- * ---------------------------------------------------------------------------
+ *   All state lives in the EgisEngine the device instance owns; nothing is
+ *   static. The driver calls egis_enroll_begin / egis_enroll_finish on the
+ *   main loop between captures and everything else from one GTask at a
+ *   time, so nothing here runs concurrently and no locking is needed.
+ *   EmFrames live on the heap (35,920 bytes each); em_frame_compute() uses
+ *   < 8 kB of stack and a malloc'd scratch block.
  */
 
 #include <math.h>
@@ -175,16 +113,11 @@
 #include "egis_engine.h"
 #include "egis_match.h"
 
-/* Which front-end this adapter is compiled against. The shipped one is the
- * Gabor front-end (gabor/egis_match_gabor.c), whose adapter-side constants
- * live in gabor/egis_cr_tuning_gabor.h and which reports the winning
- * alignment (egis_match_check.h) that the enrolment steering needs. The
- * original front-end (tsteppy/egis_match.c) is kept buildable for the
- * comparison in docs/matcher-comparison.md with -DEGIS_CR_FRONTEND_TSTEPPY:
- * it has no alignment report, so no steering, and the adapter's defaults
- * below are its operating point. The accept threshold and the probe
- * coverage gate themselves come from the front-end in both cases
- * (em_match_threshold / em_min_coverage, declared in egis_match.h). */
+/* The out-of-tree repository also builds this adapter on the original
+ * front-end (tsteppy/egis_match.c, -DEGIS_CR_FRONTEND_TSTEPPY) for the
+ * comparison in its docs/matcher-comparison.md; that front-end has no
+ * alignment report, so no steering, and the defaults below are its operating
+ * point. Only the Gabor build is submitted. */
 #ifndef EGIS_CR_FRONTEND_TSTEPPY
 #include "gabor/egis_cr_tuning_gabor.h"
 #include "gabor/egis_match_check.h"
@@ -202,17 +135,13 @@
  * a prefix. */
 #define EGIS_CR_MAX_GALLERY 16
 
-/* Thaddeus' operating points (his driver: EGIS0576_MATCH_THRESHOLD and
- * EGIS0576_MIN_COVERAGE). */
-/* Overridable at compile time (-D...) so the accuracy kit can measure a
- * different matcher front-end behind the same adapter without editing this
- * file: all three are calibrated against the NCC distribution of
- * tsteppy/egis_match.c, and a front-end with a different distribution needs
- * them moved or the gates fire on the wrong things. The defaults are the
- * shipped driver's and are unchanged. */
 /* The accept NCC and the probe coverage gate are the front-end's own
- * (egis_match.h): tsteppy's file defines 0.53 / 0.55, the Gabor file
- * 0.78 / 0.35. The threshold maps to EGIS_THRESHOLD exactly. */
+ * (egis_match.h): the Gabor file defines 0.78 / 0.35, tsteppy's 0.53 / 0.55.
+ * The threshold maps to EGIS_THRESHOLD exactly. The adapter's own gates
+ * below are overridable at compile time (-D...) so the accuracy kit can
+ * measure a different front-end behind the same adapter without editing
+ * this file; they are calibrated per front-end (the Gabor tuning header
+ * sets its own). */
 #define EGIS_CR_ACCEPT_NCC em_match_threshold
 #define EGIS_CR_MIN_COVERAGE em_min_coverage
 #ifndef EGIS_CR_REDUNDANT_NCC

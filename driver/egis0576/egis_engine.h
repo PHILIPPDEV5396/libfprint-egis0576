@@ -16,11 +16,13 @@
  * License along with this library; if not, write to the Free Software
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  *
- * One implementation is compiled in per build flavour. The driver knows
- * nothing about the matcher beyond this file: it hands in 70x57 8-bit frames
- * (per-boot flat-fielded), gets back integer scores, and stores whatever
- * bytes egis_enroll_finish() returns as the print's template. All images are
- * EGIS_IMG_SIZE bytes, row-major, one byte per pixel. */
+ * The driver knows nothing about the matcher beyond this file: it hands in
+ * 70x57 8-bit frames (per-boot flat-fielded), gets back integer scores, and
+ * stores whatever bytes egis_enroll_finish() returns as the print's
+ * template. All images are EGIS_IMG_SIZE bytes, row-major, one byte per
+ * pixel. The implementation is egis_engine_cleanroom.c; the out-of-tree
+ * repository builds other implementations behind the same contract for
+ * comparison. */
 #ifndef EGIS_ENGINE_H
 #define EGIS_ENGINE_H
 #include <stdint.h>
@@ -34,13 +36,13 @@
 #define EGIS_ENROLL_STAGES 12
 
 /* Accept threshold on the match score: a verify or identify result >= this
- * is a match. Each engine scales its native score so that its own operating
- * point lands exactly here (clean-room adapter: NCC x 5000 / accept-NCC). */
+ * is a match. The engine scales its native score so that its own operating
+ * point lands exactly here (NCC x 5000 / accept-NCC). */
 #define EGIS_THRESHOLD 5000
 
-/* One matcher instance. The clean-room adapter allocates real per-instance
- * state; a flavour whose matcher is inherently process-global may return a
- * singleton, in which case free is a no-op. NULL on failure. */
+/* One matcher instance, with all of its state (an implementation whose
+ * matcher is inherently process-global may return a singleton, in which case
+ * free is a no-op). NULL on failure. */
 typedef struct EgisEngine EgisEngine;
 EgisEngine *egis_engine_new (void);
 void        egis_engine_free (EgisEngine *e);
