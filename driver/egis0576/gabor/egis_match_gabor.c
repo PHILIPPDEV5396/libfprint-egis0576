@@ -265,10 +265,9 @@ const double em_min_coverage = 0.35;
 
 /* ---- small separable Gaussian ------------------------------------------- */
 /* All per-frame scratch lives in one heap block so em_frame_compute() needs
- * a few hundred bytes of stack, not ~450 kB (the capture worker is a GLib
- * thread; tsteppy's own em_frame_compute peaks at ~64 kB and the adapter
- * documents that figure). Allocated and freed inside em_frame_compute(), so
- * the function stays reentrant. */
+ * a few hundred bytes of stack, not ~450 kB (it runs on a GTask thread pool
+ * thread; tsteppy's own em_frame_compute peaks at ~64 kB). Allocated and
+ * freed inside em_frame_compute(), so the function stays reentrant. */
 typedef struct
 {
   double img[EM_N], norm[EM_N], ridge[EM_N], coh[EM_N], energy[EM_N];
@@ -765,8 +764,8 @@ eg_match_core (const EmFrame *a, const EmFrame *b, int *odx, int *ody, int *orot
   (void) cand_r;
 #else
   /* coarse pass: every 2nd pixel and every 2nd shift, one rotation at a time
-   * (keeping all EG_NROT rotated copies would put 180 kB on the stack of a
-   * capture worker thread for no gain). */
+   * (keeping all EG_NROT rotated copies would put 180 kB on a thread-pool
+   * thread's stack for no gain). */
   for (int r = EG_ROT_K % EG_ROT_COARSE; r < EG_NROT; r += EG_ROT_COARSE)
     {
       /* r walks the fine grid in steps of EG_ROT_COARSE, phased so that 0 deg
