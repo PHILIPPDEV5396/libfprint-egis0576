@@ -132,6 +132,28 @@ template. Reviewers should weigh that; the alternative was no driver.
 Physical artefacts were not tried. Same-person impostors only. The threshold
 is calibrated on one unit; the second unit's held-out optimum was 0.81.
 
+### How this was written
+
+This driver was developed with heavy use of an AI coding assistant (Claude),
+over roughly two months, by one person with one unit of the hardware. I am
+telling you because it affects how you should read it and where your review
+time is best spent, not as a disclaimer.
+
+What that produced, concretely: every behavioural claim in this MR has a
+measurement behind it in the out-of-tree repository — the protocol facts came
+from captures of the vendor driver, the accuracy figures from a kit anyone
+with this sensor can re-run, the attack numbers from generators that are
+committed. Several of the driver's design decisions came out of adversarial
+review passes and were then re-measured before being acted on; two of them
+corrected claims this project had previously published, including one about
+what the anti-spoofing check actually closes.
+
+Where I would look hardest: the asynchronous rewrite is recent, and while it
+is validated on hardware (enrol, verify, identify, cancel, s2idle, autosuspend),
+it has far less field time than the blocking implementation it replaced, which
+ran for two months on four machines. The commit carries a `Co-Authored-By`
+trailer for the same reason.
+
 ### Provenance and licensing
 
 Everything submitted is LGPL-2.1-or-later. The vendor's Windows driver was
