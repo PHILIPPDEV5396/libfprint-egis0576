@@ -80,12 +80,12 @@ pre)  systemctl stop fprintd.service   # drop the stale claim before we sleep
 On resume, `fprintd` is D-Bus-activated fresh, with no claim held, so the lock
 screen's `Claim` succeeds and the fingerprint works on the first press. The `post`
 phase additionally re-enumerates the sensor (`authorized` 0→1), which resets its
-exposure state so the first post-resume capture is well-exposed. The udev rule
-(`60-…-nosuspend.rules`) pins the sensor's `power/control` to `on` so it is never
-bus-suspended between authentications. This is a conservative default for an
-interactively used reader, not a fix for a measured failure — the driver holds no
-session state, and USB autosuspend was separately measured *not* to disturb the
-sensor's protocol mode.
+exposure state so the first post-resume capture is well-exposed. (Until v0.5.0 a
+udev rule pinned the sensor's `power/control` to `on`; it was a conservative
+default, never a fix for a measured failure, and is gone: USB autosuspend was
+validated with the asynchronous driver — the sensor goes to runtime suspend 2 s
+after `close()`, comes back on the next `open()` ~0.1 s slower, and a device
+held open never autosuspends.)
 
 None of this can live in libfprint: clearing an fprintd claim and restarting the
 service are operations *above* the driver, and they must run *at suspend/resume

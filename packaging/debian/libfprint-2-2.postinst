@@ -1,29 +1,18 @@
 #!/bin/sh
-# Two things this package installs only take effect after the running system
-# is told about them. Mirrors packaging/fedora/libfprint.spec's %post and
-# packaging/ubuntu-tod/debian/libfprint-2-tod1-egis0576.postinst (whose udev
-# half was written by irvingpop); keep the three in step.
-#
-#  * the udev rule: the EH576 is a USB device enumerated at boot, long before
-#    this package's rule file exists on disk. systemd-udevd picks up a new
-#    rule file on its own but does not replay events for devices already
-#    present, so without the trigger power/control stays at "auto" on the
-#    sensor for the rest of the session after install.
-#  * the fprintd.service.d drop-in: systemd only reads drop-ins for
-#    fprintd.service after a daemon-reload. Without one the resume gate is
-#    inert until the next boot -- exactly the bug v0.4.5 shipped with in the
-#    Fedora package (fixed in 8330296).
-#
-# dh_installsystemd does not cover either: the drop-in is not a unit file, so
-# it is not part of the unit set debhelper generates snippets for.
+# The fprintd.service.d drop-in this package installs only takes effect after
+# the running system is told about it: systemd reads drop-ins for
+# fprintd.service after a daemon-reload. Without one the resume gate is inert
+# until the next boot -- exactly the bug v0.4.5 shipped with in the Fedora
+# package (fixed in 8330296). dh_installsystemd does not cover it: the drop-in
+# is not a unit file, so it is not part of the unit set debhelper generates
+# snippets for. Mirrors packaging/fedora/libfprint.spec's %post and
+# packaging/ubuntu-tod/debian/libfprint-2-tod1-egis0576.postinst; keep the
+# three in step. (Earlier versions also reloaded udev for a no-autosuspend
+# rule; that rule is gone, USB autosuspend is left at libfprint's default.)
 set -e
 
 case "$1" in
     configure)
-        if command -v udevadm >/dev/null 2>&1 && [ -d /run/udev ]; then
-            udevadm control --reload-rules || true
-            udevadm trigger --action=add --attr-match=idVendor=1c7a || true
-        fi
         if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
             systemctl daemon-reload || true
         fi

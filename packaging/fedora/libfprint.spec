@@ -100,17 +100,16 @@ patch -p1 < "$egisdir"/patches/libfprint-%{version}-egis0576.patch
 %install
 %meson_install
 
-# Suspend/resume integration from the egis0576 repo tarball: a systemd-sleep hook
-# and a udev rule. The hook's `pre` phase stops fprintd so no stale device claim
-# survives suspend (a known gnome-shell/fprintd bug — see the repo's
-# docs/suspend-resume.md); its `post` phase re-enumerates the reader. The udev rule
-# disables USB autosuspend for 1c7a:0576. The build dir still holds the unpacked
-# tarball from %prep, so re-detect its top dir the same way.
+# Suspend/resume integration from the egis0576 repo tarball: a systemd-sleep
+# hook. Its `pre` phase stops fprintd so no stale device claim survives suspend
+# (a known gnome-shell/fprintd bug — see the repo's docs/suspend-resume.md); its
+# `post` phase re-enumerates the reader. No udev rule: USB autosuspend is left
+# at libfprint's default (ID_AUTOSUSPEND=1 in the hwdb), validated with the
+# driver. The build dir still holds the unpacked tarball from %prep, so
+# re-detect its top dir the same way.
 egisdir=$(tar -tf %{SOURCE10} | head -1 | cut -d/ -f1)
 install -Dm 0755 "$egisdir/integration/50-egis0576-fp-resume.sh" \
     %{buildroot}%{_prefix}/lib/systemd/system-sleep/50-egis0576-fp-resume.sh
-install -Dm 0644 "$egisdir/integration/60-egis0576-fp-nosuspend.rules" \
-    %{buildroot}%{_udevrulesdir}/60-egis0576-fp-nosuspend.rules
 # Gate that holds fprintd's start while the hook's post phase re-enumerates the
 # sensor; fail-open after 15 s, so a stale marker cannot disable fingerprint
 # authentication. Diagnosed by sam-dant (see integration/README.md).
@@ -151,7 +150,6 @@ install -Dm 0644 "$egisdir/integration/egis0576-fprintd-wait.conf" \
 %{_libexecdir}/egis0576-fp-wait
 %dir %{_prefix}/lib/systemd/system/fprintd.service.d
 %{_prefix}/lib/systemd/system/fprintd.service.d/10-egis0576-resume-wait.conf
-%{_udevrulesdir}/60-egis0576-fp-nosuspend.rules
 
 %files devel
 %doc HACKING.md

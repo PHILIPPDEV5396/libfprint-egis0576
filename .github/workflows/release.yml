@@ -224,12 +224,9 @@ jobs:
             echo "FAIL: $hook does not stop/start fprintd, wrong file installed"; exit 1;
           }
 
-          echo "== udev rule =="
+          echo "== no udev rule (autosuspend is left at libfprint's default) =="
           rule=/usr/lib/udev/rules.d/60-egis0576-fp-nosuspend.rules
-          test -s "$rule" || { echo "FAIL: $rule missing or empty"; exit 1; }
-          grep -q '^ACTION==.*1c7a.*0576' "$rule" || {
-            echo "FAIL: $rule has no ACTION rule matching the 1c7a:0576 USB ID"; exit 1;
-          }
+          test ! -e "$rule" || { echo "FAIL: retired $rule is still shipped"; exit 1; }
 
 
           echo "== fprintd resume gate =="
@@ -351,12 +348,9 @@ jobs:
           # egis0576 udev rule and no fprintd resume gate (see
           # packaging/aur/PKGBUILD), unlike the Fedora spec. Confirm that stays true, so a future PKGBUILD change
           # that starts shipping them does not go unnoticed here.
-          echo "== confirm the sleep hook and udev rule are absent, as intended =="
+          echo "== confirm the sleep hook is absent, as intended =="
           test ! -e /usr/lib/systemd/system-sleep/50-egis0576-fp-resume.sh || {
             echo "FAIL: unexpected systemd-sleep hook in the Arch package"; exit 1;
-          }
-          test ! -e /usr/lib/udev/rules.d/60-egis0576-fp-nosuspend.rules || {
-            echo "FAIL: unexpected udev rule in the Arch package"; exit 1;
           }
 
           test ! -e /usr/libexec/egis0576-fp-wait || {
@@ -475,12 +469,9 @@ jobs:
             echo "FAIL: $hook does not stop/start fprintd, wrong file installed"; exit 1;
           }
 
-          echo "== udev rule =="
+          echo "== no udev rule (autosuspend is left at libfprint's default) =="
           rule=/usr/lib/udev/rules.d/60-egis0576-fp-nosuspend.rules
-          test -s "$rule" || { echo "FAIL: $rule missing or empty"; exit 1; }
-          grep -q '^ACTION==.*1c7a.*0576' "$rule" || {
-            echo "FAIL: $rule has no ACTION rule matching the 1c7a:0576 USB ID"; exit 1;
-          }
+          test ! -e "$rule" || { echo "FAIL: retired $rule is still shipped"; exit 1; }
 
 
           echo "== fprintd resume gate =="

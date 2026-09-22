@@ -76,10 +76,10 @@ copr-cli build libfprint-egis0576 ~/rpmbuild/SRPMS/libfprint-1.94.100-99.*.src.r
 **What the spec builds:** pristine upstream libfprint **v1.94.100** + the egis0576
 driver, keeping the package name `libfprint` (drop-in). BuildRequires, `%files`
 and `%meson -Ddrivers=all` are taken verbatim from Fedora's own libfprint.spec, so
-the file layout matches stock exactly — plus the four files the spec installs on
+the file layout matches stock exactly — plus the three files the spec installs on
 top, all from [`../integration/`](../integration/): the suspend/resume sleep
-hook, the no-autosuspend udev rule, the `egis0576-fp-wait` resume gate and its
-`fprintd.service.d` drop-in.
+hook, the `egis0576-fp-wait` resume gate and its `fprintd.service.d` drop-in.
+(No udev rule: USB autosuspend is left at libfprint's default for the sensor.)
 
 **No tradeoff since 1.94.100:** Fedora's own package now carries *no* downstream
 patches (its spec has no `Patch:` lines) and upstream ships the `egis_etu905`
@@ -111,9 +111,9 @@ makepkg -si
 sudo systemctl restart fprintd
 ```
 
-`package()` is a bare `meson install`, so — unlike the Fedora RPM — it installs
-**neither** the suspend/resume sleep hook nor the no-autosuspend udev rule. Install
-both by hand afterwards; see [`../integration/`](../integration/).
+`package()` is a bare `meson install`, so — unlike the Fedora RPM — it does not
+install the suspend/resume sleep hook and its fprintd gate. Install them by hand
+afterwards; see [`../integration/`](../integration/).
 
 pacman will prompt to replace the stock `libfprint` (this package `conflicts` with
 it). Every time Arch bumps `libfprint`, `pacman -Syu` offers the stock package —
@@ -290,10 +290,9 @@ Update the pin's version glob at the same time as any rebuild against a
 newer upstream tag.
 
 **Integration files installed automatically, unlike the AUR build:** the
-suspend/resume sleep hook and no-autosuspend udev rule are in
-`libfprint-2-2`'s own `.install` file, the same way the Fedora spec's
-`%install` adds them — closing the gap the AUR section above documents for
-its own `package()`.
+suspend/resume sleep hook and the fprintd gate are installed by
+`debian/rules`, the same way the Fedora spec's `%install` adds them —
+closing the gap the AUR section above documents for its own `package()`.
 
 **No `debian/*.symbols` file:** Debian's own `libfprint-2-2.symbols` is a
 hand-maintained, version-tagged export list tied to Debian's own upstream
@@ -310,10 +309,9 @@ this session):
 $ dpkg-deb -f libfprint-2-2_1.94.100-99egis1_arm64.deb Version
 1:1.94.100-99egis0.4.5
 
-$ dpkg -c libfprint-2-2_1.94.100-99egis1_arm64.deb | grep -E "system-sleep|nosuspend|libfprint-2.so"
+$ dpkg -c libfprint-2-2_1.94.100-99egis1_arm64.deb | grep -E "system-sleep|libfprint-2.so"
 -rw-r--r-- root/root   1208848 ... ./usr/lib/aarch64-linux-gnu/libfprint-2.so.2.0.0
 -rwxr-xr-x root/root      2344 ... ./usr/lib/systemd/system-sleep/50-egis0576-fp-resume.sh
--rw-r--r-- root/root       810 ... ./usr/lib/udev/rules.d/60-egis0576-fp-nosuspend.rules
 lrwxrwxrwx root/root         0 ... ./usr/lib/aarch64-linux-gnu/libfprint-2.so.2 -> libfprint-2.so.2.0.0
 
 $ objdump -p usr/lib/aarch64-linux-gnu/libfprint-2.so.2.0.0 | grep SONAME
@@ -470,8 +468,8 @@ chroot, never from a checkout — build this package at all.
 The build links `extra-driver/egis0576.c` and `extra-driver/egis0576/`
 against the headers `libfprint-2-tod-dev` installs, and produces
 `libfprint-2-tod1-egis0576_<version>_<arch>.deb`, where `<version>` carries
-the `~24.04` or `~26.04` suffix. The two [`../integration/`](../integration/)
-files (the systemd-sleep hook and the no-autosuspend udev rule) are staged
+the `~24.04` or `~26.04` suffix. The [`../integration/`](../integration/)
+files (the systemd-sleep hook, the fprintd gate and its drop-in) are staged
 the same way, through `extra-integration/`, and installed by `debian/rules`.
 
 ### Why the version needs a series suffix, and why `~24.04` / `~26.04`
@@ -577,25 +575,16 @@ installing
 ```
 /usr/lib/<triplet>/libfprint-2/tod-1/libfprint-tod-egis0576.so
 /usr/lib/systemd/system-sleep/50-egis0576-fp-resume.sh
-/usr/lib/udev/rules.d/60-egis0576-fp-nosuspend.rules
 /usr/libexec/egis0576-fp-wait
 /usr/lib/systemd/system/fprintd.service.d/10-egis0576-resume-wait.conf
 ```
 
-A `postinst` runs `udevadm control --reload-rules` and `udevadm trigger
---action=add --attr-match=idVendor=1c7a` (guarded on `udevadm` existing and
-on a running `udevd`), since the EH576 is enumerated at boot, before the
-rule file exists on disk, and `systemd-udevd` does not replay events for
-devices already present. Without this, the rule would have no effect until
-the next reboot. `--action=add` matters here, not just any trigger: the
-rule in `60-egis0576-fp-nosuspend.rules` matches `ACTION=="add"`, and
-`udevadm trigger`'s own default is `--action=change`, which that rule never
-matches, so a trigger without `--action=add` would run and still leave the
-already-enumerated sensor un-covered. The rule installs under
-`/usr/lib/udev/rules.d`, not `/etc/udev/rules.d`: the latter is for local
-administrator overrides, and a package file there becomes a conffile, which
-`apt remove` leaves behind and which prompts a conffile question on the
-next release that edits it.
+A `postinst` runs `systemctl daemon-reload` (guarded on a running systemd)
+so the `fprintd.service.d` drop-in takes effect at once; systemd reads
+drop-ins only after a reload, and without one the resume gate would be
+inert until the next boot. (Earlier versions also reloaded udev for a
+no-autosuspend rule; the rule is retired, USB autosuspend stays at
+libfprint's default for the sensor.)
 
 The module file name matters: Ubuntu's TOD loader
 (`libfprint/tod/tod-shared-loader.c`) only looks at files that both start with

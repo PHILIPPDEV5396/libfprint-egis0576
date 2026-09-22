@@ -157,8 +157,8 @@ makepkg -si
 sudo systemctl restart fprintd
 ```
 
-Unlike the Fedora package, the PKGBUILD installs **neither** the suspend/resume
-sleep hook nor the no-autosuspend udev rule — install both by hand, see
+Unlike the Fedora package, the PKGBUILD does not install the suspend/resume
+sleep hook and its fprintd gate — install them by hand, see
 [`integration/`](integration/).
 
 Packaging sources and how they're published live in [`packaging/`](packaging/).
@@ -363,11 +363,11 @@ apart (written up in full in [`docs/suspend-resume.md`](docs/suspend-resume.md))
   [#2067135](https://bugs.launchpad.net/bugs/2067135) (it hits ThinkPads, Framework
   laptops, etc., on unrelated readers).
 
-The community-standard fix — **restart `fprintd` around suspend** — is what the two
+The community-standard fix — **restart `fprintd` around suspend** — is what the
 helpers in [`integration/`](integration/) do (a systemd-sleep hook that stops
-`fprintd` before sleep and re-enumerates the sensor on resume, plus a udev rule
-disabling USB autosuspend). `install.sh` installs them and you should **keep them
-installed**; they are the correct fix for the upstream bug, not a workaround for a
+`fprintd` before sleep and re-enumerates the sensor on resume, plus a gate that
+holds `fprintd`'s start until the sensor is back). `install.sh` installs them and
+you should **keep them installed**; they are the correct fix for the upstream bug, not a workaround for a
 driver shortcoming. Details and the full investigation:
 [`integration/README.md`](integration/README.md) and
 [`docs/suspend-resume.md`](docs/suspend-resume.md).

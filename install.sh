@@ -69,13 +69,15 @@ sudo ldconfig
 # --- suspend/resume integration --------------------------------------------
 # The sleep hook stops fprintd before suspend so no stale device claim survives
 # (an upstream gnome-shell/fprintd bug, not a driver issue) and re-enumerates the
-# sensor after resume; the udev rule keeps the sensor from USB-autosuspending while
-# idle. The old hard freeze on resume is fixed in the driver itself, not by these
-# files. See integration/README.md. Fully reversible (delete the files).
-echo ">>> installing suspend/resume integration (sleep hook + udev rule) ..."
+# sensor after resume. The old hard freeze on resume is fixed in the driver
+# itself, not by these files. USB autosuspend needs no rule: the driver was
+# validated with power/control=auto (the sensor is re-initialised on every
+# open). See integration/README.md. Fully reversible (delete the files).
+echo ">>> installing suspend/resume integration (sleep hook + fprintd gate) ..."
 if [ -f "$REPO/integration/50-egis0576-fp-resume.sh" ]; then
     sudo install -m 0755 "$REPO/integration/50-egis0576-fp-resume.sh"    /usr/lib/systemd/system-sleep/
-    sudo install -m 0644 "$REPO/integration/60-egis0576-fp-nosuspend.rules" /etc/udev/rules.d/
+    # A no-autosuspend udev rule from an earlier version is retired: remove it.
+    sudo rm -f /etc/udev/rules.d/60-egis0576-fp-nosuspend.rules
     # Gate: hold fprintd's start while the resume hook re-enumerates the sensor
     # (fail-open after 15 s). See integration/egis0576-fp-wait.
     sudo install -Dm 0755 "$REPO/integration/egis0576-fp-wait" /usr/libexec/egis0576-fp-wait
@@ -84,7 +86,7 @@ if [ -f "$REPO/integration/50-egis0576-fp-resume.sh" ]; then
     sudo systemctl daemon-reload 2>/dev/null || true
     sudo udevadm control --reload-rules 2>/dev/null || true
     sudo udevadm trigger --attr-match=idVendor=1c7a 2>/dev/null || true
-    echo "    installed (see integration/README.md; delete the four files to revert)."
+    echo "    installed (see integration/README.md; delete the three files to revert)."
 fi
 
 echo
