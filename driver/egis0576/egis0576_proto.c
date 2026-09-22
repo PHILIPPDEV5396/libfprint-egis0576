@@ -78,9 +78,11 @@ struct EgisDev {
   int       in_upload;
   gboolean  in_critical;
 
-  guint8   *img;                /* frame */
-  int       got;
-  int       step;
+  guint8     *img;              /* frame chain */
+  int         got;
+  int         step;
+  EgisFrameCb frame_cb;
+  gpointer    frame_ud;
 
   guint8    cal_img[EGIS_IMG];  /* calibrate */
   int       cal_lo, cal_hi, cal_mid, cal_best, cal_best_diff, cal_it;
@@ -109,26 +111,33 @@ egis_check_cancelled (FpiSsm *ssm, FpDevice *dev)
   if (!fpi_device_action_is_cancelled (dev))
     return FALSE;
   fpi_ssm_mark_failed (ssm, g_error_new_literal (G_IO_ERROR, G_IO_ERROR_CANCELLED,
-                                                 "EH576: cancelled"));
+                                                 "cancelled"));
   return TRUE;
 }
 
 /* One "EGIS" command: the OUT transfer and, if a reply is expected, the IN
- * transfer that collects it. The reply callback gets the bytes and their
+ * transfer that collects it. The callback gets the reply bytes and their
  * count; n < 0 means the sensor said nothing within the timeout. That is an
  * expected outcome (the readiness poll of a silent sensor, the ignored replies
  * of the init replay and the frame preamble), so it is reported, not failed.
  * Under umockdev a recorded timeout replays as a 0-byte completion, which the
- * callers treat the same way. An OUT failure marks @ssm failed and the
- * callback is not called. */
-typedef void (*EgisReplyCb) (FpiSsm       *ssm,
-                             EgisDev      *d,
+ * callers treat the same way. An OUT failure, on the other hand, is handed to
+ * the callback as @error (transfer full; the machines fail on it, see
+ * egis_cmd_failed): a sensor that does not even accept a command (bulk OUT
+ * NAKed for the 3 s timeout, the state measured after an aborted URB; or gone
+ * from the bus) is not going to answer the rest of the sequence either, and
+ * failing on the first such transfer bounds a dead-sensor action at seconds
+ * instead of the tens of seconds that running every remaining command into
+ * its own timeout would cost. */
+typedef void (*EgisReplyCb) (EgisDev      *d,
+                             gpointer      ud,
                              const guint8 *reply,
-                             gssize        n);
+                             gssize        n,
+                             GError       *error);
 
 typedef struct {
   EgisDev    *d;
-  FpiSsm     *ssm;
+  gpointer    ud;
   guint       reply_timeout;    /* 0: no reply expected */
   EgisReplyCb cb;
 } EgisCmd;
@@ -140,7 +149,7 @@ egis_cmd_in_cb (FpiUsbTransfer *t, FpDevice *dev, gpointer ud, GError *error)
   gssize n = error ? -1 : t->actual_length;
 
   g_clear_error (&error);
-  c->cb (c->ssm, c->d, t->buffer, n);
+  c->cb (c->d, c->ud, t->buffer, n, NULL);
   g_free (c);
 }
 
@@ -150,26 +159,19 @@ egis_cmd_out_cb (FpiUsbTransfer *t, FpDevice *dev, gpointer ud, GError *error)
   EgisCmd *c = ud;
   FpiUsbTransfer *in;
 
-  if (error)
+  if (error || c->reply_timeout == 0)
     {
-      fpi_ssm_mark_failed (c->ssm, error);
-      g_free (c);
-      return;
-    }
-  if (c->reply_timeout == 0)
-    {
-      c->cb (c->ssm, c->d, NULL, 0);
+      c->cb (c->d, c->ud, NULL, error ? -1 : 0, error);
       g_free (c);
       return;
     }
   in = fpi_usb_transfer_new (dev);
-  in->ssm = c->ssm;
   fpi_usb_transfer_fill_bulk (in, EP_IN, EGIS_REPLY_LEN);
   fpi_usb_transfer_submit (in, c->reply_timeout, NULL, egis_cmd_in_cb, c);
 }
 
 static void
-egis_cmd (FpiSsm *ssm, EgisDev *d, const guint8 *body, gsize n,
+egis_cmd (EgisDev *d, gpointer ud, const guint8 *body, gsize n,
           guint reply_timeout, EgisReplyCb cb)
 {
   FpiUsbTransfer *out = fpi_usb_transfer_new (d->dev);
@@ -179,21 +181,30 @@ egis_cmd (FpiSsm *ssm, EgisDev *d, const guint8 *body, gsize n,
   memcpy (buf, "EGIS", 4);
   memcpy (buf + 4, body, n);
   c->d = d;
-  c->ssm = ssm;
+  c->ud = ud;
   c->reply_timeout = reply_timeout;
   c->cb = cb;
-  out->ssm = ssm;
   fpi_usb_transfer_fill_bulk_full (out, EP_OUT, buf, 4 + n, g_free);
   fpi_usb_transfer_submit (out, EGIS_OUT_TIMEOUT, NULL, egis_cmd_out_cb, c);
 }
 
+/* For the machines: fail @ssm with the command's @error (if any). */
+static gboolean
+egis_cmd_failed (FpiSsm *ssm, GError *error)
+{
+  if (!error)
+    return FALSE;
+  fpi_ssm_mark_failed (ssm, error);
+  return TRUE;
+}
+
 /* ReadRegister(reg): "EGIS" 60 reg 00 -> "SIGE" reg <value> <status>. */
 static void
-egis_readreg (FpiSsm *ssm, EgisDev *d, guint8 reg, EgisReplyCb cb)
+egis_readreg (EgisDev *d, gpointer ud, guint8 reg, EgisReplyCb cb)
 {
   guint8 body[3] = { 0x60, reg, 0x00 };
 
-  egis_cmd (ssm, d, body, sizeof body, EGIS_READ_TIMEOUT, cb);
+  egis_cmd (d, ud, body, sizeof body, EGIS_READ_TIMEOUT, cb);
 }
 
 /* The register value out of a ReadRegister reply, or -1 if there was none. */
@@ -205,11 +216,11 @@ egis_reg_value (const guint8 *r, gssize n)
 
 /* WriteRegister(reg, val): "EGIS" 61 reg val; the reply is not looked at. */
 static void
-egis_writereg (FpiSsm *ssm, EgisDev *d, guint8 reg, guint8 val, EgisReplyCb cb)
+egis_writereg (EgisDev *d, gpointer ud, guint8 reg, guint8 val, EgisReplyCb cb)
 {
   guint8 body[3] = { 0x61, reg, val };
 
-  egis_cmd (ssm, d, body, sizeof body, EGIS_WRITE_TIMEOUT, cb);
+  egis_cmd (d, ud, body, sizeof body, EGIS_WRITE_TIMEOUT, cb);
 }
 
 /* ---------------------------------------------------------------- init ---- */
@@ -245,10 +256,13 @@ init_drain_cb (FpiUsbTransfer *t, FpDevice *dev, gpointer ud, GError *error)
  * one that is in session mode never answers, so a short budget is enough to
  * tell the two apart without stalling an authentication. */
 static void
-init_ready_cb (FpiSsm *ssm, EgisDev *d, const guint8 *r, gssize n)
+init_ready_cb (EgisDev *d, gpointer ud, const guint8 *r, gssize n, GError *error)
 {
+  FpiSsm *ssm = ud;
   int v = egis_reg_value (r, n);
 
+  if (egis_cmd_failed (ssm, error))
+    return;
   if (v >= 0 && (v & 0xfe) == 0xaa)
     fpi_ssm_jump_to_state (ssm, INIT_REPLAY);
   else if (++d->ready_tries < EGIS_READY_TRIES)
@@ -261,10 +275,10 @@ static void
 init_not_ready_fail (FpiSsm *ssm, EgisDev *d)
 {
   fpi_ssm_mark_failed (ssm,
-                       g_error_new (G_IO_ERROR, G_IO_ERROR_NOT_INITIALIZED,
-                                    "EH576: sensor did not answer the readiness poll%s",
-                                    d->reset_if_stuck
-                                    ? " -- reset issued, retry once it re-enumerates" : ""));
+                       fpi_device_error_new_msg (FP_DEVICE_ERROR_PROTO,
+                                                 "Sensor did not answer the readiness poll%s",
+                                                 d->reset_if_stuck
+                                                 ? " -- reset issued, retry once it re-enumerates" : ""));
 }
 
 static void
@@ -316,11 +330,8 @@ init_replay_out_cb (FpiUsbTransfer *t, FpDevice *dev, gpointer ud, GError *error
   if (error)
     {
       init_replay_leave (d);
-      fpi_ssm_mark_failed (t->ssm,
-                           g_error_new (G_IO_ERROR, G_IO_ERROR_FAILED,
-                                        "EH576: init record %d failed: %s",
-                                        d->record, error->message));
-      g_error_free (error);
+      g_prefix_error (&error, "init record %d: ", d->record);
+      fpi_ssm_mark_failed (t->ssm, error);
       return;
     }
 
@@ -358,10 +369,13 @@ init_replay_send (FpiSsm *ssm, EgisDev *d)
 }
 
 static void
-init_dc_c_cb (FpiSsm *ssm, EgisDev *d, const guint8 *r, gssize n)
+init_dc_c_cb (EgisDev *d, gpointer ud, const guint8 *r, gssize n, GError *error)
 {
+  FpiSsm *ssm = ud;
   int v = egis_reg_value (r, n);
 
+  if (egis_cmd_failed (ssm, error))
+    return;
   d->dc_c = MAX (v, 0);
   /* Record 25 of the replay block-writes regs 0x09..0x13 and so puts reg 0x0f
    * back to the baked value. The calibrated exposure lives only in the sensor
@@ -385,8 +399,12 @@ init_dc_c_cb (FpiSsm *ssm, EgisDev *d, const guint8 *r, gssize n)
 }
 
 static void
-init_reapply_cb (FpiSsm *ssm, EgisDev *d, const guint8 *r, gssize n)
+init_reapply_cb (EgisDev *d, gpointer ud, const guint8 *r, gssize n, GError *error)
 {
+  FpiSsm *ssm = ud;
+
+  if (egis_cmd_failed (ssm, error))
+    return;
   d->dc_c = d->dc_c_calibrated;
   fpi_ssm_mark_completed (ssm);
 }
@@ -415,10 +433,14 @@ init_run_state (FpiSsm *ssm, FpDevice *dev)
        * off the bus is not what a cancel asked for. */
       if (egis_check_cancelled (ssm, dev))
         break;
-      egis_readreg (ssm, d, 0x00, init_ready_cb);
+      egis_readreg (d, ssm, 0x00, init_ready_cb);
       break;
 
     case INIT_NOT_READY:
+      /* A cancel that landed during the last poll is honoured here, so the
+       * ForceReset is never issued for a cancelled action. */
+      if (egis_check_cancelled (ssm, dev))
+        break;
       if (d->reset_if_stuck)
         {
           FpiUsbTransfer *ctl = fpi_usb_transfer_new (dev);
@@ -457,11 +479,11 @@ init_run_state (FpiSsm *ssm, FpDevice *dev)
        * sensor). */
       if (egis_check_cancelled (ssm, dev))
         break;
-      egis_readreg (ssm, d, REG_DC_C, init_dc_c_cb);
+      egis_readreg (d, ssm, REG_DC_C, init_dc_c_cb);
       break;
 
     case INIT_REAPPLY:
-      egis_writereg (ssm, d, REG_DC_C, (guint8) d->dc_c_calibrated, init_reapply_cb);
+      egis_writereg (d, ssm, REG_DC_C, (guint8) d->dc_c_calibrated, init_reapply_cb);
       break;
 
     default:
@@ -485,14 +507,7 @@ egis_dev_init_ssm (EgisDev *d, gboolean reset_if_stuck)
 
 /* --------------------------------------------------------------- frame ---- */
 
-enum {
-  FRAME_PREAMBLE,    /* the per-frame trigger sequence */
-  FRAME_REQUEST,     /* GetFrame */
-  FRAME_READ,        /* the 3990 bytes, in however many chunks they come */
-  FRAME_NUM_STATES,
-};
-
-static const struct { guint8 b[5]; gsize n; } FRAME_PREAMBLE_CMDS[] = {
+static const struct { guint8 b[5]; gsize n; } FRAME_PREAMBLE[] = {
   { { 0x63, 0x2c, 0x02, 0x00, 0x57 }, 5 },
   { { 0x60, 0x2d, 0x00 },             3 },
   { { 0x62, 0x67, 0x03 },             3 },
@@ -502,22 +517,15 @@ static const struct { guint8 b[5]; gsize n; } FRAME_PREAMBLE_CMDS[] = {
 };
 
 static void
-frame_preamble_cb (FpiSsm *ssm, EgisDev *d, const guint8 *r, gssize n)
+frame_finish (EgisDev *d, GError *error)
 {
-  if (++d->step < (int) G_N_ELEMENTS (FRAME_PREAMBLE_CMDS))
-    egis_cmd (ssm, d, FRAME_PREAMBLE_CMDS[d->step].b, FRAME_PREAMBLE_CMDS[d->step].n,
-              EGIS_WRITE_TIMEOUT, frame_preamble_cb);
-  else
-    fpi_ssm_next_state (ssm);
+  EgisFrameCb cb = d->frame_cb;
+
+  d->frame_cb = NULL;
+  cb (d->dev, d->frame_ud, error);
 }
 
-static void
-frame_request_cb (FpiSsm *ssm, EgisDev *d, const guint8 *r, gssize n)
-{
-  fpi_ssm_next_state (ssm);
-}
-
-static void frame_read (FpiSsm *ssm, EgisDev *d);
+static void frame_read (EgisDev *d);
 
 static void
 frame_read_cb (FpiUsbTransfer *t, FpDevice *dev, gpointer ud, GError *error)
@@ -533,66 +541,62 @@ frame_read_cb (FpiUsbTransfer *t, FpDevice *dev, gpointer ud, GError *error)
       d->got += n;
     }
   if (d->got >= EGIS_IMG)
-    fpi_ssm_mark_completed (t->ssm);
+    frame_finish (d, NULL);
   else if (n <= 0)
-    fpi_ssm_mark_failed (t->ssm,
-                         g_error_new (G_IO_ERROR, G_IO_ERROR_FAILED,
-                                      "EH576: short frame (%d of %d)", d->got, EGIS_IMG));
+    frame_finish (d, fpi_device_error_new_msg (FP_DEVICE_ERROR_PROTO,
+                                               "Short frame (%d of %d)", d->got, EGIS_IMG));
   else
-    frame_read (t->ssm, d);
+    frame_read (d);                          /* the next chunk */
 }
 
 static void
-frame_read (FpiSsm *ssm, EgisDev *d)
+frame_read (EgisDev *d)
 {
   FpiUsbTransfer *in = fpi_usb_transfer_new (d->dev);
 
-  in->ssm = ssm;
   fpi_usb_transfer_fill_bulk (in, EP_IN, EGIS_CHUNK);
   fpi_usb_transfer_submit (in, EGIS_READ_TIMEOUT, NULL, frame_read_cb, d);
 }
 
 static void
-frame_run_state (FpiSsm *ssm, FpDevice *dev)
+frame_request_cb (EgisDev *d, gpointer ud, const guint8 *r, gssize n, GError *error)
 {
-  EgisDev *d = fpi_ssm_get_data (ssm);
-  static const guint8 getframe[3] = { 0x64, 0x0f, 0x96 };
-
-  switch (fpi_ssm_get_cur_state (ssm))
+  if (error)
     {
-    case FRAME_PREAMBLE:
-      /* The preamble arms the sensor for a frame and the read collects it;
-       * the two are one sequence, checked for a cancel only here. */
-      if (egis_check_cancelled (ssm, dev))
-        break;
-      d->step = 0;
-      egis_cmd (ssm, d, FRAME_PREAMBLE_CMDS[0].b, FRAME_PREAMBLE_CMDS[0].n,
-                EGIS_WRITE_TIMEOUT, frame_preamble_cb);
-      break;
-
-    case FRAME_REQUEST:
-      egis_cmd (ssm, d, getframe, sizeof getframe, 0, frame_request_cb);
-      break;
-
-    case FRAME_READ:
-      d->got = 0;
-      frame_read (ssm, d);
-      break;
-
-    default:
-      g_assert_not_reached ();
+      frame_finish (d, error);
+      return;
     }
+  d->got = 0;
+  frame_read (d);
 }
 
-FpiSsm *
-egis_dev_frame_ssm (EgisDev *d, guint8 *img)
+static void
+frame_preamble_cb (EgisDev *d, gpointer ud, const guint8 *r, gssize n, GError *error)
 {
-  FpiSsm *ssm = fpi_ssm_new_full (d->dev, frame_run_state, FRAME_NUM_STATES,
-                                  FRAME_NUM_STATES, "frame");
+  static const guint8 getframe[3] = { 0x64, 0x0f, 0x96 };
 
+  if (error)
+    {
+      frame_finish (d, error);
+      return;
+    }
+  if (++d->step < (int) G_N_ELEMENTS (FRAME_PREAMBLE))
+    egis_cmd (d, NULL, FRAME_PREAMBLE[d->step].b, FRAME_PREAMBLE[d->step].n,
+              EGIS_WRITE_TIMEOUT, frame_preamble_cb);
+  else
+    egis_cmd (d, NULL, getframe, sizeof getframe, 0, frame_request_cb);
+}
+
+void
+egis_dev_frame (EgisDev *d, guint8 *img, EgisFrameCb cb, gpointer user_data)
+{
+  g_return_if_fail (d->frame_cb == NULL);   /* one frame at a time */
   d->img = img;
-  fpi_ssm_set_data (ssm, d, NULL);
-  return ssm;
+  d->frame_cb = cb;
+  d->frame_ud = user_data;
+  d->step = 0;
+  egis_cmd (d, NULL, FRAME_PREAMBLE[0].b, FRAME_PREAMBLE[0].n,
+            EGIS_WRITE_TIMEOUT, frame_preamble_cb);
 }
 
 /* ------------------------------------------------------------ exposure ---- */
@@ -619,15 +623,34 @@ enum {
 };
 
 static void
-cal_write_cb (FpiSsm *ssm, EgisDev *d, const guint8 *r, gssize n)
+cal_write_cb (EgisDev *d, gpointer ud, const guint8 *r, gssize n, GError *error)
 {
+  FpiSsm *ssm = ud;
+
+  if (egis_cmd_failed (ssm, error))
+    return;
   d->dc_c = d->cal_mid;
   fpi_ssm_next_state (ssm);
 }
 
 static void
-cal_apply_cb (FpiSsm *ssm, EgisDev *d, const guint8 *r, gssize n)
+cal_frame_cb (FpDevice *dev, gpointer ud, GError *error)
 {
+  FpiSsm *ssm = ud;
+
+  if (error)
+    fpi_ssm_mark_failed (ssm, error);
+  else
+    fpi_ssm_next_state (ssm);
+}
+
+static void
+cal_apply_cb (EgisDev *d, gpointer ud, const guint8 *r, gssize n, GError *error)
+{
+  FpiSsm *ssm = ud;
+
+  if (egis_cmd_failed (ssm, error))
+    return;
   d->dc_c = d->cal_best;
   d->dc_c_calibrated = d->cal_best;
   fp_dbg ("exposure calibrated: dc_c 0x%02x", d->cal_best);
@@ -643,13 +666,16 @@ cal_run_state (FpiSsm *ssm, FpDevice *dev)
     {
     case CAL_WRITE:
       d->cal_mid = (d->cal_lo + d->cal_hi) >> 1;
-      egis_writereg (ssm, d, REG_DC_C, (guint8) d->cal_mid, cal_write_cb);
+      egis_writereg (d, ssm, REG_DC_C, (guint8) d->cal_mid, cal_write_cb);
       break;
 
     case CAL_FRAME:
       /* A capture failure fails the search, leaving reg 0x0f at the last
-       * value tried and the calibration unset (header). */
-      fpi_ssm_start_subsm (ssm, egis_dev_frame_ssm (d, d->cal_img));
+       * value tried and the calibration unset (header); so does a cancelled
+       * open, checked here because the frame chain does not. */
+      if (egis_check_cancelled (ssm, dev))
+        break;
+      egis_dev_frame (d, d->cal_img, cal_frame_cb, ssm);
       break;
 
     case CAL_EVAL:
@@ -678,7 +704,7 @@ cal_run_state (FpiSsm *ssm, FpDevice *dev)
       }
 
     case CAL_APPLY:
-      egis_writereg (ssm, d, REG_DC_C, (guint8) d->cal_best, cal_apply_cb);
+      egis_writereg (d, ssm, REG_DC_C, (guint8) d->cal_best, cal_apply_cb);
       break;
 
     default:

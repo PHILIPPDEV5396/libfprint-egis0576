@@ -49,7 +49,14 @@
  * a real finger pushes it well past 300. Hysteresis: */
 #define EGIS0576_FINGER_ON_VAR  250.0
 #define EGIS0576_FINGER_OFF_VAR 215.0
-#define EGIS0576_POLL_GAP_MS    5       /* small gap between captures */
+/* Gap between frames. The sensor delivers a frame in ~10 ms, so the loop is
+ * paced by these: with no finger on the sensor 30 ms (a press is noticed
+ * within one gap, and an idle lock screen costs ~3 % of a core instead of the
+ * ~9 % that polling flat out did); while a finger is down 5 ms, so the
+ * ~250 ms in which a static press keeps its contrast yields ~17 frames for
+ * the matcher and the lift is seen promptly. */
+#define EGIS0576_POLL_GAP_IDLE_MS   30
+#define EGIS0576_POLL_GAP_FINGER_MS 5
 #define EGIS0576_BASELINE_FRAMES 8      /* no-finger frames averaged into the flat-field baseline */
 #define EGIS0576_BASELINE_MAX_VAR 210.0 /* stricter than FINGER_OFF but with headroom for the
                                           * calibrated-gain no-finger level; a hovering finger would
@@ -105,6 +112,12 @@ struct _FpDeviceEgis0576
                                  * (USB stays powered, but the capture pipeline
                                  * comes back wedged), so it is re-initialised
                                  * before the next frame */
+  /* Suspend with an action running (see egis0576_suspend): the capture
+   * machine parks at its next transfer boundary -- nothing in flight, nothing
+   * scheduled -- and only then is the suspend completed; resume (or a cancel)
+   * restarts it at the loop head. */
+  gboolean      suspending;     /* the suspend vfunc ran; park at the next boundary */
+  gboolean      parked;         /* parked: waiting for resume or cancel */
 
   /* Per instance, i.e. per fprintd process: the flat-field baseline (see
    * baseline_feed) and the exposure calibration the first open() found,
@@ -307,6 +320,10 @@ load_job_new (FpDeviceEgis0576 *self, GPtrArray *prints)
           job->sizes[job->n] = (int) len;
           job->n++;
         }
+      else
+        {
+          g_clear_pointer (&var, g_variant_unref);   /* decoded, but empty */
+        }
     }
   if (job->n == 0)
     {
@@ -335,7 +352,7 @@ load_thread (GTask *task, gpointer source, gpointer task_data, GCancellable *can
   if (egis_gallery_load (job->engine, job->blobs, job->sizes, job->n) != 0)
     {
       g_task_return_new_error (task, FP_DEVICE_ERROR, FP_DEVICE_ERROR_DATA_INVALID,
-                               "No valid egis0576 templates to match");
+                               "Stored print has no valid egis0576 template");
       return;
     }
   g_task_return_boolean (task, TRUE);
@@ -394,10 +411,42 @@ capture_cancelled (FpiSsm *ssm, FpDevice *dev)
   return TRUE;
 }
 
+/* Fail the capture with @error (transfer full) -- as G_IO_ERROR_CANCELLED
+ * if the action was cancelled meanwhile, whatever the transport reported:
+ * a cancelled action must never be mistaken for a sensor failure. */
+static void
+capture_fail (FpDeviceEgis0576 *self, GError *error)
+{
+  if (fpi_device_action_is_cancelled (FP_DEVICE (self)) &&
+      !g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
+    {
+      g_error_free (error);
+      error = g_error_new_literal (G_IO_ERROR, G_IO_ERROR_CANCELLED, "cancelled");
+    }
+  fpi_ssm_mark_failed (self->ssm, error);
+}
+
 static void
 capture_next (FpDeviceEgis0576 *self, FpiSsm *ssm)
 {
-  fpi_ssm_jump_to_state_delayed (ssm, CAP_REINIT, EGIS0576_POLL_GAP_MS);
+  fpi_ssm_jump_to_state_delayed (ssm, CAP_REINIT,
+                                 self->finger_present ? EGIS0576_POLL_GAP_FINGER_MS
+                                                      : EGIS0576_POLL_GAP_IDLE_MS);
+}
+
+/* At a transfer boundary with a suspend pending: park the machine (it stays
+ * in its state, nothing in flight, nothing scheduled) and complete the
+ * suspend now that the bus is quiet. TRUE iff parked. */
+static gboolean
+capture_park_if_suspending (FpDeviceEgis0576 *self, FpiSsm *ssm)
+{
+  if (!self->suspending)
+    return FALSE;
+  self->suspending = FALSE;
+  self->parked = TRUE;
+  fp_dbg ("parked for suspend in state %d", fpi_ssm_get_cur_state (ssm));
+  fpi_device_suspend_complete (FP_DEVICE (self), NULL);
+  return TRUE;
 }
 
 static void
@@ -441,10 +490,14 @@ reinit_done (FpiSsm *init, FpDevice *dev, GError *error)
     {
       /* Left flagged: the next capture re-initialises eagerly rather than
        * capturing into a dead pipeline. A cancel is reported as such. */
-      fpi_ssm_mark_failed (self->ssm, error);
+      capture_fail (self, error);
       return;
     }
-  self->needs_reinit = FALSE;
+  /* A suspend that arrived during the replay (deferred by its critical
+   * section) has set the flag again by now; the frame state parks. Only a
+   * bring-up nobody has invalidated since clears it. */
+  if (!self->suspending)
+    self->needs_reinit = FALSE;
   fpi_ssm_jump_to_state (self->ssm, CAP_FRAME);
 }
 
@@ -460,7 +513,7 @@ reinit_start (FpDeviceEgis0576 *self)
 }
 
 static void
-frame_done (FpiSsm *frame, FpDevice *dev, GError *error)
+frame_done (FpDevice *dev, gpointer ud, GError *error)
 {
   FpDeviceEgis0576 *self = FPI_DEVICE_EGIS0576 (dev);
 
@@ -472,20 +525,15 @@ frame_done (FpiSsm *frame, FpDevice *dev, GError *error)
     }
   /* Covers the idle-at-suspend case (no vfunc fired, so needs_reinit was
    * FALSE and the eager path was skipped) and any unfreeze race: on a dead or
-   * silent sensor the frame machine fails in bounded time (~2.6 s worst
+   * silent sensor the frame chain fails in bounded time (~2.6 s worst
    * case). If we were cancelled meanwhile, leave with a clean cancel instead
    * of running a re-init. Otherwise re-initialise the sensor once and retry;
    * give up -- with the real device error -> password fallback -- only if the
    * re-init or the retried frame also fails. */
-  if (fpi_device_action_is_cancelled (dev) &&
-      !g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
+  if (fpi_device_action_is_cancelled (dev) ||
+      g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED) || self->frame_retried)
     {
-      g_error_free (error);
-      error = g_error_new_literal (G_IO_ERROR, G_IO_ERROR_CANCELLED, "cancelled");
-    }
-  if (g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED) || self->frame_retried)
-    {
-      fpi_ssm_mark_failed (self->ssm, error);
+      capture_fail (self, error);
       return;
     }
   fp_dbg ("frame capture failed (%s); re-initialising the sensor and retrying",
@@ -766,13 +814,12 @@ capture_run_state (FpiSsm *ssm, FpDevice *dev)
       break;
 
     case CAP_REINIT:
-      /* A suspend/resume since the last frame left the sensor needing
-       * re-initialisation (flag set by the vfuncs): do it before the frame,
-       * so as not to burn a frame timeout on a sensor that cannot answer.
-       * A concurrent cancel comes first: suspend cancels the action, and the
-       * re-init must not run in the fragile post-resume window while we are
-       * being torn down. */
-      if (capture_cancelled (ssm, dev))
+      /* The loop head. A cancel is honoured first; a pending suspend parks
+       * the machine here. Then: a suspend/resume since the last frame left
+       * the sensor needing re-initialisation (flag set by the vfuncs) -- do
+       * it before the frame, so as not to burn a frame timeout on a sensor
+       * that cannot answer. */
+      if (capture_cancelled (ssm, dev) || capture_park_if_suspending (self, ssm))
         break;
       if (self->needs_reinit)
         reinit_start (self);
@@ -781,17 +828,22 @@ capture_run_state (FpiSsm *ssm, FpDevice *dev)
       break;
 
     case CAP_FRAME:
-      if (capture_cancelled (ssm, dev))
+      if (capture_cancelled (ssm, dev) || capture_park_if_suspending (self, ssm))
         break;
-      fpi_ssm_start (egis_dev_frame_ssm (self->sensor, self->frame), frame_done);
+      egis_dev_frame (self->sensor, self->frame, frame_done, NULL);
       break;
 
     case CAP_RECOVER:
+      if (capture_park_if_suspending (self, ssm))
+        break;                           /* resume re-initialises anyway */
       reinit_start (self);
       break;
 
     case CAP_PROCESS:
-      if (capture_cancelled (ssm, dev))
+      /* A frame that arrived with a suspend pending is not looked at: the
+       * matcher would start a thread we then wait for, and the press it
+       * belongs to is over by the time we resume. */
+      if (capture_cancelled (ssm, dev) || capture_park_if_suspending (self, ssm))
         break;
       capture_process (self, ssm);
       break;
@@ -801,19 +853,38 @@ capture_run_state (FpiSsm *ssm, FpDevice *dev)
     }
 }
 
+static void capture_complete (FpDeviceEgis0576 *self, FpDevice *dev);
+
 static void
 capture_done (FpiSsm *ssm, FpDevice *dev, GError *error)
 {
   FpDeviceEgis0576 *self = FPI_DEVICE_EGIS0576 (dev);
 
   self->ssm = NULL;
+  self->parked = FALSE;
   g_clear_pointer (&self->load, load_job_free);
   if (error)
     {
       g_clear_pointer (&self->gallery_prints, g_ptr_array_unref);
       fpi_device_action_error (dev, error);
-      return;
     }
+  else
+    {
+      capture_complete (self, dev);
+    }
+  /* The action ended before the machine reached a boundary to park at (a
+   * match on the last frame, a sensor failure): the suspend is completed
+   * here instead, with nothing of ours left running. */
+  if (self->suspending)
+    {
+      self->suspending = FALSE;
+      fpi_device_suspend_complete (dev, NULL);
+    }
+}
+
+static void
+capture_complete (FpDeviceEgis0576 *self, FpDevice *dev)
+{
   g_clear_pointer (&self->gallery_prints, g_ptr_array_unref);
   if (self->action == FPI_DEVICE_ACTION_ENROLL)
     {
@@ -861,6 +932,7 @@ start_capture (FpDevice *dev)
   self->cand_valid = FALSE;
   self->cand_score = -1;
   self->cand_idx = -1;
+  self->parked = FALSE;
   memset (&self->bl, 0, sizeof self->bl);
 
   fpi_device_report_finger_status_changes (dev,
@@ -868,6 +940,7 @@ start_capture (FpDevice *dev)
                                            FP_FINGER_STATUS_NONE);
   self->ssm = fpi_ssm_new_full (dev, capture_run_state, CAP_NUM_STATES,
                                 CAP_NUM_STATES, "capture");
+  fpi_ssm_silence_debug (self->ssm);       /* it loops ~30 times a second */
   fpi_ssm_start (self->ssm, capture_done);
 }
 
@@ -890,8 +963,14 @@ open_calibrate_done (FpiSsm *cal, FpDevice *dev, GError *error)
 {
   FpDeviceEgis0576 *self = FPI_DEVICE_EGIS0576 (dev);
 
-  /* Non-fatal: the search is simply retried at the next open (see
-   * egis_dev_calibrate_ssm). */
+  /* A cancelled open is a failed open, whichever machine saw the cancel.
+   * Any other failure is non-fatal: the search is simply retried at the next
+   * open (see egis_dev_calibrate_ssm). */
+  if (error && g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
+    {
+      open_fail (dev, error);
+      return;
+    }
   if (error)
     {
       fp_dbg ("exposure calibration skipped: %s", error->message);
@@ -1039,38 +1118,43 @@ egis0576_identify (FpDevice *dev)
 static void
 egis0576_cancel (FpDevice *dev)
 {
-  /* Nothing to do: the capture machine and the transport's machines consult
-   * the action's cancellable at every transfer-sequence boundary (they never
-   * hand it to a transfer, see egis0576_proto.c), and the matcher task checks
-   * it too. The action ends with G_IO_ERROR_CANCELLED at the next boundary:
-   * at most one frame sequence (~2.6 s on a sensor that has stopped
-   * answering, ~0.1 s on a healthy one), the init replay (~0.3 s), or one
-   * readiness-poll iteration (850 ms). */
+  FpDeviceEgis0576 *self = FPI_DEVICE_EGIS0576 (dev);
+
+  /* The capture machine and the transport's machines consult the action's
+   * cancellable at every transfer-sequence boundary (they never hand it to a
+   * transfer, see egis0576_proto.c), and the matcher task checks it too. The
+   * action ends with G_IO_ERROR_CANCELLED at the next boundary: at most one
+   * frame sequence (~2.6 s on a sensor that has stopped answering, ~0.1 s on
+   * a healthy one), the init replay (~0.3 s), or one readiness-poll
+   * iteration (850 ms). A machine parked for suspend has no next boundary of
+   * its own; it is sent to the loop head, which fails it. */
   fp_dbg ("cancelling");
+  if (self->parked)
+    {
+      self->parked = FALSE;
+      fpi_ssm_jump_to_state (self->ssm, CAP_REINIT);
+    }
 }
 
+/* Suspend with an action running. The action is kept, as the
+ * fpi_device_suspend_complete() contract asks for a NULL completion: the
+ * capture machine parks at its next transfer boundary (capture_park_if_
+ * suspending) -- so the suspend is completed, and with it fprintd's sleep
+ * inhibitor released, only once no transfer is in flight and none is
+ * scheduled -- and resume sends it back to the loop head, where the sensor
+ * is re-initialised before the next frame. The latency of the completion is
+ * the same as a cancel's (one transfer sequence). If the action ends on its
+ * own first, capture_done completes the suspend. No USB here. */
 static void
 egis0576_suspend (FpDevice *dev)
 {
   FpDeviceEgis0576 *self = FPI_DEVICE_EGIS0576 (dev);
 
-  fp_dbg ("suspend: flagging the sensor for re-init, cancelling in-flight capture");
-
+  fp_dbg ("suspend: parking the capture at its next transfer boundary");
   /* The sensor does not come back from s2idle usable (it stays powered, but
-   * the capture pipeline is wedged). Flag it so the next capture re-runs the
-   * vendor bring-up first. */
+   * the capture pipeline is wedged): re-run the vendor bring-up first. */
   self->needs_reinit = TRUE;
-
-  /* Cancel the running action, as egismoc does: the capture machine sees the
-   * cancellable at its next boundary and the action ends with
-   * G_IO_ERROR_CANCELLED. Complete with NULL: we are NOT promising the
-   * *current* action survives (we are cancelling it), and NULL takes
-   * suspend_complete's immediate return path without libfprint ALSO
-   * cancelling with its own FP_DEVICE_ERROR_BUSY. fprintd re-issues
-   * verify/identify on resume, which re-initialises the sensor in the
-   * capture machine. No USB here. */
-  g_cancellable_cancel (fpi_device_get_cancellable (dev));
-  fpi_device_suspend_complete (dev, NULL);
+  self->suspending = TRUE;
 }
 
 static void
@@ -1078,14 +1162,14 @@ egis0576_resume (FpDevice *dev)
 {
   FpDeviceEgis0576 *self = FPI_DEVICE_EGIS0576 (dev);
 
-  /* Defensive: also flag here in case an action somehow survived to resume
-   * (keep-alive / unfreeze race). No USB. The capture machine consumes the
-   * flag; if one is mid-frame on a dead sensor, its bounded frame-failure
-   * path re-initialises the sensor and retries. In the normal flow suspend
-   * cancelled the action, so current_action == NONE and libfprint completes
-   * resume itself without ever calling this. */
+  fp_dbg ("resume: %s", self->parked ? "restarting the parked capture" : "no parked capture");
   self->needs_reinit = TRUE;
   fpi_device_resume_complete (dev, NULL);
+  if (self->parked)
+    {
+      self->parked = FALSE;
+      fpi_ssm_jump_to_state (self->ssm, CAP_REINIT);
+    }
 }
 
 /* ------------------------------------------------------------------ */
@@ -1108,6 +1192,12 @@ fpi_device_egis0576_finalize (GObject *object)
 {
   FpDeviceEgis0576 *self = FPI_DEVICE_EGIS0576 (object);
 
+  /* No action can be current here, so nothing of ours is in flight; the
+   * sensor is normally freed by close(), but a device destroyed while open
+   * (unplugged while claimed) never gets one. */
+  g_clear_pointer (&self->sensor, egis_dev_free);
+  g_clear_pointer (&self->load, load_job_free);
+  g_clear_pointer (&self->gallery_prints, g_ptr_array_unref);
   g_clear_pointer (&self->engine, egis_engine_free);
   G_OBJECT_CLASS (fpi_device_egis0576_parent_class)->finalize (object);
 }

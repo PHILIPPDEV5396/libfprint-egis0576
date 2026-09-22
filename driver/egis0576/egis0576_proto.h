@@ -54,10 +54,14 @@ void     egis_dev_free (EgisDev *d);
  *
  * The replay is one unit under fpi_device_critical_enter()/leave(): a cancel is
  * honoured before its first record and after its last, never in between, and
- * libfprint defers suspend for its duration. Stopping half-way would leave the
- * sensor with a prefix of the vendor sequence, a state nobody has tested it in.
+ * libfprint defers the suspend vfunc for its duration. Stopping half-way would
+ * leave the sensor with a prefix of the vendor sequence, a state nobody has
+ * tested it in. A sensor that stops answering mid-replay costs every remaining
+ * reply read its 800 ms timeout (~19 s worst case) before either is honoured;
+ * a sleep request then outlasts logind's default delay and the machine goes
+ * down with the replay unfinished, which the re-init flag repairs on resume.
  *
- * Fails with G_IO_ERROR_NOT_INITIALIZED if the sensor does not answer the
+ * Fails with FP_DEVICE_ERROR_PROTO if the sensor does not answer the
  * readiness poll. The one case that happens in practice is a sensor left in
  * TLS session mode by a pre-plaintext build of this driver; pass
  * reset_if_stuck=TRUE to issue a ForceResetDevice for it. The request itself
@@ -68,10 +72,21 @@ void     egis_dev_free (EgisDev *d);
  * the open then succeeds. */
 FpiSsm *egis_dev_init_ssm (EgisDev *d, gboolean reset_if_stuck);
 
-/* Capture one EGIS_IMG-byte frame into @img (which must stay valid until the
- * machine completes): per-frame trigger sequence, then GetFrame. ~0.1 s.
- * Fails with G_IO_ERROR_FAILED on a short or missing frame. */
-FpiSsm *egis_dev_frame_ssm (EgisDev *d, guint8 *img);
+/* Capture one EGIS_IMG-byte frame into @img (which must stay valid until @cb
+ * ran): the per-frame trigger sequence, GetFrame, and the bytes in however
+ * many chunks they come. ~0.1 s. Not a machine of its own but a chain of
+ * transfers, so that the capture loop's ~30 frames a second cost no FpiSsm
+ * each. @cb gets NULL, or the error (transfer full): FP_DEVICE_ERROR_PROTO
+ * for a short or missing frame, the gusb error for a command the sensor did
+ * not accept. The sequence arms the sensor for a frame and runs to its end;
+ * the caller checks for a cancel before starting it. */
+typedef void (*EgisFrameCb) (FpDevice *dev,
+                             gpointer  user_data,
+                             GError   *error);
+void egis_dev_frame (EgisDev    *d,
+                     guint8     *img,
+                     EgisFrameCb cb,
+                     gpointer    user_data);
 
 /* Per-unit exposure calibration: a bounded binary search over register 0x0f so
  * the no-finger frame mean is the same on any EH576 unit, whatever per-unit
