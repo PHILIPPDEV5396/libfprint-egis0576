@@ -1,3 +1,14 @@
+libfprint-egis0576-tod (0.5.0) UNRELEASED; urgency=medium
+
+  * Driver v0.5.0, the upstream-ready release: asynchronous I/O, suspend
+    that keeps the running action, autosuspend at libfprint's default.
+  * The no-autosuspend udev rule is gone from debian/rules and from the
+    postinst's udev reload.
+  * The default matcher is the clean-room one; templates do not survive
+    the upgrade.
+
+ -- PHILIPPDEV5396 <philipp2861@gmail.com>  Tue, 22 Sep 2026 22:00:00 +0200
+
 libfprint-egis0576-tod (0.4.5) UNRELEASED; urgency=medium
 
   * Bumped the package version to 0.4.5 to match the driver tag this

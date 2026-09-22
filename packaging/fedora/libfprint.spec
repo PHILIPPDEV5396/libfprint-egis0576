@@ -10,7 +10,7 @@
 # (Up to 1.94.10 that was not the case, and this directory carried a separately
 # rebased patch for Fedora's own tree; it is gone with the rebase.)
 
-%global egis_tag v0.4.5
+%global egis_tag v0.5.0
 
 # Matcher flavour. Default: the shipped clean-room matcher (gabor) -- own
 # LGPL code, no vendor matcher, the flavour that goes upstream and the one
@@ -166,6 +166,35 @@ install -Dm 0644 "$egisdir/integration/egis0576-fprintd-wait.conf" \
 %{_datadir}/installed-tests/libfprint-2/
 
 %changelog
+* Tue Sep 22 2026 PHILIPPDEV5396 - 1.94.100-99.egis11
+- Update egis0576 driver to v0.5.0 -- the upstream-ready release.
+  * The driver is asynchronous: no capture thread and no private
+    GMainContext. The transport is FpiSsm machines over FpiUsbTransfer
+    (bring-up, exposure calibration) plus a frame transfer chain, the
+    capture is one FpiSsm per action, and only the matcher runs on a
+    worker (a GTask, as secugen does). open() no longer blocks.
+  * Suspend keeps the running action instead of cancelling it: the
+    capture parks at its next transfer boundary and the suspend completes
+    only then, so fprintd releases its sleep inhibitor with a quiet bus;
+    resume continues the same verify after a fresh bring-up. Validated on
+    s2idle with the sleep hook disabled.
+  * USB autosuspend is left at libfprint's default and validated with
+    power/control=auto, so the no-autosuspend udev rule is gone. An
+    installed copy from an earlier version is removed by install.sh.
+  * THE DEFAULT MATCHER IS NOW THE CLEAN-ROOM ONE (gabor): own LGPL code,
+    no vendor matcher in the matching path. The reverse-engineered
+    matcher stays available as `rpmbuild --with vendor`. TEMPLATES DO NOT
+    SURVIVE THE UPGRADE -- every user must re-enrol.
+  * Matcher audit: a constant in the ridge-period check was costing a
+    genuine press of 60 and buying no measured protection (fixed), the
+    alignment search ran twice per comparison (11.18 ms -> 6.20 ms a
+    pair), and a pair the check rejects is now a plain non-match rather
+    than "nothing to score", so a presented artefact spends an attempt.
+    The check closes generated textures whose period is constant and does
+    NOT close a modulated one; the documentation says so now.
+  * The capture loop paces itself: 30 ms between frames with no finger on
+    the sensor, 5 ms with one. An idle armed verify costs 3.1 % of a core
+    instead of 9.1 %.
 * Mon Sep 14 2026 PHILIPPDEV5396 - 1.94.100-99.egis10
 - Update egis0576 driver to v0.4.5.
   * integration: hold fprintd's start while the resume hook re-enumerates the

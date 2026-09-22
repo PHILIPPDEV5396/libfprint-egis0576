@@ -1,3 +1,17 @@
+libfprint-egis0576 (1:1.94.100-99egis0.5.0) UNRELEASED; urgency=medium
+
+  * Driver v0.5.0, the upstream-ready release: asynchronous I/O (FpiSsm
+    over FpiUsbTransfer, matcher in a GTask), suspend that keeps the
+    running action and parks the capture at a transfer boundary, and USB
+    autosuspend left at libfprint's default.
+  * The no-autosuspend udev rule is gone, so debian/rules no longer
+    installs it and the postinst no longer reloads udev for it. The
+    driver was validated with power/control=auto.
+  * The default matcher is the clean-room one. Templates do not survive
+    the upgrade; users must re-enrol.
+
+ -- PHILIPPDEV5396 <philipp2861@gmail.com>  Tue, 22 Sep 2026 22:00:00 +0200
+
 libfprint-egis0576 (1:1.94.100-99egis0.4.5) UNRELEASED; urgency=medium
 
   * Install the two integration files v0.4.5 added, so the Debian package
