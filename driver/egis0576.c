@@ -46,9 +46,12 @@
 /* After the vendor init + exposure calibration the no-finger frame has a
  * fixed-pattern variance around ~140 (measured 140.4 at the shipped gain,
  * docs/sensor-tuning.md; ~160 was the figure through the former TLS transport);
- * a real finger pushes it well past 300. Hysteresis: */
-#define EGIS0576_FINGER_ON_VAR  250.0
-#define EGIS0576_FINGER_OFF_VAR 215.0
+ * a real finger pushes it well past 300. Hysteresis (integers: the comparison
+ * is done on the exact integer statistic, see frame_variance, so the
+ * finger-on/off decision is the same on every architecture and a recorded
+ * test replays the same frame sequence everywhere): */
+#define EGIS0576_FINGER_ON_VAR  250
+#define EGIS0576_FINGER_OFF_VAR 215
 /* Gap between frames. The sensor delivers a frame in ~10 ms, so the loop is
  * paced by these: with no finger on the sensor 30 ms (a press is noticed
  * within one gap, and an idle lock screen costs ~3 % of a core instead of the
@@ -58,7 +61,7 @@
 #define EGIS0576_POLL_GAP_IDLE_MS   30
 #define EGIS0576_POLL_GAP_FINGER_MS 5
 #define EGIS0576_BASELINE_FRAMES 8      /* no-finger frames averaged into the flat-field baseline */
-#define EGIS0576_BASELINE_MAX_VAR 210.0 /* stricter than FINGER_OFF but with headroom for the
+#define EGIS0576_BASELINE_MAX_VAR 210   /* stricter than FINGER_OFF but with headroom for the
                                           * calibrated-gain no-finger level; a hovering finger would
                                           * otherwise contaminate the baseline (true no-finger ~140) */
 
@@ -132,7 +135,7 @@ struct _FpDeviceEgis0576
   LoadJob        *load;         /* verify/identify: the gallery to load first */
   guint8          frame[EGIS_IMG];      /* the raw frame just captured */
   guint8          ffframe[EGIS_IMG];    /* its flat-fielded version, the matcher's probe */
-  gdouble         var;          /* its variance */
+  guint64         var;          /* its variance statistic (frame_variance) */
   BaselineAcc     bl;           /* opportunistic no-finger baseline accumulator */
   CapturePhase    phase;
   gboolean        finger_present;       /* as last reported */
@@ -168,20 +171,33 @@ G_DEFINE_TYPE (FpDeviceEgis0576, fpi_device_egis0576, FP_TYPE_DEVICE);
 /* Frame statistics                                                   */
 /* ------------------------------------------------------------------ */
 
-static gdouble
+/* The frame's variance times EGIS_IMG^2, exactly, in integers (the sums fit:
+ * 3990 x 255^2 < 2^32, their squares < 2^64). var_ge (v, t) is then
+ * "variance >= t" with no floating point anywhere in the decision. */
+static guint64
 frame_variance (const guint8 *buf)
 {
-  gdouble sum = 0.0, var = 0.0, mean;
+  guint64 sum = 0, sumsq = 0;
 
   for (gsize i = 0; i < EGIS_IMG; i++)
-    sum += buf[i];
-  mean = sum / (gdouble) EGIS_IMG;
-  for (gsize i = 0; i < EGIS_IMG; i++)
     {
-      gdouble d = (gdouble) buf[i] - mean;
-      var += d * d;
+      sum += buf[i];
+      sumsq += (guint64) buf[i] * buf[i];
     }
-  return var / (gdouble) EGIS_IMG;
+  return (guint64) EGIS_IMG * sumsq - sum * sum;
+}
+
+static inline gboolean
+var_ge (guint64 v, guint64 t)
+{
+  return v >= t * EGIS_IMG * EGIS_IMG;
+}
+
+/* The variance itself, for the log. */
+static inline gdouble
+var_dbl (FpDeviceEgis0576 *self)
+{
+  return (gdouble) self->var / ((gdouble) EGIS_IMG * EGIS_IMG);
 }
 
 /* Per-instance flat-field baseline. The sensor's fixed-pattern noise
@@ -429,9 +445,14 @@ capture_fail (FpDeviceEgis0576 *self, GError *error)
 static void
 capture_next (FpDeviceEgis0576 *self, FpiSsm *ssm)
 {
-  fpi_ssm_jump_to_state_delayed (ssm, CAP_REINIT,
-                                 self->finger_present ? EGIS0576_POLL_GAP_FINGER_MS
-                                                      : EGIS0576_POLL_GAP_IDLE_MS);
+  int gap = self->finger_present ? EGIS0576_POLL_GAP_FINGER_MS : EGIS0576_POLL_GAP_IDLE_MS;
+
+  /* Under umockdev the frames come from a recording, and the gap would only
+   * make its replay take as long as the session that produced it; the URB
+   * sequence is the same with or without it. */
+  if (fpi_device_emulation_mode_enabled (FP_DEVICE (self)))
+    gap = 0;
+  fpi_ssm_jump_to_state_delayed (ssm, CAP_REINIT, gap);
 }
 
 /* At a transfer boundary with a suspend pending: park the machine (it stays
@@ -576,7 +597,7 @@ enroll_result (FpDeviceEgis0576 *self, FpiSsm *ssm, const MatchJob *j)
     {
       self->enroll_count++;
       fp_dbg ("enroll stage %u/%u (var %.0f)", self->enroll_count,
-              EGIS0576_ENROLL_STAGES, self->var);
+              EGIS0576_ENROLL_STAGES, var_dbl (self));
       fpi_device_enroll_progress (dev, self->enroll_count, NULL, NULL);
       if (self->enroll_count >= EGIS0576_ENROLL_STAGES)
         {
@@ -591,7 +612,7 @@ enroll_result (FpDeviceEgis0576 *self, FpiSsm *ssm, const MatchJob *j)
        * "adjust your finger and try again", which is the right hint for
        * each of them. */
       fp_dbg ("enroll press refused (code %d) at stage %u/%u (var %.0f)%s",
-              r, self->enroll_count, EGIS0576_ENROLL_STAGES, self->var,
+              r, self->enroll_count, EGIS0576_ENROLL_STAGES, var_dbl (self),
               r == 5 ? " -- same placement, asking for a shifted press" : "");
       fpi_device_enroll_progress (dev, self->enroll_count, NULL,
                                   fpi_device_retry_new (FP_DEVICE_RETRY_CENTER_FINGER));
@@ -609,7 +630,7 @@ match_result (FpDeviceEgis0576 *self, FpiSsm *ssm, const MatchJob *j)
     self->best_score = score;
   fp_dbg ("%s score %d idx %d (best %d, var %.0f)%s",
           self->action == FPI_DEVICE_ACTION_VERIFY ? "verify" : "identify",
-          score, idx, self->best_score, self->var,
+          score, idx, self->best_score, var_dbl (self),
           self->cand_valid ? " [candidate held]" : "");
 
   if (score >= EGIS_THRESHOLD && idx >= 0)
@@ -703,14 +724,14 @@ static void
 capture_process (FpDeviceEgis0576 *self, FpiSsm *ssm)
 {
   FpDevice *dev = FP_DEVICE (self);
-  gdouble var;
+  guint64 var;
 
   self->var = var = frame_variance (self->frame);   /* finger-on/off uses RAW variance */
 
   /* Build the flat-field baseline opportunistically from no-finger frames
    * (before the first press / between presses) -- never blocks, works with
    * GNOME's immediate "place finger" flow, and caches for the whole boot. */
-  if (var < EGIS0576_BASELINE_MAX_VAR)
+  if (!var_ge (var, EGIS0576_BASELINE_MAX_VAR))
     baseline_feed (self, self->frame);
 
   /* Per-boot flat-field: subtract the fixed-pattern baseline so a template
@@ -724,13 +745,13 @@ capture_process (FpDeviceEgis0576 *self, FpiSsm *ssm)
       /* one add per finger press: capture on-press, then wait for lift */
       if (self->phase == PH_AWAIT_ON)
         {
-          if (var >= EGIS0576_FINGER_ON_VAR)
+          if (var_ge (var, EGIS0576_FINGER_ON_VAR))
             {
               report_finger (self, TRUE);
               match_start (self, ssm);
               return;
             }
-          if (var < EGIS0576_FINGER_OFF_VAR && self->settle_tries > 0)
+          if (!var_ge (var, EGIS0576_FINGER_OFF_VAR) && self->settle_tries > 0)
             {
               /* lifted before any frame of the press reached the coverage
                * gate: that press was too light or too partial, say so */
@@ -742,7 +763,7 @@ capture_process (FpDeviceEgis0576 *self, FpiSsm *ssm)
                                           fpi_device_retry_new (FP_DEVICE_RETRY_CENTER_FINGER));
             }
         }
-      else if (var < EGIS0576_FINGER_OFF_VAR)   /* PH_AWAIT_OFF */
+      else if (!var_ge (var, EGIS0576_FINGER_OFF_VAR))   /* PH_AWAIT_OFF */
         {
           self->phase = PH_AWAIT_ON;
           report_finger (self, FALSE);
@@ -755,14 +776,14 @@ capture_process (FpDeviceEgis0576 *self, FpiSsm *ssm)
    * press moves through partial->full contact, and grabbing just the first
    * frame often caught a poor transitional image; report the result when a
    * frame pair confirms a match (match_result), or when the finger lifts. */
-  if (var >= EGIS0576_FINGER_ON_VAR)
+  if (var_ge (var, EGIS0576_FINGER_ON_VAR))
     {
       self->saw_finger = TRUE;
       report_finger (self, TRUE);
       match_start (self, ssm);
       return;
     }
-  if (var < EGIS0576_FINGER_OFF_VAR && self->saw_finger)
+  if (!var_ge (var, EGIS0576_FINGER_OFF_VAR) && self->saw_finger)
     {
       /* finger lifted without a confirmed match. An unconfirmed candidate is
        * NOT a match (see cand_valid). A press that produced nothing scorable
