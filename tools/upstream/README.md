@@ -21,10 +21,35 @@ libfprint replays a recorded USB session under umockdev and runs
 `custom.py` against it (`tests/README.md` upstream). The recording is made
 with two **textured non-finger objects** — never a finger, since the pcap
 contains every frame the sensor delivered and is committed to a public
-repository. What works: something conductive with ridges 0.2–0.5 mm apart
-(a fine metal file, a coin's reeded edge, a knurled metal part); check a
-candidate first with the driver itself (twelve enrolment presses, then a
-verify, then a verify with the second object, which must not match).
+repository.
+
+Finding an object that works is trial and error, so check candidates with
+the fast probe (two presses, ~20 s, no enrolment) rather than a full
+enrolment:
+
+```bash
+tools/upstream/objprobe.py
+```
+
+It prints the matcher's coverage per frame and the best NCC between the two
+presses, and says whether the object is usable. What it is looking for:
+
+- **coverage ≥ 0.60 on both presses** — the object must produce ridge-*like*
+  structure, not just contrast. A rigid metal part gives plenty of variance
+  (measured 1300–2500, far above the finger-on threshold of 250) and still
+  fails here: its texture is not a ridge field, so the coherence mask keeps
+  almost nothing.
+- **best cross NCC ≥ 0.78** — two presses must reproduce each other. This is
+  where rigid objects fail for a second reason: a finger deforms and lands
+  the same way twice, a rigid object touches somewhere slightly different
+  every time. Measured on one candidate: 12 enrolment frames that correlated
+  0.16–0.67 *with each other*, against 0.82–0.97 for a finger.
+
+So the useful shape is **elastic, with irregular ridge-like texture at
+0.2–0.5 mm**: textured rubber or silicone, an eraser with a pattern pressed
+into it, a piece of leather. Avoid regular gratings (a coin's reeded edge):
+the driver's ridge-period consistency check exists to reject exactly those,
+and it will reject them here too.
 
 Recording, from a libfprint build directory with the driver laid in
 (needs `umockdev`, `tshark`, `usbmon` loaded, root):
