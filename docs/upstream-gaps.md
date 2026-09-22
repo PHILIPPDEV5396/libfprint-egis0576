@@ -12,7 +12,7 @@ This file is the definition of v0.5.0: the release is cut when every blocker and
 | step | state | where |
 |---|---|---|
 | 1 tree, provenance, instance state, contract | done | `0e5f7bb`, `000afc5`, `8cbfc6a`, `a60fd36` (2026-09-21) |
-| 2 asynchronous I/O | done, finger paths under hardware validation | `c81516a` (2026-09-21): FpiSsm over FpiUsbTransfer, matcher in a GTask |
+| 2 asynchronous I/O | done, hardware-validated 2026-09-22 (enrol 12/12 with two steering refusals, genuine press 0.88/0.95 confirmed by the second frame, other finger 0.55 rejected, cancel answered in 3 ms, open 0.37 s) | `c81516a` (2026-09-21): FpiSsm over FpiUsbTransfer, matcher in a GTask |
 | 3 suspend/resume/autosuspend in the driver | open | |
 | 4 umockdev test | open | |
 | 5 style, headers, statement, MR text | open | |
