@@ -430,7 +430,9 @@ while a non-match costs an attempt. Until 2026-09-22 the check returned the
 presented again and again for free. It now scores 0. The distinction costs
 a genuine user nothing on the reference session (no press loses its accept
 to the check at all) and turns one cross-session press from a retry into a
-failed attempt.
+failed attempt. Confirmed on the live driver after the change: `fprintd-verify`
+matched at 0.85 / 0.85, confirmed by the second frame, on a template enrolled
+before it.
 
 `EM_FQ_MIN_NBLK` is not a texture criterion: `nblk` is arithmetically the
 number of period blocks geometrically eligible over the overlap (correlation
