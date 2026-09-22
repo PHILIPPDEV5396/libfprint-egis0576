@@ -295,8 +295,10 @@ eg_blur (const double *src, double *dst, double sigma, double *tmp)
   double k[64];
   double s = 0;
 
-  if (r < 1) r = 1;
-  if (r > 31) r = 31;
+  if (r < 1)
+    r = 1;
+  if (r > 31)
+    r = 31;
   for (int i = -r; i <= r; i++)
     {
       k[i + r] = exp (-(double) i * i / (2 * sigma * sigma));
@@ -310,9 +312,7 @@ eg_blur (const double *src, double *dst, double sigma, double *tmp)
       {
         double a = 0;
         for (int i = -r; i <= r; i++)
-          {
-            a += k[i + r] * src[y * EM_W + eg_refl (x + i, EM_W)];
-          }
+          a += k[i + r] * src[y * EM_W + eg_refl (x + i, EM_W)];
         tmp[y * EM_W + x] = a;
       }
   for (int y = 0; y < EM_H; y++)
@@ -320,9 +320,7 @@ eg_blur (const double *src, double *dst, double sigma, double *tmp)
       {
         double a = 0;
         for (int i = -r; i <= r; i++)
-          {
-            a += k[i + r] * tmp[eg_refl (y + i, EM_H) * EM_W + x];
-          }
+          a += k[i + r] * tmp[eg_refl (y + i, EM_H) * EM_W + x];
         dst[y * EM_W + x] = a;
       }
 }
@@ -394,8 +392,16 @@ eg_bilinear (const double *a, double sx, double sy)
 
   if (sx < 0 || sx > EM_W - 1 || sy < 0 || sy > EM_H - 1)
     return 0.0;
-  if (x0 >= EM_W - 1) { x0 = EM_W - 2; fx = 1.0; }   /* sx == EM_W-1 exactly */
-  if (y0 >= EM_H - 1) { y0 = EM_H - 2; fy = 1.0; }
+  if (x0 >= EM_W - 1)
+    {
+      x0 = EM_W - 2;
+      fx = 1.0;
+    }                                                /* sx == EM_W-1 exactly */
+  if (y0 >= EM_H - 1)
+    {
+      y0 = EM_H - 2;
+      fy = 1.0;
+    }
   return a[y0 * EM_W + x0] * (1 - fx) * (1 - fy)
          + a[y0 * EM_W + x0 + 1] * fx * (1 - fy)
          + a[(y0 + 1) * EM_W + x0] * (1 - fx) * fy
@@ -449,29 +455,29 @@ eg_gabor (const double *norm, const double *ridge, double period, double *out)
                                           * and no process-global state */
   const double sx = EG_GSX, sy = EG_GSY;
 
-    {
-      for (int d = 0; d < EG_NDIR; d++)
-        {
-          double th = EG_PI * d / EG_NDIR;   /* direction the filter is steered
-                                                * ACROSS (ridge normal); the
-                                                * lookup below adds 90 deg */
-          double ct = cos (th), st = sin (th);
-          double mean = 0;
-          for (int j = -EG_KR; j <= EG_KR; j++)
-            for (int i = -EG_KR; i <= EG_KR; i++)
-              {
-                double xr = i * ct + j * st;
-                double yr = -i * st + j * ct;
-                double g = exp (-(xr * xr / (2 * sx * sx) + yr * yr / (2 * sy * sy)))
-                           * cos (2 * EG_PI * xr / period);
-                bank[d][(j + EG_KR) * EG_KS + (i + EG_KR)] = g;
-                mean += g;
-              }
-          mean /= EG_KS * EG_KS;
-          for (int i = 0; i < EG_KS * EG_KS; i++)
-            bank[d][i] -= mean;
-        }
-    }
+  {
+    for (int d = 0; d < EG_NDIR; d++)
+      {
+        double th = EG_PI * d / EG_NDIR;     /* direction the filter is steered
+                                              * ACROSS (ridge normal); the
+                                              * lookup below adds 90 deg */
+        double ct = cos (th), st = sin (th);
+        double mean = 0;
+        for (int j = -EG_KR; j <= EG_KR; j++)
+          for (int i = -EG_KR; i <= EG_KR; i++)
+            {
+              double xr = i * ct + j * st;
+              double yr = -i * st + j * ct;
+              double g = exp (-(xr * xr / (2 * sx * sx) + yr * yr / (2 * sy * sy)))
+                         * cos (2 * EG_PI * xr / period);
+              bank[d][(j + EG_KR) * EG_KS + (i + EG_KR)] = g;
+              mean += g;
+            }
+        mean /= EG_KS * EG_KS;
+        for (int i = 0; i < EG_KS * EG_KS; i++)
+          bank[d][i] -= mean;
+      }
+  }
 
   for (int y = 0; y < EM_H; y++)
     for (int x = 0; x < EM_W; x++)
@@ -507,6 +513,7 @@ static int
 eg_cmp_double (const void *a, const void *b)
 {
   double x = *(const double *) a, y = *(const double *) b;
+
   return x < y ? -1 : (x > y ? 1 : 0);
 }
 
@@ -538,11 +545,11 @@ eg_mask (EgScratch *S, uint8_t *mask)
         for (int x = 0; x < EM_W; x++)
           {
             int i = y * EM_W + x;
-            int ok = tmp[i]
-                     && y > 0 && tmp[i - EM_W]
-                     && y < EM_H - 1 && tmp[i + EM_W]
-                     && x > 0 && tmp[i - 1]
-                     && x < EM_W - 1 && tmp[i + 1];
+            int ok = tmp[i] &&
+                     y > 0 && tmp[i - EM_W] &&
+                     y < EM_H - 1 && tmp[i + EM_W] &&
+                     x > 0 && tmp[i - 1] &&
+                     x < EM_W - 1 && tmp[i + 1];
             mask[i] = ok ? 1 : 0;
           }
     }
@@ -626,8 +633,16 @@ eg_bilinear_u8 (const uint8_t *a, double sx, double sy)
 
   if (sx < 0 || sx > EM_W - 1 || sy < 0 || sy > EM_H - 1)
     return 0.0;
-  if (x0 >= EM_W - 1) { x0 = EM_W - 2; fx = 1.0; }
-  if (y0 >= EM_H - 1) { y0 = EM_H - 2; fy = 1.0; }
+  if (x0 >= EM_W - 1)
+    {
+      x0 = EM_W - 2;
+      fx = 1.0;
+    }
+  if (y0 >= EM_H - 1)
+    {
+      y0 = EM_H - 2;
+      fy = 1.0;
+    }
   return a[y0 * EM_W + x0] * (1 - fx) * (1 - fy)
          + a[y0 * EM_W + x0 + 1] * fx * (1 - fy)
          + a[(y0 + 1) * EM_W + x0] * (1 - fx) * fy
@@ -738,11 +753,16 @@ eg_match_core (const EmFrame *a, const EmFrame *b, int *odx, int *ody, int *orot
             if (s > best)
               {
                 best = s;
-                bdx = dx; bdy = dy; brot = r;
+                bdx = dx;
+                bdy = dy;
+                brot = r;
               }
           }
     }
-  (void) cand_s; (void) cand_dx; (void) cand_dy; (void) cand_r;
+  (void) cand_s;
+  (void) cand_dx;
+  (void) cand_dy;
+  (void) cand_r;
 #else
   /* coarse pass: every 2nd pixel and every 2nd shift, one rotation at a time
    * (keeping all EG_NROT rotated copies would put 180 kB on the stack of a
@@ -806,15 +826,20 @@ eg_match_core (const EmFrame *a, const EmFrame *b, int *odx, int *ody, int *orot
                 if (s > best)
                   {
                     best = s;
-                    bdx = dx; bdy = dy; brot = r;
+                    bdx = dx;
+                    bdy = dy;
+                    brot = r;
                   }
               }
         }
     }
 #endif
-  if (odx) *odx = bdx;
-  if (ody) *ody = bdy;
-  if (orot) *orot = brot;
+  if (odx)
+    *odx = bdx;
+  if (ody)
+    *ody = bdy;
+  if (orot)
+    *orot = brot;
   return best;
 }
 
@@ -903,8 +928,13 @@ em_period_map (const double *img, const uint8_t *mask, double *pmap, double *con
 
   if (!gx || !tmp)
     {
-      free (gx); free (tmp);
-      for (int b = 0; b < EM_NB; b++) { pmap[b] = 0; conf[b] = 0; }
+      free (gx);
+      free (tmp);
+      for (int b = 0; b < EM_NB; b++)
+        {
+          pmap[b] = 0;
+          conf[b] = 0;
+        }
       return 0;
     }
   for (int y = 0; y < EM_H; y++)
@@ -952,9 +982,12 @@ em_period_map (const double *img, const uint8_t *mask, double *pmap, double *con
             double k = EM_FQ_K0 + 0.5 * ki;
             double sx = x + k * gx[i], sy = y + k * gy[i];
             int ix = (int) lround (sx), iy = (int) lround (sy);
-            if (sx < 0 || sx > EM_W - 1 || sy < 0 || sy > EM_H - 1
-                || !mask[iy * EM_W + ix])
-              { ok = 0; break; }
+            if (sx < 0 || sx > EM_W - 1 || sy < 0 || sy > EM_H - 1 ||
+                !mask[iy * EM_W + ix])
+              {
+                ok = 0;
+                break;
+              }
             v[ki] = img[i] * eg_bilinear (img, sx, sy);
           }
         if (!ok)
@@ -975,39 +1008,55 @@ em_period_map (const double *img, const uint8_t *mask, double *pmap, double *con
       for (int bx = 0; bx < EM_FBX; bx++)
         {
           int b = by * EM_FBX + bx;
-          for (int ki = 0; ki < EM_FQ_NK; ki++) acc2[b][ki] = 0;
-          e02[b] = 0; cnt2[b] = 0;
+          for (int ki = 0; ki < EM_FQ_NK; ki++)
+            acc2[b][ki] = 0;
+          e02[b] = 0;
+          cnt2[b] = 0;
           for (int j = -1; j <= 1; j++)
             for (int i = -1; i <= 1; i++)
               {
                 int yy = by + j, xx = bx + i, w = w3[j + 1] * w3[i + 1];
-                if (yy < 0 || yy >= EM_FBY || xx < 0 || xx >= EM_FBX) continue;
+                if (yy < 0 || yy >= EM_FBY || xx < 0 || xx >= EM_FBX)
+                  continue;
                 int nb = yy * EM_FBX + xx;
-                for (int ki = 0; ki < EM_FQ_NK; ki++) acc2[b][ki] += w * acc[nb][ki];
-                e02[b] += w * e0[nb]; cnt2[b] += w * cnt[nb];
+                for (int ki = 0; ki < EM_FQ_NK; ki++)
+                  acc2[b][ki] += w * acc[nb][ki];
+                e02[b] += w * e0[nb];
+                cnt2[b] += w * cnt[nb];
               }
         }
-    memcpy (acc, acc2, sizeof acc); memcpy (e0, e02, sizeof e0); memcpy (cnt, cnt2, sizeof cnt);
+    memcpy (acc, acc2, sizeof acc);
+    memcpy (e0, e02, sizeof e0);
+    memcpy (cnt, cnt2, sizeof cnt);
   }
 #endif
   for (int b = 0; b < EM_NB; b++)
     {
       int bi = 0;
       double bv = -1e30, p;
-      pmap[b] = 0; conf[b] = 0;
+      pmap[b] = 0;
+      conf[b] = 0;
       if (cnt[b] < EM_FQ_MINPIX || e0[b] <= 0)
         continue;
       for (int ki = 0; ki < EM_FQ_NK; ki++)
-        if (acc[b][ki] > bv) { bv = acc[b][ki]; bi = ki; }
+        if (acc[b][ki] > bv)
+          {
+            bv = acc[b][ki];
+            bi = ki;
+          }
       if (bv / e0[b] < EM_FQ_MINPEAK)
         continue;
       /* first local maximum that reaches EM_FQ_HARM of the global one: the
        * lag range admits the second harmonic (2T) for T <= 4.75 px, and the
        * global argmax picks it in a good fraction of blocks */
       for (int ki = 1; ki < EM_FQ_NK - 1; ki++)
-        if (acc[b][ki] > acc[b][ki - 1] && acc[b][ki] >= acc[b][ki + 1]
-            && acc[b][ki] >= EM_FQ_HARM * bv)
-          { bi = ki; bv = acc[b][ki]; break; }
+        if (acc[b][ki] > acc[b][ki - 1] && acc[b][ki] >= acc[b][ki + 1] &&
+            acc[b][ki] >= EM_FQ_HARM * bv)
+          {
+            bi = ki;
+            bv = acc[b][ki];
+            break;
+          }
       p = EM_FQ_K0 + 0.5 * bi;
       if (bi > 0 && bi < EM_FQ_NK - 1)
         {
@@ -1020,7 +1069,8 @@ em_period_map (const double *img, const uint8_t *mask, double *pmap, double *con
       conf[b] = bv / e0[b];
       nvalid++;
     }
-  free (gx); free (tmp);
+  free (gx);
+  free (tmp);
   return nvalid;
 }
 
@@ -1035,7 +1085,8 @@ em_match_ex (const EmFrame *a, const EmFrame *b, EmMatchInfo *info)
 
   memset (info, 0, sizeof *info);
   info->ncc = s;
-  info->dx = dx; info->dy = dy;
+  info->dx = dx;
+  info->dy = dy;
   info->rot_deg = (r - EG_ROT_K) * EG_ROT_STEP;
   if (s <= -1.0)
     return s;
@@ -1043,8 +1094,13 @@ em_match_ex (const EmFrame *a, const EmFrame *b, EmMatchInfo *info)
   rimg = malloc (2 * EM_N * sizeof (double));
   rmask = malloc (2 * EM_N);
   if (!rimg || !rmask)
-    { free (rimg); free (rmask); return s; }
-  pimg = rimg + EM_N; pmask = rmask + EM_N;
+    {
+      free (rimg);
+      free (rmask);
+      return s;
+    }
+  pimg = rimg + EM_N;
+  pmask = rmask + EM_N;
   th = info->rot_deg * EG_PI / 180.0;
   eg_rotate (b, th, rimg, rmask);
   /* probe warped into template coordinates: template (x,y) <-> probe (x-dx,y-dy) */
@@ -1053,7 +1109,11 @@ em_match_ex (const EmFrame *a, const EmFrame *b, EmMatchInfo *info)
       {
         int i = y * EM_W + x, px = x - dx, py = y - dy;
         if (px < 0 || px >= EM_W || py < 0 || py >= EM_H)
-          { pimg[i] = 0; pmask[i] = 0; continue; }
+          {
+            pimg[i] = 0;
+            pmask[i] = 0;
+            continue;
+          }
         pmask[i] = rmask[py * EM_W + px] & a->mask[i];
         pimg[i] = pmask[i] ? rimg[py * EM_W + px] : 0.0;
       }
@@ -1072,8 +1132,10 @@ em_match_ex (const EmFrame *a, const EmFrame *b, EmMatchInfo *info)
     for (int bk = 0; bk < EM_NB; bk++)
       if (tmap[bk] > 0 && pmap[bk] > 0)
         {
-          st += tmap[bk]; sp += pmap[bk];
-          stt += tmap[bk] * tmap[bk]; spp += pmap[bk] * pmap[bk];
+          st += tmap[bk];
+          sp += pmap[bk];
+          stt += tmap[bk] * tmap[bk];
+          spp += pmap[bk] * pmap[bk];
           stp += tmap[bk] * pmap[bk];
           mad += fabs (tmap[bk] - pmap[bk]);
           n++;
@@ -1089,7 +1151,8 @@ em_match_ex (const EmFrame *a, const EmFrame *b, EmMatchInfo *info)
         info->dmean = (st - sp) / n;
       }
   }
-  free (rimg); free (rmask);
+  free (rimg);
+  free (rmask);
   return s;
 }
 
@@ -1099,6 +1162,7 @@ em_match (const EmFrame *a, const EmFrame *b)
 {
   EmMatchInfo in;
   double s;
+
 #if EM_FQ_ENABLE
   {
     int dx, dy, r;
@@ -1113,8 +1177,8 @@ em_match (const EmFrame *a, const EmFrame *b)
   s = em_match_ex (a, b, &in);
   if (s > -1.0)
     {
-      if (in.nblk < EM_FQ_MIN_NBLK || in.mad > EM_FQ_MAX_MAD
-          || in.corr < EM_FQ_MIN_CORR)
+      if (in.nblk < EM_FQ_MIN_NBLK || in.mad > EM_FQ_MAX_MAD ||
+          in.corr < EM_FQ_MIN_CORR)
         return -1.0;
       /* A flat period map is what a synthetic grating has -- and also what a
        * real finger has over some of its regions: on the second reference
@@ -1123,10 +1187,10 @@ em_match (const EmFrame *a, const EmFrame *b)
        * it away (press score 0.97 -> 0.73, a false reject). So a flat probe
        * is rejected only when its map does NOT reproduce the template's: a
        * grating has nothing to reproduce (corr ~0), skin does. */
-      if (in.p_spread < EM_FQ_MIN_PSPREAD
-          && !(in.p_spread >= EM_FQ_RESCUE_PSPREAD
-               && in.corr >= EM_FQ_RESCUE_CORR
-               && in.mad <= EM_FQ_RESCUE_MAD))
+      if (in.p_spread < EM_FQ_MIN_PSPREAD &&
+          !(in.p_spread >= EM_FQ_RESCUE_PSPREAD &&
+            in.corr >= EM_FQ_RESCUE_CORR &&
+            in.mad <= EM_FQ_RESCUE_MAD))
         return -1.0;
     }
 #else

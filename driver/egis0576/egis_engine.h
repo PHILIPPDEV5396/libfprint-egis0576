@@ -39,22 +39,32 @@ int egis_enroll_begin (EgisEngine *e);
  * stored, same placement as a stored frame (ask the user to shift the
  * finger); -2 = not stored, quality under the gate (ask for another press);
  * other < 0 = error. *progress (0..100) is set if non-NULL. */
-int egis_enroll_add (EgisEngine *e, const uint8_t *frame, int *progress);
+int egis_enroll_add (EgisEngine    *e,
+                     const uint8_t *frame,
+                     int           *progress);
 /* Serialise the template: *out is malloc'd (caller frees), returns its size
  * (> 0) or < 0 on error. The bytes are opaque to the driver. */
-int egis_enroll_finish (EgisEngine *e, uint8_t **out);
+int egis_enroll_finish (EgisEngine *e,
+                        uint8_t   **out);
 
 /* --- verify / identify against stored templates --- */
 /* How many templates one egis_gallery_load() accepts. */
 int egis_gallery_capacity (EgisEngine *e);
 /* Load n template blobs (as egis_enroll_finish produced them) into the
  * gallery; 0 = ok, < 0 = a blob is invalid (nothing is loaded). */
-int egis_gallery_load (EgisEngine *e, const uint8_t *const *blobs, const int *sizes, int n);
+int egis_gallery_load (EgisEngine           *e,
+                       const uint8_t *const *blobs,
+                       const int            *sizes,
+                       int                   n);
 /* Score a frame against gallery entry idx; < 0 = nothing to score. */
-int egis_verify (EgisEngine *e, const uint8_t *frame, int idx);
+int egis_verify (EgisEngine    *e,
+                 const uint8_t *frame,
+                 int            idx);
 /* Best score of a frame across the gallery; *out_idx = the matched entry
  * (score >= EGIS_THRESHOLD) or -1. Returns the best score, < 0 = error. */
-int egis_identify (EgisEngine *e, const uint8_t *frame, int *out_idx);
+int egis_identify (EgisEngine    *e,
+                   const uint8_t *frame,
+                   int           *out_idx);
 /* Corroborate an accept on the UN-flat-fielded sensor frame (raw bytes, no
  * flat-field): the driver reports success only if this returns 1. It closes
  * the case where a flat-field baseline captured with the enrolled finger
@@ -62,6 +72,8 @@ int egis_identify (EgisEngine *e, const uint8_t *frame, int *out_idx);
  * later frame, and a correlation matcher then accepts a featureless smudge --
  * nothing can be painted into the raw frame. Engines without the concern
  * return 1. */
-int egis_verify_raw_ok (EgisEngine *e, const uint8_t *raw, int idx);
+int egis_verify_raw_ok (EgisEngine    *e,
+                        const uint8_t *raw,
+                        int            idx);
 
 #endif

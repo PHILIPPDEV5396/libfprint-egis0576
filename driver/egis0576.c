@@ -50,7 +50,7 @@
  * is done on the exact integer statistic, see frame_variance, so the
  * finger-on/off decision is the same on every architecture and a recorded
  * test replays the same frame sequence everywhere): */
-#define EGIS0576_FINGER_ON_VAR  250
+#define EGIS0576_FINGER_ON_VAR 250
 #define EGIS0576_FINGER_OFF_VAR 215
 /* Gap between frames. The sensor delivers a frame in ~10 ms, so the loop is
  * paced by these: with no finger on the sensor 30 ms (a press is noticed
@@ -58,12 +58,12 @@
  * ~9 % that polling flat out did); while a finger is down 5 ms, so the
  * ~250 ms in which a static press keeps its contrast yields ~17 frames for
  * the matcher and the lift is seen promptly. */
-#define EGIS0576_POLL_GAP_IDLE_MS   30
+#define EGIS0576_POLL_GAP_IDLE_MS 30
 #define EGIS0576_POLL_GAP_FINGER_MS 5
 #define EGIS0576_BASELINE_FRAMES 8      /* no-finger frames averaged into the flat-field baseline */
 #define EGIS0576_BASELINE_MAX_VAR 210   /* stricter than FINGER_OFF but with headroom for the
-                                          * calibrated-gain no-finger level; a hovering finger would
-                                          * otherwise contaminate the baseline (true no-finger ~140) */
+                                         * calibrated-gain no-finger level; a hovering finger would
+                                         * otherwise contaminate the baseline (true no-finger ~140) */
 
 typedef enum {
   PH_AWAIT_ON,     /* waiting for a finger */
@@ -71,14 +71,16 @@ typedef enum {
 } CapturePhase;
 
 /* The flat-field baseline accumulator (see baseline_feed). */
-typedef struct {
+typedef struct
+{
   guint32 acc[EGIS_IMG];
   int     count;
 } BaselineAcc;
 
 /* The prints of a verify/identify action, decoded, for the gallery load that
  * runs off the main loop at the start of the capture (load_thread). */
-typedef struct {
+typedef struct
+{
   EgisEngine    *engine;        /* borrowed, exclusively the task's while it runs */
   GPtrArray     *vars;          /* the GVariants the blobs point into (owned refs) */
   const guint8 **blobs;
@@ -89,7 +91,8 @@ typedef struct {
 /* One probe frame handed to the matcher (match_thread): a snapshot of the
  * flat-fielded and the raw frame, the action, and what the two-frame
  * confirmation needs; the results come back in the same struct. */
-typedef struct {
+typedef struct
+{
   EgisEngine     *engine;       /* borrowed, exclusively the task's while it runs */
   FpiDeviceAction action;
   guint8          probe[EGIS_IMG];
@@ -105,12 +108,12 @@ typedef struct {
 
 struct _FpDeviceEgis0576
 {
-  FpDevice      parent;
+  FpDevice    parent;
 
-  EgisDev      *sensor;         /* the plaintext channel to the sensor, open..close */
-  EgisEngine   *engine;         /* the host matcher (egis_engine.h), per instance */
+  EgisDev    *sensor;           /* the plaintext channel to the sensor, open..close */
+  EgisEngine *engine;           /* the host matcher (egis_engine.h), per instance */
 
-  gboolean      needs_reinit;   /* set by suspend/resume: the sensor does not
+  gboolean    needs_reinit;     /* set by suspend/resume: the sensor does not
                                  * reliably keep its bring-up state across s2idle
                                  * (USB stays powered, but the capture pipeline
                                  * comes back wedged), so it is re-initialised
@@ -119,15 +122,15 @@ struct _FpDeviceEgis0576
    * machine parks at its next transfer boundary -- nothing in flight, nothing
    * scheduled -- and only then is the suspend completed; resume (or a cancel)
    * restarts it at the loop head. */
-  gboolean      suspending;     /* the suspend vfunc ran; park at the next boundary */
-  gboolean      parked;         /* parked: waiting for resume or cancel */
+  gboolean suspending;          /* the suspend vfunc ran; park at the next boundary */
+  gboolean parked;              /* parked: waiting for resume or cancel */
 
   /* Per instance, i.e. per fprintd process: the flat-field baseline (see
    * baseline_feed) and the exposure calibration the first open() found,
    * handed to every later EgisDev the driver opens. */
-  guint8        baseline[EGIS_IMG];     /* no-finger reference, valid iff have_baseline */
-  gboolean      have_baseline;
-  int           dc_c_calibrated;        /* -1 until the first open() calibrated */
+  guint8   baseline[EGIS_IMG];          /* no-finger reference, valid iff have_baseline */
+  gboolean have_baseline;
+  int      dc_c_calibrated;             /* -1 until the first open() calibrated */
 
   /* The running action's capture: its machine and state. */
   FpiSsm         *ssm;
@@ -157,12 +160,12 @@ struct _FpDeviceEgis0576
    * average, i.e. one frame (~35 ms) of latency. A candidate that the finger
    * lifts on, or that the next frame contradicts, is never reported as a
    * match. */
-  gboolean        cand_valid;
-  int             cand_score, cand_idx;
-  guint8          cand_raw[EGIS_IMG];
+  gboolean cand_valid;
+  int      cand_score, cand_idx;
+  guint8   cand_raw[EGIS_IMG];
 
   /* identify: prints in gallery order (borrowed refs), for result mapping */
-  GPtrArray    *gallery_prints;
+  GPtrArray *gallery_prints;
 };
 G_DECLARE_FINAL_TYPE (FpDeviceEgis0576, fpi_device_egis0576, FPI, DEVICE_EGIS0576, FpDevice);
 G_DEFINE_TYPE (FpDeviceEgis0576, fpi_device_egis0576, FP_TYPE_DEVICE);
@@ -476,7 +479,8 @@ capture_park_if_suspending (FpDeviceEgis0576 *self, FpiSsm *ssm)
   return TRUE;
 }
 
-static void report_finger (FpDeviceEgis0576 *self, gboolean present);
+static void report_finger (FpDeviceEgis0576 *self,
+                           gboolean          present);
 
 /* Forget the press in progress (its scores, candidate, settle count and the
  * PRESENT status). The enrol phase is left alone: PH_AWAIT_OFF flips on the
@@ -674,12 +678,16 @@ match_result (FpDeviceEgis0576 *self, FpiSsm *ssm, const MatchJob *j)
             {
               fp_dbg ("match confirmed by a second frame (%d, %d)", self->cand_score, score);
               if (self->action == FPI_DEVICE_ACTION_VERIFY)
-                fpi_device_verify_report (dev, FPI_MATCH_SUCCESS, NULL, NULL);
+                {
+                  fpi_device_verify_report (dev, FPI_MATCH_SUCCESS, NULL, NULL);
+                }
               else
-                fpi_device_identify_report (dev,
-                                            idx < (int) self->gallery_prints->len
-                                            ? g_ptr_array_index (self->gallery_prints, idx) : NULL,
-                                            NULL, NULL);
+                {
+                  fpi_device_identify_report (dev,
+                                              idx < (int) self->gallery_prints->len ?
+                                              g_ptr_array_index (self->gallery_prints, idx) : NULL,
+                                              NULL, NULL);
+                }
               fpi_ssm_mark_completed (ssm);
               return;
             }
@@ -731,6 +739,7 @@ static void
 match_start (FpDeviceEgis0576 *self, FpiSsm *ssm)
 {
   FpDevice *dev = FP_DEVICE (self);
+
   g_autoptr(GTask) task = NULL;
   MatchJob *j = g_new0 (MatchJob, 1);
 
@@ -804,9 +813,9 @@ capture_process (FpDeviceEgis0576 *self, FpiSsm *ssm)
     }
 
   /* VERIFY / IDENTIFY: score EVERY frame while the finger is down. A single
-   * press moves through partial->full contact, and grabbing just the first
-   * frame often caught a poor transitional image; report the result when a
-   * frame pair confirms a match (match_result), or when the finger lifts. */
+  * press moves through partial->full contact, and grabbing just the first
+  * frame often caught a poor transitional image; report the result when a
+  * frame pair confirms a match (match_result), or when the finger lifts. */
   if (var_ge (var, EGIS0576_FINGER_ON_VAR))
     {
       self->saw_finger = TRUE;
@@ -905,7 +914,8 @@ capture_run_state (FpiSsm *ssm, FpDevice *dev)
     }
 }
 
-static void capture_complete (FpDeviceEgis0576 *self, FpDevice *dev);
+static void capture_complete (FpDeviceEgis0576 *self,
+                              FpDevice         *dev);
 
 static void
 capture_done (FpiSsm *ssm, FpDevice *dev, GError *error)
@@ -1124,6 +1134,7 @@ egis0576_verify (FpDevice *dev)
 {
   FpDeviceEgis0576 *self = FPI_DEVICE_EGIS0576 (dev);
   FpPrint *print = NULL;
+
   g_autoptr(GPtrArray) prints = g_ptr_array_new ();
 
   fpi_device_get_verify_data (dev, &print);

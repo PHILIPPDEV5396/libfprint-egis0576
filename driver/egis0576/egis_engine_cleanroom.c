@@ -213,7 +213,7 @@
 /* The accept NCC and the probe coverage gate are the front-end's own
  * (egis_match.h): tsteppy's file defines 0.53 / 0.55, the Gabor file
  * 0.78 / 0.35. The threshold maps to EGIS_THRESHOLD exactly. */
-#define EGIS_CR_ACCEPT_NCC   em_match_threshold
+#define EGIS_CR_ACCEPT_NCC em_match_threshold
 #define EGIS_CR_MIN_COVERAGE em_min_coverage
 #ifndef EGIS_CR_REDUNDANT_NCC
 #define EGIS_CR_REDUNDANT_NCC 0.95   /* enrol: reject same-press duplicate */
@@ -265,9 +265,9 @@
 #define EGIS_CR_RAW_CORROBORATE_NCC 0.0
 #endif
 /* egis_verify() stops scoring template frames at the first one over the
- * accept NCC (the driver only compares the result with the threshold). The
- * accuracy kit builds with this at 0 so its score distributions show the
- * true best-of-template maximum, not the first frame that cleared it. */
+* accept NCC (the driver only compares the result with the threshold). The
+* accuracy kit builds with this at 0 so its score distributions show the
+* true best-of-template maximum, not the first frame that cleared it. */
 #ifndef EGIS_CR_VERIFY_EARLY_EXIT
 #define EGIS_CR_VERIFY_EARLY_EXIT 1
 #endif
@@ -275,27 +275,30 @@
 
 /* ---- state ---------------------------------------------------------------- */
 
-typedef struct {
-    int nframes;
-    EmFrame *frames;                              /* nframes EmFrames */
+typedef struct
+{
+  int      nframes;
+  EmFrame *frames;                                /* nframes EmFrames */
 } CrEntry;
 
-typedef struct {
-    int active;
-    int count;
-    int steer_refusals;                           /* consecutive code-5 returns */
-    uint8_t raw[EGIS_CR_MAX_FRAMES][EGIS_IMG_SIZE];
-    EmFrame frames[EGIS_CR_MAX_FRAMES];
-    EmFrame scratch;
+typedef struct
+{
+  int     active;
+  int     count;
+  int     steer_refusals;                         /* consecutive code-5 returns */
+  uint8_t raw[EGIS_CR_MAX_FRAMES][EGIS_IMG_SIZE];
+  EmFrame frames[EGIS_CR_MAX_FRAMES];
+  EmFrame scratch;
 } CrEnrol;                                         /* ~479 KB */
 
 /* One matcher instance: everything the adapter remembers between calls.
  * Allocated by egis_engine_new(), owned by the driver's device instance. */
-struct EgisEngine {
-    CrEnrol  enrol;
-    CrEntry  gallery[EGIS_CR_MAX_GALLERY];
-    int      gallery_n;
-    EmFrame  probe;                                /* scratch for verify/identify */
+struct EgisEngine
+{
+  CrEnrol enrol;
+  CrEntry gallery[EGIS_CR_MAX_GALLERY];
+  int     gallery_n;
+  EmFrame probe;                                   /* scratch for verify/identify */
 };
 
 /* ---- helpers -------------------------------------------------------------- */
@@ -303,52 +306,55 @@ struct EgisEngine {
 static void
 gallery_free (EgisEngine *e)
 {
-    for (int i = 0; i < EGIS_CR_MAX_GALLERY; i++) {
-        free (e->gallery[i].frames);
-        e->gallery[i].frames = NULL;
-        e->gallery[i].nframes = 0;
+  for (int i = 0; i < EGIS_CR_MAX_GALLERY; i++)
+    {
+      free (e->gallery[i].frames);
+      e->gallery[i].frames = NULL;
+      e->gallery[i].nframes = 0;
     }
-    e->gallery_n = 0;
+  e->gallery_n = 0;
 }
 
 static int
 ncc_to_score (double ncc)
 {
-    if (ncc < 0.0)
-        return -1;                                 /* sentinel / no overlap */
-    return (int) lround (ncc * ((double) EGIS_THRESHOLD / EGIS_CR_ACCEPT_NCC));
+  if (ncc < 0.0)
+    return -1;                                     /* sentinel / no overlap */
+  return (int) lround (ncc * ((double) EGIS_THRESHOLD / EGIS_CR_ACCEPT_NCC));
 }
 
 /* best-of-N over one gallery entry; -1 if nothing could be scored */
 static int
 score_entry (const EmFrame *p, const CrEntry *e, int stop_at_accept)
 {
-    double best = -1.0;
-    for (int i = 0; i < e->nframes; i++) {
-        /* template first, probe second: tsteppy's em_match is symmetric, but
-         * a front-end that resamples the probe (rotation search) is not, and
-         * this is the order the accuracy kit measures. */
-        double s = em_match (&e->frames[i], p);
-        if (s > best)
-            best = s;
-        /* verify only needs "over the threshold or not", so it stops at the
-         * first template frame that clears it: a genuine press then costs one
-         * to a few em_match calls instead of all twelve. identify keeps the
-         * full maximum, because it ranks prints against each other. */
-        if (stop_at_accept && best >= EGIS_CR_ACCEPT_NCC)
-            break;
+  double best = -1.0;
+
+  for (int i = 0; i < e->nframes; i++)
+    {
+      /* template first, probe second: tsteppy's em_match is symmetric, but
+       * a front-end that resamples the probe (rotation search) is not, and
+       * this is the order the accuracy kit measures. */
+      double s = em_match (&e->frames[i], p);
+      if (s > best)
+        best = s;
+      /* verify only needs "over the threshold or not", so it stops at the
+       * first template frame that clears it: a genuine press then costs one
+       * to a few em_match calls instead of all twelve. identify keeps the
+       * full maximum, because it ranks prints against each other. */
+      if (stop_at_accept && best >= EGIS_CR_ACCEPT_NCC)
+        break;
     }
-    return ncc_to_score (best);
+  return ncc_to_score (best);
 }
 
 static int
 blob_nframes (const uint8_t *blob, int size)
 {
-    if (!blob || size <= 0 || size % EGIS_IMG_SIZE != 0)
-        return -1;
-    if (size / EGIS_IMG_SIZE > EGIS_CR_MAX_FRAMES)
-        return -1;
-    return size / EGIS_IMG_SIZE;
+  if (!blob || size <= 0 || size % EGIS_IMG_SIZE != 0)
+    return -1;
+  if (size / EGIS_IMG_SIZE > EGIS_CR_MAX_FRAMES)
+    return -1;
+  return size / EGIS_IMG_SIZE;
 }
 
 /* ---- contract ------------------------------------------------------------- */
@@ -356,209 +362,220 @@ blob_nframes (const uint8_t *blob, int size)
 EgisEngine *
 egis_engine_new (void)
 {
-    EgisEngine *e = calloc (1, sizeof (*e));       /* ~1.2 MB, once per device */
-    return e;
+  EgisEngine *e = calloc (1, sizeof (*e));         /* ~1.2 MB, once per device */
+
+  return e;
 }
 
 void
 egis_engine_free (EgisEngine *e)
 {
-    if (!e)
-        return;
-    gallery_free (e);
-    free (e);
+  if (!e)
+    return;
+  gallery_free (e);
+  free (e);
 }
 
 int
 egis_enroll_begin (EgisEngine *e)
 {
-    if (!e)
-        return -1;
-    e->enrol.active = 1;
-    e->enrol.count = 0;
-    e->enrol.steer_refusals = 0;
-    return 0;
+  if (!e)
+    return -1;
+  e->enrol.active = 1;
+  e->enrol.count = 0;
+  e->enrol.steer_refusals = 0;
+  return 0;
 }
 
 int
 egis_enroll_add (EgisEngine *e, const uint8_t *raw, int *progress)
 {
-    CrEnrol *enrol = e ? &e->enrol : NULL;
+  CrEnrol *enrol = e ? &e->enrol : NULL;
 
-    if (!enrol || !enrol->active || !raw)
-        return -1;
-    if (progress)
-        *progress = enrol->count * 100 / EGIS_CR_MAX_FRAMES;
+  if (!enrol || !enrol->active || !raw)
+    return -1;
+  if (progress)
+    *progress = enrol->count * 100 / EGIS_CR_MAX_FRAMES;
 
-    /* (a) session full: idempotent "done", nothing stored */
-    if (enrol->count >= EGIS_CR_MAX_FRAMES) {
-        if (progress)
-            *progress = 100;
-        return 2;
+  /* (a) session full: idempotent "done", nothing stored */
+  if (enrol->count >= EGIS_CR_MAX_FRAMES)
+    {
+      if (progress)
+        *progress = 100;
+      return 2;
     }
 
-    /* (b) quality gate (stricter than the probe gate, see above) */
-    em_frame_compute (raw, &enrol->scratch);
-    if (enrol->scratch.coverage < EGIS_CR_MIN_ENROL_COVERAGE)
-        return -2;
+  /* (b) quality gate (stricter than the probe gate, see above) */
+  em_frame_compute (raw, &enrol->scratch);
+  if (enrol->scratch.coverage < EGIS_CR_MIN_ENROL_COVERAGE)
+    return -2;
 
-    /* (c) same-press duplicate */
-    for (int i = 0; i < enrol->count; i++)
-        if (em_match (&enrol->frames[i], &enrol->scratch) >= EGIS_CR_REDUNDANT_NCC)
-            return 4;
+  /* (c) same-press duplicate */
+  for (int i = 0; i < enrol->count; i++)
+    if (em_match (&enrol->frames[i], &enrol->scratch) >= EGIS_CR_REDUNDANT_NCC)
+      return 4;
 
 #ifdef EGIS_CR_HAVE_MATCH_EX
-    /* (c2) same placement as a stored frame: ask for a shifted press */
-    if (enrol->count >= EGIS_CR_STEER_FROM
-        && enrol->steer_refusals < EGIS_CR_STEER_MAX_RETRY) {
-        for (int i = 0; i < enrol->count; i++) {
-            EmMatchInfo in;
-            double v = em_match_ex (&enrol->frames[i], &enrol->scratch, &in);
-            if (v >= EGIS_CR_STEER_NCC
-                && abs (in.dx) <= EGIS_CR_STEER_SHIFT
-                && abs (in.dy) <= EGIS_CR_STEER_SHIFT) {
-                enrol->steer_refusals++;
-                return 5;
+  /* (c2) same placement as a stored frame: ask for a shifted press */
+  if (enrol->count >= EGIS_CR_STEER_FROM &&
+      enrol->steer_refusals < EGIS_CR_STEER_MAX_RETRY)
+    {
+      for (int i = 0; i < enrol->count; i++)
+        {
+          EmMatchInfo in;
+          double v = em_match_ex (&enrol->frames[i], &enrol->scratch, &in);
+          if (v >= EGIS_CR_STEER_NCC &&
+              abs (in.dx) <= EGIS_CR_STEER_SHIFT &&
+              abs (in.dy) <= EGIS_CR_STEER_SHIFT)
+            {
+              enrol->steer_refusals++;
+              return 5;
             }
         }
     }
-    enrol->steer_refusals = 0;
+  enrol->steer_refusals = 0;
 #endif
 
-    /* (d) store */
-    memcpy (enrol->raw[enrol->count], raw, EGIS_IMG_SIZE);
-    enrol->frames[enrol->count] = enrol->scratch;
-    enrol->count++;
-    if (progress)
-        *progress = enrol->count * 100 / EGIS_CR_MAX_FRAMES;
-    return enrol->count >= EGIS_CR_MAX_FRAMES ? 2 : 1;
+  /* (d) store */
+  memcpy (enrol->raw[enrol->count], raw, EGIS_IMG_SIZE);
+  enrol->frames[enrol->count] = enrol->scratch;
+  enrol->count++;
+  if (progress)
+    *progress = enrol->count * 100 / EGIS_CR_MAX_FRAMES;
+  return enrol->count >= EGIS_CR_MAX_FRAMES ? 2 : 1;
 }
 
 int
 egis_enroll_finish (EgisEngine *e, uint8_t **out)
 {
-    CrEnrol *enrol = e ? &e->enrol : NULL;
+  CrEnrol *enrol = e ? &e->enrol : NULL;
 
-    if (!enrol || !enrol->active || !out)
-        return -1;
-    enrol->active = 0;
-    if (enrol->count < 1)
-        return -1;
+  if (!enrol || !enrol->active || !out)
+    return -1;
+  enrol->active = 0;
+  if (enrol->count < 1)
+    return -1;
 
-    /* The template is the stored frames, nothing else: count x EGIS_IMG_SIZE
-     * bytes. Versioning and validation of what fprintd hands back belong to
-     * the driver (it wraps this in a typed GVariant); here a blob is valid
-     * iff it is a whole number of frames, 1..EGIS_CR_MAX_FRAMES of them. */
-    int size = enrol->count * EGIS_IMG_SIZE;
-    uint8_t *blob = malloc ((size_t) size);      /* libc malloc: driver frees with free() */
-    if (!blob)
-        return -1;
-    for (int i = 0; i < enrol->count; i++)
-        memcpy (blob + i * EGIS_IMG_SIZE, enrol->raw[i], EGIS_IMG_SIZE);
+  /* The template is the stored frames, nothing else: count x EGIS_IMG_SIZE
+   * bytes. Versioning and validation of what fprintd hands back belong to
+   * the driver (it wraps this in a typed GVariant); here a blob is valid
+   * iff it is a whole number of frames, 1..EGIS_CR_MAX_FRAMES of them. */
+  int size = enrol->count * EGIS_IMG_SIZE;
+  uint8_t *blob = malloc ((size_t) size);        /* libc malloc: driver frees with free() */
+  if (!blob)
+    return -1;
+  for (int i = 0; i < enrol->count; i++)
+    memcpy (blob + i * EGIS_IMG_SIZE, enrol->raw[i], EGIS_IMG_SIZE);
 
-    enrol->count = 0;
-    *out = blob;
-    return size;
+  enrol->count = 0;
+  *out = blob;
+  return size;
 }
 
 int
 egis_gallery_load (EgisEngine *e, const uint8_t *const *blobs, const int *sizes, int n)
 {
-    if (!e)
-        return -1;
-    gallery_free (e);
-    if (!blobs || !sizes || n <= 0 || n > EGIS_CR_MAX_GALLERY)
-        return -1;
+  if (!e)
+    return -1;
+  gallery_free (e);
+  if (!blobs || !sizes || n <= 0 || n > EGIS_CR_MAX_GALLERY)
+    return -1;
 
-    /* validate everything first so a bad blob loads nothing */
-    int nframes[EGIS_CR_MAX_GALLERY];
-    for (int i = 0; i < n; i++) {
-        nframes[i] = blob_nframes (blobs[i], sizes[i]);
-        if (nframes[i] < 1)
-            return -1;
+  /* validate everything first so a bad blob loads nothing */
+  int nframes[EGIS_CR_MAX_GALLERY];
+  for (int i = 0; i < n; i++)
+    {
+      nframes[i] = blob_nframes (blobs[i], sizes[i]);
+      if (nframes[i] < 1)
+        return -1;
     }
 
-    for (int i = 0; i < n; i++) {
-        int nf = nframes[i];
-        e->gallery[i].frames = calloc ((size_t) nf, sizeof (EmFrame));
-        if (!e->gallery[i].frames) {
-            gallery_free (e);
-            return -1;
+  for (int i = 0; i < n; i++)
+    {
+      int nf = nframes[i];
+      e->gallery[i].frames = calloc ((size_t) nf, sizeof (EmFrame));
+      if (!e->gallery[i].frames)
+        {
+          gallery_free (e);
+          return -1;
         }
-        e->gallery[i].nframes = nf;
-        for (int k = 0; k < nf; k++)
-            em_frame_compute (blobs[i] + k * EGIS_IMG_SIZE, &e->gallery[i].frames[k]);
+      e->gallery[i].nframes = nf;
+      for (int k = 0; k < nf; k++)
+        em_frame_compute (blobs[i] + k * EGIS_IMG_SIZE, &e->gallery[i].frames[k]);
     }
-    e->gallery_n = n;
-    return 0;
+  e->gallery_n = n;
+  return 0;
 }
 
 int
 egis_verify (EgisEngine *e, const uint8_t *raw, int idx)
 {
-    if (!e || !raw || idx < 0 || idx >= e->gallery_n || !e->gallery[idx].frames)
-        return -1;
-    em_frame_compute (raw, &e->probe);
-    if (e->probe.coverage < EGIS_CR_MIN_COVERAGE)
-        return -1;
-    return score_entry (&e->probe, &e->gallery[idx], EGIS_CR_VERIFY_EARLY_EXIT);
+  if (!e || !raw || idx < 0 || idx >= e->gallery_n || !e->gallery[idx].frames)
+    return -1;
+  em_frame_compute (raw, &e->probe);
+  if (e->probe.coverage < EGIS_CR_MIN_COVERAGE)
+    return -1;
+  return score_entry (&e->probe, &e->gallery[idx], EGIS_CR_VERIFY_EARLY_EXIT);
 }
 
 int
 egis_gallery_capacity (EgisEngine *e)
 {
-    (void) e;
-    return EGIS_CR_MAX_GALLERY;
+  (void) e;
+  return EGIS_CR_MAX_GALLERY;
 }
 
 int
 egis_verify_raw_ok (EgisEngine *e, const uint8_t *raw_unfielded, int idx)
 {
-    double best = -1.0;
+  double best = -1.0;
 
-    if (EGIS_CR_RAW_CORROBORATE_NCC <= 0.0)
-        return 1;
-    if (!e || !raw_unfielded || idx < 0 || idx >= e->gallery_n || !e->gallery[idx].frames)
-        return 0;
-    /* The raw frame still carries the sensor's fixed pattern (that is the
-     * point: nothing has been subtracted from it, so nothing can have been
-     * painted into it). Genuine raw probes against flat-fielded templates
-     * measured NCC >= 0.79 on the reference unit; a featureless contact whose
-     * flat-fielded twin scored 0.93 through a poisoned baseline scores like a
-     * blank here. */
-    em_frame_compute (raw_unfielded, &e->probe);
-    for (int i = 0; i < e->gallery[idx].nframes; i++) {
-        double v = em_match (&e->gallery[idx].frames[i], &e->probe);
-        if (v > best)
-            best = v;
-        if (best >= EGIS_CR_RAW_CORROBORATE_NCC)
-            return 1;
-    }
+  if (EGIS_CR_RAW_CORROBORATE_NCC <= 0.0)
+    return 1;
+  if (!e || !raw_unfielded || idx < 0 || idx >= e->gallery_n || !e->gallery[idx].frames)
     return 0;
+  /* The raw frame still carries the sensor's fixed pattern (that is the
+   * point: nothing has been subtracted from it, so nothing can have been
+   * painted into it). Genuine raw probes against flat-fielded templates
+   * measured NCC >= 0.79 on the reference unit; a featureless contact whose
+   * flat-fielded twin scored 0.93 through a poisoned baseline scores like a
+   * blank here. */
+  em_frame_compute (raw_unfielded, &e->probe);
+  for (int i = 0; i < e->gallery[idx].nframes; i++)
+    {
+      double v = em_match (&e->gallery[idx].frames[i], &e->probe);
+      if (v > best)
+        best = v;
+      if (best >= EGIS_CR_RAW_CORROBORATE_NCC)
+        return 1;
+    }
+  return 0;
 }
 
 int
 egis_identify (EgisEngine *e, const uint8_t *raw, int *out_idx)
 {
-    if (out_idx)
-        *out_idx = -1;
-    if (!e || !raw || e->gallery_n <= 0)
-        return -1;
-    em_frame_compute (raw, &e->probe);
-    if (e->probe.coverage < EGIS_CR_MIN_COVERAGE)
-        return -1;
+  if (out_idx)
+    *out_idx = -1;
+  if (!e || !raw || e->gallery_n <= 0)
+    return -1;
+  em_frame_compute (raw, &e->probe);
+  if (e->probe.coverage < EGIS_CR_MIN_COVERAGE)
+    return -1;
 
-    int best = -1, besti = -1;
-    for (int i = 0; i < e->gallery_n; i++) {
-        if (!e->gallery[i].frames)
-            continue;
-        int s = score_entry (&e->probe, &e->gallery[i], 0);
-        if (s > best) {                            /* strict: ties keep lower idx */
-            best = s;
-            besti = i;
+  int best = -1, besti = -1;
+  for (int i = 0; i < e->gallery_n; i++)
+    {
+      if (!e->gallery[i].frames)
+        continue;
+      int s = score_entry (&e->probe, &e->gallery[i], 0);
+      if (s > best)                                /* strict: ties keep lower idx */
+        {
+          best = s;
+          besti = i;
         }
     }
-    if (out_idx)
-        *out_idx = (best >= EGIS_THRESHOLD) ? besti : -1;
-    return best;
+  if (out_idx)
+    *out_idx = (best >= EGIS_THRESHOLD) ? besti : -1;
+  return best;
 }

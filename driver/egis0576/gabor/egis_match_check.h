@@ -5,7 +5,7 @@
 
 #ifndef EM_FB
 #define EM_FB 4              /* period-map cell size in px (window = 3x3 cells
-                              * when EM_FQ_SMOOTH, i.e. 12x12 px every 4 px) */
+                             * when EM_FQ_SMOOTH, i.e. 12x12 px every 4 px) */
 #endif
 #define EM_FBX ((EM_W + EM_FB - 1) / EM_FB)   /* 18 */
 #define EM_FBY ((EM_H + EM_FB - 1) / EM_FB)   /* 15 */
@@ -73,7 +73,12 @@ typedef struct
 
 
 /* em_match() with the diagnostics of the winning alignment. */
-double em_match_ex (const EmFrame *a, const EmFrame *b, EmMatchInfo *info);
+double em_match_ex (const EmFrame *a,
+                    const EmFrame *b,
+                    EmMatchInfo   *info);
 
 /* block period map of one frame (in its own coordinates); returns #valid */
-int em_period_map (const double *img, const uint8_t *mask, double *pmap, double *conf);
+int em_period_map (const double  *img,
+                   const uint8_t *mask,
+                   double        *pmap,
+                   double        *conf);

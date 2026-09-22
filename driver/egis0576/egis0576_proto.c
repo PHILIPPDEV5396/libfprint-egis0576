@@ -15,14 +15,14 @@
 #include <string.h>
 
 #define EP_OUT 0x01
-#define EP_IN  0x82
-#define INTF   0
+#define EP_IN 0x82
+#define INTF 0
 
 /* Class request 9 on the interface selects the sensor's protocol mode:
  *   wValue = 0x0000  ->  enter TLS-PSK session mode (this driver never does)
  *   wValue = 0x00ff  ->  ForceResetDevice: back to plaintext, re-enumerates */
 #define MODE_REQUEST 9
-#define FORCE_RESET  0x00ff
+#define FORCE_RESET 0x00ff
 
 /* Exposure register. Init record 25 ("EGIS 63 09 0b" + 11 data bytes) is a
  * block write to registers 0x09..0x13, and four of those bytes are exactly the
@@ -43,24 +43,25 @@
  * a per-finger auto-exposure pass; we anchor instead to the reference unit's
  * well-matching level (~0x58), which is a no-op there and adaptive elsewhere. */
 #define EGIS_EXPOSURE_TARGET 0x58
-#define EGIS_CAL_ITERATIONS  6
+#define EGIS_CAL_ITERATIONS 6
 
 /* Transfer sizes and timeouts (ms). The reply timeouts are the vendor's; a
  * healthy sensor answers a register read in ~1 ms and delivers a frame in
  * ~30 ms, so a timeout only ever fires on a sensor that has stopped talking. */
-#define EGIS_REPLY_LEN       64
-#define EGIS_CHUNK           4096
-#define EGIS_OUT_TIMEOUT     3000
-#define EGIS_READ_TIMEOUT    800    /* register read reply, init record reply, frame chunk */
-#define EGIS_WRITE_TIMEOUT   300    /* register write reply, frame preamble reply */
-#define EGIS_DRAIN_TIMEOUT   30
-#define EGIS_RESET_TIMEOUT   500
-#define EGIS_DRAIN_MAX       8
-#define EGIS_READY_TRIES     10
-#define EGIS_READY_GAP_MS    50
-#define EGIS_UPLOAD_CHUNKS   8      /* payload records following the record-15 upload command */
+#define EGIS_REPLY_LEN 64
+#define EGIS_CHUNK 4096
+#define EGIS_OUT_TIMEOUT 3000
+#define EGIS_READ_TIMEOUT 800       /* register read reply, init record reply, frame chunk */
+#define EGIS_WRITE_TIMEOUT 300      /* register write reply, frame preamble reply */
+#define EGIS_DRAIN_TIMEOUT 30
+#define EGIS_RESET_TIMEOUT 500
+#define EGIS_DRAIN_MAX 8
+#define EGIS_READY_TRIES 10
+#define EGIS_READY_GAP_MS 50
+#define EGIS_UPLOAD_CHUNKS 8        /* payload records following the record-15 upload command */
 
-struct EgisDev {
+struct EgisDev
+{
   FpDevice *dev;                /* borrowed */
   int       dc_c;               /* cached reg 0x0f */
   int       dc_c_calibrated;    /* what the calibration found, or -1. Handed in by the
@@ -71,13 +72,13 @@ struct EgisDev {
 
   /* Per-machine scratch. The machines below never run concurrently except
    * calibrate, which runs frame as its sub-machine; their fields are disjoint. */
-  gboolean  stop;               /* egis_dev_request_stop: honoured like a cancel */
-  gboolean  reset_if_stuck;     /* init */
-  int       drains;
-  int       ready_tries;
-  int       record;
-  int       in_upload;
-  gboolean  in_critical;
+  gboolean    stop;             /* egis_dev_request_stop: honoured like a cancel */
+  gboolean    reset_if_stuck;   /* init */
+  int         drains;
+  int         ready_tries;
+  int         record;
+  int         in_upload;
+  gboolean    in_critical;
 
   guint8     *img;              /* frame chain */
   int         got;
@@ -85,8 +86,8 @@ struct EgisDev {
   EgisFrameCb frame_cb;
   gpointer    frame_ud;
 
-  guint8    cal_img[EGIS_IMG];  /* calibrate */
-  int       cal_lo, cal_hi, cal_mid, cal_best, cal_best_diff, cal_it;
+  guint8      cal_img[EGIS_IMG]; /* calibrate */
+  int         cal_lo, cal_hi, cal_mid, cal_best, cal_best_diff, cal_it;
 };
 
 /* ---------------------------------------------------------------- USB ---- */
@@ -137,7 +138,8 @@ typedef void (*EgisReplyCb) (EgisDev      *d,
                              gssize        n,
                              GError       *error);
 
-typedef struct {
+typedef struct
+{
   EgisDev    *d;
   gpointer    ud;
   guint       reply_timeout;    /* 0: no reply expected */
@@ -242,7 +244,7 @@ init_drain_cb (FpiUsbTransfer *t, FpDevice *dev, gpointer ud, GError *error)
 {
   EgisDev *d = ud;
   /* The n <= 0 exit (a timeout, or the 0-byte completion umockdev replays for
-   * one) is the normal end of the drain; the bound is for leftover replies. */
+  * one) is the normal end of the drain; the bound is for leftover replies. */
   gboolean more = error == NULL && t->actual_length > 0;
 
   g_clear_error (&error);
@@ -279,8 +281,8 @@ init_not_ready_fail (FpiSsm *ssm, EgisDev *d)
   fpi_ssm_mark_failed (ssm,
                        fpi_device_error_new_msg (FP_DEVICE_ERROR_PROTO,
                                                  "Sensor did not answer the readiness poll%s",
-                                                 d->reset_if_stuck
-                                                 ? " -- reset issued, retry once it re-enumerates" : ""));
+                                                 d->reset_if_stuck ?
+                                                 " -- reset issued, retry once it re-enumerates" : ""));
 }
 
 static void
@@ -292,7 +294,8 @@ init_reset_cb (FpiUsbTransfer *t, FpDevice *dev, gpointer ud, GError *error)
   init_not_ready_fail (t->ssm, ud);
 }
 
-static void init_replay_send (FpiSsm *ssm, EgisDev *d);
+static void init_replay_send (FpiSsm  *ssm,
+                              EgisDev *d);
 
 static void
 init_replay_leave (EgisDev *d)
@@ -355,9 +358,13 @@ init_replay_out_cb (FpiUsbTransfer *t, FpDevice *dev, gpointer ud, GError *error
    * the upload and wedges the sensor. Every other command gets its reply
    * consumed. */
   if (is_upload)
-    d->in_upload = EGIS_UPLOAD_CHUNKS;
+    {
+      d->in_upload = EGIS_UPLOAD_CHUNKS;
+    }
   else if (d->in_upload > 0)
-    d->in_upload--;
+    {
+      d->in_upload--;
+    }
   else if (is_cmd)
     {
       FpiUsbTransfer *in = fpi_usb_transfer_new (dev);
@@ -522,7 +529,9 @@ egis_dev_init_ssm (EgisDev *d, gboolean reset_if_stuck)
 
 /* --------------------------------------------------------------- frame ---- */
 
-static const struct { guint8 b[5]; gsize n; } FRAME_PREAMBLE[] = {
+static const struct { guint8 b[5];
+                      gsize  n;
+} FRAME_PREAMBLE[] = {
   { { 0x63, 0x2c, 0x02, 0x00, 0x57 }, 5 },
   { { 0x60, 0x2d, 0x00 },             3 },
   { { 0x62, 0x67, 0x03 },             3 },

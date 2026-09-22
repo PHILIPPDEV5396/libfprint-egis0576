@@ -81,7 +81,8 @@ void egis_dev_request_stop (EgisDev *d);
  * (docs/sensor-tuning.md §6). So this open fails, that next access takes the
  * ENODEV, and the caller gets a fresh device object from the hotplug on which
  * the open then succeeds. */
-FpiSsm *egis_dev_init_ssm (EgisDev *d, gboolean reset_if_stuck);
+FpiSsm *egis_dev_init_ssm (EgisDev *d,
+                           gboolean reset_if_stuck);
 
 /* Capture one EGIS_IMG-byte frame into @img (which must stay valid until @cb
  * ran): the per-frame trigger sequence, GetFrame, and the bytes in however
@@ -114,7 +115,8 @@ void egis_dev_frame (EgisDev    *d,
  * open's replay restores the baked value and the search is retried. The
  * caller skips it when a calibration was handed in. */
 FpiSsm *egis_dev_calibrate_ssm (EgisDev *d);
-void    egis_dev_set_calibration (EgisDev *d, int dc_c);   /* -1 = none */
+void    egis_dev_set_calibration (EgisDev *d,
+                                  int      dc_c);          /* -1 = none */
 int     egis_dev_get_calibration (EgisDev *d);              /* -1 = none */
 
 #endif
