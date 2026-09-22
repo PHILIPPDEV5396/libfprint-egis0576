@@ -13,10 +13,12 @@
  * signal-to-baseline ratio (finger/no-finger frame variance 1069/140 = 7.6x,
  * against 890/160 = 5.6x through the TLS path on the same unit).
  *
- * Everything here is asynchronous: each operation is an FpiSsm driving
- * FpiUsbTransfers on the device's main loop, handed back to the driver to start
- * (as a sub-machine of its own FpiSsm, or with a completion callback of its
- * choice). Nothing blocks, nothing runs on another thread.
+ * Everything here is asynchronous on the device's main loop: the bring-up and
+ * the exposure calibration are FpiSsm machines handed back to the driver to
+ * start (as a sub-machine of its own, or with a completion callback of its
+ * choice); a frame capture is a chain of FpiUsbTransfers with a completion
+ * callback, one at a time per EgisDev. Nothing blocks, nothing runs on
+ * another thread.
  *
  * This library is free software; you can redistribute it and/or modify it under
  * the terms of the GNU Lesser General Public License as published by the Free
@@ -41,25 +43,34 @@ void     egis_dev_free (EgisDev *d);
 /* CANCELLATION. No transfer built here is ever handed a GCancellable: aborting
  * an in-flight URB wedges this sensor at USB level until board power is cut
  * (measured, see egis0576_proto.c). Instead every machine below consults
- * fpi_device_action_is_cancelled() at its transfer-sequence boundaries and
- * fails with G_IO_ERROR_CANCELLED there. The latency of a cancel is therefore
- * one transfer SEQUENCE, not one URB: up to ~2.6 s inside a frame capture on a
- * sensor that has stopped answering (6 x 300 ms preamble reads + one 800 ms
- * frame read), ~0.3 s for the init replay on a healthy sensor, 850 ms per
- * readiness-poll iteration. */
+ * fpi_device_action_is_cancelled() -- and the stop request below -- at its
+ * transfer-sequence boundaries and fails with G_IO_ERROR_CANCELLED there. The
+ * latency of a cancel is therefore one transfer SEQUENCE, not one URB: up to
+ * ~2.6 s inside a frame capture on a sensor that has stopped answering (6 x
+ * 300 ms preamble reads + one 800 ms frame read), ~0.3 s for the init replay
+ * on a healthy sensor, 850 ms per readiness-poll iteration. */
+
+/* Ask the running init machine to stop at its next boundary as if the action
+ * had been cancelled (it fails with G_IO_ERROR_CANCELLED there). For the
+ * driver's suspend: libfprint keeps the action's cancellable, so a park has
+ * to be requested another way. Cleared when the next machine starts. */
+void egis_dev_request_stop (EgisDev *d);
 
 /* Bring the sensor up: drain the IN endpoint, poll it ready (the vendor's
  * check_and_recovery), replay the vendor init/calibration sequence, then
  * re-apply the calibrated exposure if one is known. ~0.3 s on a healthy sensor.
  *
- * The replay is one unit under fpi_device_critical_enter()/leave(): a cancel is
- * honoured before its first record and after its last, never in between, and
- * libfprint defers the suspend vfunc for its duration. Stopping half-way would
- * leave the sensor with a prefix of the vendor sequence, a state nobody has
- * tested it in. A sensor that stops answering mid-replay costs every remaining
- * reply read its 800 ms timeout (~19 s worst case) before either is honoured;
- * a sleep request then outlasts logind's default delay and the machine goes
- * down with the replay unfinished, which the re-init flag repairs on resume.
+ * The replay is one unit under fpi_device_critical_enter()/leave(): while the
+ * sensor keeps answering, a cancel or stop is honoured before its first
+ * record and after its last, never in between, and libfprint defers the
+ * suspend vfunc for its duration. Stopping a sensor that is answering
+ * half-way would leave it with a prefix of the vendor sequence, a state nobody
+ * has tested it in. A sensor that has stopped answering is a different matter:
+ * once a record's reply times out, a pending cancel or stop is honoured right
+ * there (the sensor is off its sequence already, and the next bring-up starts
+ * over), so a stop is never more than one reply timeout plus one command away
+ * -- under the 5 s logind gives a sleep delay -- instead of the ~19 s that
+ * feeding every remaining record into the void would cost.
  *
  * Fails with FP_DEVICE_ERROR_PROTO if the sensor does not answer the
  * readiness poll. The one case that happens in practice is a sensor left in
@@ -79,7 +90,9 @@ FpiSsm *egis_dev_init_ssm (EgisDev *d, gboolean reset_if_stuck);
  * each. @cb gets NULL, or the error (transfer full): FP_DEVICE_ERROR_PROTO
  * for a short or missing frame, the gusb error for a command the sensor did
  * not accept. The sequence arms the sensor for a frame and runs to its end;
- * the caller checks for a cancel before starting it. */
+ * the caller checks for a cancel before starting it. One frame at a time:
+ * starting another before @cb ran is a programming error (refused, @cb never
+ * called). */
 typedef void (*EgisFrameCb) (FpDevice *dev,
                              gpointer  user_data,
                              GError   *error);

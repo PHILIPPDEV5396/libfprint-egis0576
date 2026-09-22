@@ -100,12 +100,23 @@ Two things, both real but both narrower than earlier versions of this doc claime
    genuinely in flight), every USB read is now bounded, so `getframe`/the
    handshake fail fast to a clean error instead of spinning forever. **This is
    what removed the original hard freeze.** Keep it.
-2. **`suspend`/`resume` vfuncs** that flag the sensor as needing re-initialisation
-   (`needs_reinit`) and cancel an
-   in-flight action. These only run when an action is *active at the instant of
-   suspend* — which, in the real GNOME lock-screen flow, is usually **not** the
-   case (fprintd has already gone idle and closed the device). So they are a minor
-   defensive measure, not the mechanism that makes fingerprint-after-resume work.
+2. **`suspend`/`resume` vfuncs** that keep a running action alive across the
+   sleep, the way libfprint's `fpi_device_suspend_complete()` contract asks for
+   (since v0.5.0; v0.4.x cancelled the action instead, egismoc-style). On
+   suspend the capture machine parks at its next transfer boundary — nothing in
+   flight, nothing scheduled — and only then is the suspend completed, so
+   fprintd releases its sleep inhibitor with a quiet bus; a re-init that is in
+   flight stops at its own boundaries too, so the park never waits out a
+   readiness poll. On resume the machine goes back to its loop head, re-runs the
+   sensor bring-up (the sensor does not come back from s2idle initialised) and
+   continues the same verify. Measured on the reference unit (2026-09-22, sleep
+   hook disabled, `fprintd-verify` running): parked 1.5 s before the kernel's
+   `PM: suspend entry`, resumed, re-initialised, the same verify matched on the
+   first press after waking. These vfuncs only run when an action is *active at
+   the instant of suspend* — which, in the real GNOME lock-screen flow, is
+   usually **not** the case (fprintd has already gone idle and closed the
+   device). So they make the driver correct, not the lock screen work; that is
+   the hook's job.
 
 ## Why there is no pure in-driver fix (the dead ends)
 
@@ -200,9 +211,10 @@ one-time migration cost, not part of normal operation.
 
 ## Bottom line
 
-- **Keep the hook + udev rule** ([`integration/`](../integration/)). They are the
-  correct, standard fix for a real upstream bug, not a workaround for a driver
-  shortcoming.
+- **Keep the hook and its fprintd gate** ([`integration/`](../integration/)).
+  They are the correct, standard fix for a real upstream bug, not a workaround
+  for a driver shortcoming. (The udev rule is gone since v0.5.0: USB autosuspend
+  stays at libfprint's default, validated.)
 - The per-read timeout in the driver (every bulk read in `egis0576_proto.c` is
   bounded) prevents the hard freeze.
 - If gnome-shell/fprintd ever fix the claim-across-suspend bug upstream, the hook

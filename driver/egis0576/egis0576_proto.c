@@ -71,6 +71,7 @@ struct EgisDev {
 
   /* Per-machine scratch. The machines below never run concurrently except
    * calibrate, which runs frame as its sub-machine; their fields are disjoint. */
+  gboolean  stop;               /* egis_dev_request_stop: honoured like a cancel */
   gboolean  reset_if_stuck;     /* init */
   int       drains;
   int       ready_tries;
@@ -104,11 +105,12 @@ struct EgisDev {
  * fpi_device_critical_enter() does not shield, only the vfuncs -- is never
  * given to a transfer. */
 
-/* Fail @ssm with G_IO_ERROR_CANCELLED iff the current action was cancelled. */
+/* Fail @ssm with G_IO_ERROR_CANCELLED iff the current action was cancelled or
+ * a stop was requested. */
 static gboolean
-egis_check_cancelled (FpiSsm *ssm, FpDevice *dev)
+egis_check_cancelled (FpiSsm *ssm, EgisDev *d)
 {
-  if (!fpi_device_action_is_cancelled (dev))
+  if (!d->stop && !fpi_device_action_is_cancelled (d->dev))
     return FALSE;
   fpi_ssm_mark_failed (ssm, g_error_new_literal (G_IO_ERROR, G_IO_ERROR_CANCELLED,
                                                  "cancelled"));
@@ -315,8 +317,20 @@ init_replay_advance (FpiSsm *ssm, EgisDev *d)
 static void
 init_replay_in_cb (FpiUsbTransfer *t, FpDevice *dev, gpointer ud, GError *error)
 {
-  g_clear_error (&error);                    /* the SIGE reply is consumed, not read */
-  init_replay_advance (t->ssm, ud);
+  EgisDev *d = ud;
+  gboolean silent = error != NULL;           /* the reply is consumed, not read; a
+                                              * timeout means the sensor is off its
+                                              * sequence (header) */
+
+  g_clear_error (&error);
+  if (silent && (d->stop || fpi_device_action_is_cancelled (dev)))
+    {
+      init_replay_leave (d);
+      fpi_ssm_mark_failed (t->ssm, g_error_new_literal (G_IO_ERROR, G_IO_ERROR_CANCELLED,
+                                                        "cancelled"));
+      return;
+    }
+  init_replay_advance (t->ssm, d);
 }
 
 static void
@@ -431,7 +445,7 @@ init_run_state (FpiSsm *ssm, FpDevice *dev)
        * sensor) are pointless -- stop at this boundary. Failing here also
        * keeps a cancel from firing the ForceReset below: taking the device
        * off the bus is not what a cancel asked for. */
-      if (egis_check_cancelled (ssm, dev))
+      if (egis_check_cancelled (ssm, d))
         break;
       egis_readreg (d, ssm, 0x00, init_ready_cb);
       break;
@@ -439,7 +453,7 @@ init_run_state (FpiSsm *ssm, FpDevice *dev)
     case INIT_NOT_READY:
       /* A cancel that landed during the last poll is honoured here, so the
        * ForceReset is never issued for a cancelled action. */
-      if (egis_check_cancelled (ssm, dev))
+      if (egis_check_cancelled (ssm, d))
         break;
       if (d->reset_if_stuck)
         {
@@ -464,7 +478,7 @@ init_run_state (FpiSsm *ssm, FpDevice *dev)
        * has libfprint hold back suspend for its duration (~0.3 s on a healthy
        * sensor). Stopping half-way would leave the sensor with a prefix of the
        * vendor sequence, a state nobody has tested it in. */
-      if (egis_check_cancelled (ssm, dev))
+      if (egis_check_cancelled (ssm, d))
         break;
       fpi_device_critical_enter (dev);
       d->in_critical = TRUE;
@@ -477,7 +491,7 @@ init_run_state (FpiSsm *ssm, FpDevice *dev)
       /* The sensor is fully initialised here; a cancel that landed during the
        * replay is honoured now, before the cache read (800 ms on a silent
        * sensor). */
-      if (egis_check_cancelled (ssm, dev))
+      if (egis_check_cancelled (ssm, d))
         break;
       egis_readreg (d, ssm, REG_DC_C, init_dc_c_cb);
       break;
@@ -498,6 +512,7 @@ egis_dev_init_ssm (EgisDev *d, gboolean reset_if_stuck)
                                   INIT_NUM_STATES, "init");
 
   d->reset_if_stuck = reset_if_stuck;
+  d->stop = FALSE;
   d->drains = 0;
   d->ready_tries = 0;
   d->in_critical = FALSE;
@@ -673,7 +688,7 @@ cal_run_state (FpiSsm *ssm, FpDevice *dev)
       /* A capture failure fails the search, leaving reg 0x0f at the last
        * value tried and the calibration unset (header); so does a cancelled
        * open, checked here because the frame chain does not. */
-      if (egis_check_cancelled (ssm, dev))
+      if (egis_check_cancelled (ssm, d))
         break;
       egis_dev_frame (d, d->cal_img, cal_frame_cb, ssm);
       break;
@@ -718,6 +733,7 @@ egis_dev_calibrate_ssm (EgisDev *d)
   FpiSsm *ssm = fpi_ssm_new_full (d->dev, cal_run_state, CAL_NUM_STATES,
                                   CAL_NUM_STATES, "calibrate");
 
+  d->stop = FALSE;
   d->cal_lo = 0;
   d->cal_hi = 0x3f;
   d->cal_best = 0x1f;
@@ -725,6 +741,12 @@ egis_dev_calibrate_ssm (EgisDev *d)
   d->cal_it = 0;
   fpi_ssm_set_data (ssm, d, NULL);
   return ssm;
+}
+
+void
+egis_dev_request_stop (EgisDev *d)
+{
+  d->stop = TRUE;
 }
 
 void

@@ -458,6 +458,8 @@ capture_next (FpDeviceEgis0576 *self, FpiSsm *ssm)
 /* At a transfer boundary with a suspend pending: park the machine (it stays
  * in its state, nothing in flight, nothing scheduled) and complete the
  * suspend now that the bus is quiet. TRUE iff parked. */
+static void capture_press_reset (FpDeviceEgis0576 *self);
+
 static gboolean
 capture_park_if_suspending (FpDeviceEgis0576 *self, FpiSsm *ssm)
 {
@@ -465,9 +467,29 @@ capture_park_if_suspending (FpDeviceEgis0576 *self, FpiSsm *ssm)
     return FALSE;
   self->suspending = FALSE;
   self->parked = TRUE;
+  /* Whatever press was in progress is over by the time we resume; without
+   * this the first frame after resume would report its stale scores as a
+   * lift ("no match" for a press nobody made after waking). */
+  capture_press_reset (self);
   fp_dbg ("parked for suspend in state %d", fpi_ssm_get_cur_state (ssm));
   fpi_device_suspend_complete (FP_DEVICE (self), NULL);
   return TRUE;
+}
+
+static void report_finger (FpDeviceEgis0576 *self, gboolean present);
+
+/* Forget the press in progress (its scores, candidate, settle count and the
+ * PRESENT status). The enrol phase is left alone: PH_AWAIT_OFF flips on the
+ * first no-finger frame, and a finger still resting on the sensor is not a
+ * new press. */
+static void
+capture_press_reset (FpDeviceEgis0576 *self)
+{
+  self->saw_finger = FALSE;
+  self->cand_valid = FALSE;
+  self->best_score = -1;
+  self->settle_tries = 0;
+  report_finger (self, FALSE);
 }
 
 static void
@@ -510,7 +532,16 @@ reinit_done (FpiSsm *init, FpDevice *dev, GError *error)
   if (error)
     {
       /* Left flagged: the next capture re-initialises eagerly rather than
-       * capturing into a dead pipeline. A cancel is reported as such. */
+       * capturing into a dead pipeline. A stop requested for a suspend parks
+       * (the bring-up is redone after resume); a cancel is reported as
+       * such. */
+      if (self->suspending && !fpi_device_action_is_cancelled (dev) &&
+          g_error_matches (error, G_IO_ERROR, G_IO_ERROR_CANCELLED))
+        {
+          g_error_free (error);
+          capture_park_if_suspending (self, self->ssm);
+          return;
+        }
       capture_fail (self, error);
       return;
     }
@@ -992,13 +1023,18 @@ open_calibrate_done (FpiSsm *cal, FpDevice *dev, GError *error)
       open_fail (dev, error);
       return;
     }
+  self->needs_reinit = FALSE;
   if (error)
     {
+      /* The search stopped with reg 0x0f at whatever midpoint it had just
+       * tried, which on this sensor can be a saturating value: have the next
+       * action replay the bring-up first, whose record 25 restores the baked
+       * exposure (nothing is re-applied while the calibration is unset). */
       fp_dbg ("exposure calibration skipped: %s", error->message);
       g_error_free (error);
+      self->needs_reinit = TRUE;
     }
   self->dc_c_calibrated = egis_dev_get_calibration (self->sensor);
-  self->needs_reinit = FALSE;
   fpi_device_open_complete (dev, NULL);
 }
 
@@ -1171,11 +1207,41 @@ egis0576_suspend (FpDevice *dev)
 {
   FpDeviceEgis0576 *self = FPI_DEVICE_EGIS0576 (dev);
 
-  fp_dbg ("suspend: parking the capture at its next transfer boundary");
   /* The sensor does not come back from s2idle usable (it stays powered, but
    * the capture pipeline is wedged): re-run the vendor bring-up first. */
   self->needs_reinit = TRUE;
+  /* No capture machine: the action has already ended in the driver's view
+   * (its completion is queued in an idle libfprint has not run yet) or it
+   * never started one. Nothing of ours is on the bus; complete now. */
+  if (!self->ssm)
+    {
+      fp_dbg ("suspend: no capture running");
+      fpi_device_suspend_complete (dev, NULL);
+      return;
+    }
+  fp_dbg ("suspend: parking the capture at its next transfer boundary");
   self->suspending = TRUE;
+  /* An init machine in flight (a re-init) stops at its next boundary too, so
+   * the park never waits out a readiness poll (8.5 s) or a silent replay:
+   * logind gives a sleep delay 5 s. */
+  egis_dev_request_stop (self->sensor);
+}
+
+/* The device left the bus. A capture with a transfer in flight fails on its
+ * own; one parked for suspend has nothing in flight and no resume coming
+ * (libfprint refuses resume on a removed device), so it is ended here, with
+ * no USB. */
+static void
+egis0576_removed (FpDeviceEgis0576 *self)
+{
+  gboolean removed = FALSE;
+
+  g_object_get (self, "removed", &removed, NULL);
+  if (!removed || !self->parked)
+    return;
+  fp_dbg ("removed while parked for suspend");
+  self->parked = FALSE;
+  fpi_ssm_mark_failed (self->ssm, fpi_device_error_new (FP_DEVICE_ERROR_REMOVED));
 }
 
 static void
@@ -1206,6 +1272,7 @@ static void
 fpi_device_egis0576_init (FpDeviceEgis0576 *self)
 {
   self->dc_c_calibrated = -1;
+  g_signal_connect (self, "notify::removed", G_CALLBACK (egis0576_removed), NULL);
 }
 
 static void
