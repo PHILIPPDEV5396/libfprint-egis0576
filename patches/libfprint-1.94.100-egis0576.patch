@@ -23,7 +23,7 @@ index dcf2d11..05c5ab8 100644
  usb:v1C7Ap057E*
  usb:v1C7Ap05A5*
 diff --git a/libfprint/meson.build b/libfprint/meson.build
-index f11533c..8d47a2a 100644
+index f11533c..f5eb083 100644
 --- a/libfprint/meson.build
 +++ b/libfprint/meson.build
 @@ -116,6 +116,12 @@ driver_sources = {
@@ -39,7 +39,7 @@ index f11533c..8d47a2a 100644
      'egismoc' : files('drivers/egismoc/egismoc.c'),
      'egis_etu905' : files('drivers/egismoc/egis_etu905.c'),
      'vfs0050' : files('drivers/vfs0050.c'),
-@@ -250,13 +256,73 @@ libfprint_private = static_library('fprint-private',
+@@ -250,11 +256,71 @@ libfprint_private = static_library('fprint-private',
      link_with: libnbis,
      install: false)
  
@@ -101,6 +101,8 @@ index f11533c..8d47a2a 100644
 +            dependencies: [ mathlib_dep ],
 +            install: false) ]
 +    endif
++endif
++
  libfprint_drivers = static_library('fprint-drivers',
      sources: drivers_sources,
      c_args: drivers_cflags,
@@ -109,11 +111,7 @@ index f11533c..8d47a2a 100644
 +    link_with: [libfprint_private] + egis0576_engine_libs,
      install: false)
  
-+endif
-+
  mapfile = files('libfprint.ver')[0]
- if meson.version().version_compare('>=1.4')
-     mapfile_path = mapfile.full_path()
 diff --git a/meson.build b/meson.build
 index ab09dc1..a51abd5 100644
 --- a/meson.build
