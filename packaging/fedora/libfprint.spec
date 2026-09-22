@@ -10,7 +10,7 @@
 # (Up to 1.94.10 that was not the case, and this directory carried a separately
 # rebased patch for Fedora's own tree; it is gone with the rebase.)
 
-%global egis_tag v0.5.0
+%global egis_tag v0.5.1
 
 # Matcher flavour. Default: the shipped clean-room matcher (gabor) -- own
 # LGPL code, no vendor matcher, the flavour that goes upstream and the one
@@ -166,6 +166,24 @@ install -Dm 0644 "$egisdir/integration/egis0576-fprintd-wait.conf" \
 %{_datadir}/installed-tests/libfprint-2/
 
 %changelog
+* Tue Sep 22 2026 PHILIPPDEV5396 - 1.94.100-99.egis12
+- Update egis0576 driver to v0.5.1 -- v0.5.0 with its release build fixed.
+  v0.5.0 was tagged and its packages failed to build; nothing was published
+  under it. Two faults, both introduced by v0.5.0 itself and neither in the
+  driver:
+  * The release workflow asserted "at least five strings containing
+    egis0576 in the installed library". v0.5.0 shortened the state-machine
+    names and the count fell to four, failing a release whose library was
+    correct. It now asserts on strings the driver must contain by
+    construction: the GObject type name, the registered full_name and the
+    transport's path.
+  * The Ubuntu TOD module failed to link: the driver calls libfprint's
+    internal fpi_device_emulation_mode_enabled(), which the in-tree build
+    has and libfprint-2-tod-1 on Ubuntu 24.04 does not export. The module
+    now supplies that symbol itself (packaging/ubuntu-tod/tod-entry.c), so
+    the driver source stays byte-identical to the one submitted upstream.
+- No driver change against v0.5.0.
+
 * Tue Sep 22 2026 PHILIPPDEV5396 - 1.94.100-99.egis11
 - Update egis0576 driver to v0.5.0 -- the upstream-ready release.
   * The driver is asynchronous: no capture thread and no private

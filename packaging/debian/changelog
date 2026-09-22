@@ -1,3 +1,15 @@
+libfprint-egis0576 (1:1.94.100-99egis0.5.1) UNRELEASED; urgency=medium
+
+  * v0.5.0 with its release build fixed; no driver change. v0.5.0's
+    packages failed to build and nothing was published under that tag.
+  * The TOD module now supplies fpi_device_emulation_mode_enabled itself:
+    the driver calls it as an in-tree driver may, and libfprint-2-tod-1 on
+    Ubuntu 24.04 does not export it, so the module failed to link. Keeping
+    the answer in the module leaves driver/egis0576.c byte-identical to the
+    file submitted to libfprint.
+
+ -- PHILIPPDEV5396 <philipp2861@gmail.com>  Tue, 22 Sep 2026 22:40:00 +0200
+
 libfprint-egis0576 (1:1.94.100-99egis0.5.0) UNRELEASED; urgency=medium
 
   * Driver v0.5.0, the upstream-ready release: asynchronous I/O (FpiSsm

@@ -1,3 +1,12 @@
+libfprint-egis0576-tod (0.5.1) UNRELEASED; urgency=medium
+
+  * v0.5.0 with its release build fixed; no driver change.
+  * tod-entry.c supplies fpi_device_emulation_mode_enabled, which this ABI
+    does not export and the driver calls; without it the module did not
+    link. The driver source stays the one submitted upstream.
+
+ -- PHILIPPDEV5396 <philipp2861@gmail.com>  Tue, 22 Sep 2026 22:40:00 +0200
+
 libfprint-egis0576-tod (0.5.0) UNRELEASED; urgency=medium
 
   * Driver v0.5.0, the upstream-ready release: asynchronous I/O, suspend

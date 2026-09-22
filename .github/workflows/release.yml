@@ -206,15 +206,20 @@ jobs:
           }
 
           echo "== egis0576 driver compiled into the installed library =="
-          # A driver name string could appear from an unrelated source string
-          # table, so require several distinct egis0576 symbol names, not one
-          # substring match.
-          hits=$(strings "$soname_target" | grep -c 'egis0576' || true)
-          test "$hits" -ge 5 || {
-            echo "FAIL: only $hits egis0576 references in the installed .so, expected several"; exit 1;
-          }
+          # Assert on strings the driver must contain by construction -- its
+          # GObject type name and the full_name it registers -- rather than on
+          # a count of "egis0576" substrings. The count was 5+ only because of
+          # debug strings that happened to carry the driver name; v0.5.0
+          # shortened the state-machine names and it fell to 4, failing a
+          # release whose library was perfectly correct.
           strings "$soname_target" | grep -q '^FpDeviceEgis0576$' || {
             echo "FAIL: FpDeviceEgis0576 type name not found in the installed .so"; exit 1;
+          }
+          strings "$soname_target" | grep -q 'Egis Technology Inc. (aka. LighTuning) EH576' || {
+            echo "FAIL: the egis0576 driver full_name is not in the installed .so"; exit 1;
+          }
+          strings "$soname_target" | grep -q 'drivers/egis0576/egis0576_proto.c' || {
+            echo "FAIL: the egis0576 transport is not in the installed .so"; exit 1;
           }
 
           echo "== systemd-sleep hook =="
@@ -336,9 +341,13 @@ jobs:
           }
 
           echo "== egis0576 driver compiled into the installed library =="
-          hits=$(strings "$soname_target" | grep -c 'egis0576' || true)
-          test "$hits" -ge 5 || {
-            echo "FAIL: only $hits egis0576 references in the installed .so, expected several"; exit 1;
+          # Strings the driver must contain by construction; a count of
+          # "egis0576" substrings is not one (see the Fedora job).
+          strings "$soname_target" | grep -q 'Egis Technology Inc. (aka. LighTuning) EH576' || {
+            echo "FAIL: the egis0576 driver full_name is not in the installed .so"; exit 1;
+          }
+          strings "$soname_target" | grep -q 'drivers/egis0576/egis0576_proto.c' || {
+            echo "FAIL: the egis0576 transport is not in the installed .so"; exit 1;
           }
           strings "$soname_target" | grep -q '^FpDeviceEgis0576$' || {
             echo "FAIL: FpDeviceEgis0576 type name not found in the installed .so"; exit 1;
@@ -451,15 +460,16 @@ jobs:
           # match was found. Confirmed while proving this leg locally.
           lib_strings=$(strings "$soname_target")
 
-          # A driver name string could appear from an unrelated source string
-          # table, so require several distinct egis0576 symbol names, not one
-          # substring match.
-          hits=$(grep -c 'egis0576' <<<"$lib_strings" || true)
-          test "$hits" -ge 5 || {
-            echo "FAIL: only $hits egis0576 references in the installed .so, expected several"; exit 1;
-          }
+          # Strings the driver must contain by construction; a count of
+          # "egis0576" substrings is not one (see the Fedora job).
           grep -q '^FpDeviceEgis0576$' <<<"$lib_strings" || {
             echo "FAIL: FpDeviceEgis0576 type name not found in the installed .so"; exit 1;
+          }
+          grep -q 'Egis Technology Inc. (aka. LighTuning) EH576' <<<"$lib_strings" || {
+            echo "FAIL: the egis0576 driver full_name is not in the installed .so"; exit 1;
+          }
+          grep -q 'drivers/egis0576/egis0576_proto.c' <<<"$lib_strings" || {
+            echo "FAIL: the egis0576 transport is not in the installed .so"; exit 1;
           }
 
           echo "== systemd-sleep hook =="

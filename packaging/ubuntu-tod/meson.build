@@ -85,6 +85,11 @@ shared_library('fprint-tod-egis0576',
     driver_root / 'egis0576' / 'egis0576_proto.c',
     'tod-entry.c',
   ],
+  # driver/egis0576.c is byte-identical to the file submitted to libfprint,
+  # so it calls libfprint's internal API as an in-tree driver may. One of
+  # those calls is not exported by libfprint-2-tod-1 on Ubuntu 24.04;
+  # tod-entry.c supplies it for the module rather than the driver being
+  # patched for the TOD build. See the comment there.
   include_directories: include_directories(driver_root, driver_root / 'egis0576'),
   link_with: egis0576_engine,
   # libfprint-2 (not just libfprint-2-tod-1) is a genuine link dependency:
