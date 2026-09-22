@@ -51,6 +51,15 @@ probe is looking for:
   every time. Measured on one candidate: 12 enrolment frames that correlated
   0.16–0.67 *with each other*, against 0.82–0.97 for a finger.
 
+- **a measurable ridge period** — the probe prints, per press, how many of
+  the 270 blocks the ridge-period estimator could measure and where those
+  periods sit in the 3.5–9.5 px window it can see (0.27–0.74 mm). A texture
+  outside that window leaves the estimator nothing, the check then has no
+  blocks to compare, and the driver rejects every pair however well the
+  presses correlate. Measured on one otherwise perfect candidate: coverage
+  0.63, presses correlating at **0.947**, and **2 of 270 blocks**, all pinned
+  at 3.5 px — its grooves were finer than 0.27 mm. Aim for the sensor's own
+  ridge period, about **0.5 mm**.
 - **no rejections by the period check** — the driver rejects a pair whose
   ridge periods are not consistent with the template's. That is the
   anti-spoofing check, and it fires on two kinds of object: one whose texture

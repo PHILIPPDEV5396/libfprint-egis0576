@@ -108,6 +108,19 @@ typedef struct
 #ifndef EM_FQ_ENABLE
 #define EM_FQ_ENABLE 1
 #endif
+/* The window of ridge periods the block estimator can measure at all, in
+ * pixels of lag: a texture finer than EM_FQ_K0 or coarser than EM_FQ_K1 has
+ * its blocks pinned against an edge or dropped, so nblk collapses however
+ * good the correlation is. Here so that a caller can report the window --
+ * the driver's own ridge period is 6.4 px, comfortably inside it, but a
+ * non-finger object often is not (tools/upstream/objcheck.c). */
+#ifndef EM_FQ_K0
+#define EM_FQ_K0 3.5
+#endif
+#ifndef EM_FQ_K1
+#define EM_FQ_K1 9.5
+#endif
+#define EM_FQ_NK ((int) ((EM_FQ_K1 - EM_FQ_K0) / 0.5 + 1.5))   /* 12 */
 #ifndef EM_FQ_MIN_NBLK
 #define EM_FQ_MIN_NBLK 12
 #endif

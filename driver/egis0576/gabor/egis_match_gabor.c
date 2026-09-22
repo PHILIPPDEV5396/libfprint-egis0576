@@ -919,13 +919,6 @@ eg_match_core (const EmFrame *a, const EmFrame *b, int *odx, int *ody, int *orot
  * accepted. Identical results, verified on 32400 pairs of real frames.
  */
 
-#ifndef EM_FQ_K0
-#define EM_FQ_K0 3.5      /* lag range of the block autocorrelation */
-#endif
-#ifndef EM_FQ_K1
-#define EM_FQ_K1 9.5
-#endif
-#define EM_FQ_NK ((int) ((EM_FQ_K1 - EM_FQ_K0) / 0.5 + 1.5))   /* 12 */
 #ifndef EM_FQ_HARM
 #define EM_FQ_HARM 0.6
 #endif

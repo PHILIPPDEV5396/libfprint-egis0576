@@ -56,6 +56,54 @@ rd (const char *p, uint8_t **out)
   return (int) (n / N);
 }
 
+/* The pixels-per-mm the driver's own measurement implies (6.4 px ridge
+ * period against a 0.5 mm human ridge spacing). Only used to print a
+ * groove size someone can act on; nothing decides on it. */
+#define PX_PER_MM 12.8
+
+/* What the ridge-period estimator makes of a frame: how many of its blocks
+ * get a period at all, and where those periods sit inside the window it can
+ * see (EM_FQ_K0..EM_FQ_K1 px). A texture finer or coarser than the window
+ * pins them against an edge and leaves almost no valid block, which is the
+ * one failure the coverage and the correlation do not show. */
+static void
+report_period (const EmFrame *f, const char *label)
+{
+  static double map[EM_NB], conf[EM_NB];
+  int nv = em_period_map (f->img, f->mask, map, conf);
+  double mn = 1e9, mx = -1e9, sum = 0;
+  int k = 0, at_lo = 0, at_hi = 0;
+
+  for (int i = 0; i < EM_NB; i++)
+    if (map[i] > 0)
+      {
+        if (map[i] < mn) mn = map[i];
+        if (map[i] > mx) mx = map[i];
+        if (map[i] <= EM_FQ_K0 + 0.01) at_lo++;
+        if (map[i] >= EM_FQ_K1 - 0.01) at_hi++;
+        sum += map[i];
+        k++;
+      }
+  printf ("%s period: %d of %d blocks have one", label, nv, EM_NB);
+  if (k == 0)
+    {
+      printf (" -- none at all: the texture is outside the %.1f-%.1f px the\n"
+              "         estimator can see (%.2f-%.2f mm grooves)\n",
+              (double) EM_FQ_K0, (double) EM_FQ_K1,
+              EM_FQ_K0 / PX_PER_MM, EM_FQ_K1 / PX_PER_MM);
+      return;
+    }
+  printf (", %.1f px mean (%.2f mm), range %.1f-%.1f px\n", sum / k, sum / k / PX_PER_MM, mn, mx);
+  if (at_lo > k / 2)
+    printf ("         -- pinned at the bottom of the %.1f-%.1f px window: this texture is\n"
+            "            TOO FINE for the sensor. Grooves need to be about %.2f mm, not less.\n",
+            (double) EM_FQ_K0, (double) EM_FQ_K1, 6.4 / PX_PER_MM);
+  else if (at_hi > k / 2)
+    printf ("         -- pinned at the top of the %.1f-%.1f px window: this texture is\n"
+            "            TOO COARSE. Grooves need to be about %.2f mm, not more.\n",
+            (double) EM_FQ_K0, (double) EM_FQ_K1, 6.4 / PX_PER_MM);
+}
+
 /* Why em_match rejected a pair whose correlation cleared the gate. */
 static const char *
 blocked_by (const EmMatchInfo *in)
@@ -117,6 +165,13 @@ main (int argc, char **argv)
           }
       }
 
+  {
+    int ba = 0, bb = 0;
+    for (int i = 1; i < na; i++) if (A[i].coverage > A[ba].coverage) ba = i;
+    for (int i = 1; i < nb; i++) if (B[i].coverage > B[bb].coverage) bb = i;
+    report_period (&A[ba], "press 1");
+    report_period (&B[bb], "press 2");
+  }
   printf ("best coverage      %.2f / %.2f   (probe gate %.2f, enrolment gate 0.60)\n",
           cov_a, cov_b, em_min_coverage);
   printf ("best correlation   %.3f          (how alike the two presses are)\n", raw_best);
@@ -134,9 +189,10 @@ main (int argc, char **argv)
   else if (raw_best >= em_match_threshold && dec_best < em_match_threshold)
     printf ("VERDICT: no -- the presses DO reproduce each other (%.3f), but the driver's\n"
             "         ridge-period check rejects them, so a verify can never succeed with\n"
-            "         this object. Its texture is too regular, or its contact area too\n"
-            "         small for the check's block count. Try a softer object with\n"
-            "         IRREGULAR grooves and a larger contact patch.\n", raw_best);
+            "         this object. The period lines above say why: a texture the\n"
+            "         estimator cannot measure (wrong groove size) leaves it no blocks\n"
+            "         to compare, and a regular grating fails the variation test.\n",
+            raw_best);
   else if (cov_a >= 0.60 && cov_b >= 0.60)
     printf ("VERDICT: not yet -- the structure is there, the presses do not reproduce each\n"
             "         other (%.3f < %.2f). Same spot, same rotation, same force, try again.\n",
