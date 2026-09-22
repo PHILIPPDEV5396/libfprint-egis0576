@@ -55,9 +55,10 @@ echo ">>> applying the meson integration patch ..."
 git apply "$PATCH"
 
 echo ">>> configuring + building (full default driver set + egis0576) ..."
-# Extra meson options, e.g. the experimental clean-room matchers:
-#   EGIS0576_MESON_ARGS="-Degis0576_matcher=cleanroom" ./install.sh   (tsteppy's)
-#   EGIS0576_MESON_ARGS="-Degis0576_matcher=gabor" ./install.sh       (Gabor front-end)
+# Extra meson options. The matcher defaults to the shipped clean-room one
+# (gabor); the two comparison flavours are:
+#   EGIS0576_MESON_ARGS="-Degis0576_matcher=vendor" ./install.sh      (Egis' own)
+#   EGIS0576_MESON_ARGS="-Degis0576_matcher=cleanroom" ./install.sh   (tsteppy's front-end)
 # (see driver/egis0576/egis_engine_cleanroom.c; switching flavours means re-enrolling)
 meson setup builddir --prefix="$PREFIX" --buildtype=release ${EGIS0576_MESON_ARGS:-}
 ninja -C builddir

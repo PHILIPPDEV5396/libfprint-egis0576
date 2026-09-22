@@ -12,16 +12,18 @@
 
 %global egis_tag v0.4.5
 
-# Matcher flavour. Default: the vendor matcher, byte-identical to before.
-#   rpmbuild --with gabor     -> -Degis0576_matcher=gabor (experimental, see
-#                                driver/egis0576/gabor/), Release gets ".gabor"
-#                                so the package is distinguishable and sorts
-#                                above the default build for the same version.
+# Matcher flavour. Default: the shipped clean-room matcher (gabor) -- own
+# LGPL code, no vendor matcher, the flavour that goes upstream and the one
+# the driver's accuracy numbers are measured on.
+#   rpmbuild --with vendor  -> -Degis0576_matcher=vendor: Egis' own matcher,
+#                              reverse-engineered from the Windows driver
+#                              (docs/matcher-comparison.md). Release gets
+#                              ".vendor" so the package is distinguishable.
 # Templates are not portable between flavours; re-enrol after switching.
-%bcond_with gabor
-%if %{with gabor}
-%global flavour_rel .gabor
-%global flavour_meson -Degis0576_matcher=gabor
+%bcond_with vendor
+%if %{with vendor}
+%global flavour_rel .vendor
+%global flavour_meson -Degis0576_matcher=vendor
 %else
 %global flavour_rel %{nil}
 %global flavour_meson %{nil}

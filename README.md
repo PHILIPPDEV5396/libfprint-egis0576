@@ -19,7 +19,7 @@ login / `sudo` / screen-unlock through PAM, on stock GNOME/KDE.
 | Enroll / verify / identify | ✅ works via `fprintd` |
 | PAM login, `sudo`, unlock | ✅ works (`sufficient`, password fallback intact) |
 | Cross-reboot matching | ✅ (per-boot flat-field) |
-| Accuracy | measured on **three units, one person each** (5 fingers × 12 presses per run, impostors = own adjacent fingers). False rejects at the shipped threshold: **0 / 60, 2 / 60 and 37 / 60 presses** — genuine acceptance is strongly run-dependent and no single figure stands for the driver. False accepts: **0 / 480 on each of the three** — no impostor comparison produced a non-zero vendor score in any run (480 comparisons per run, but only 60 distinct presses, each scored against the 8 templates not built from its own finger, so they are not 480 independent trials). ([all three runs, and what they do and do not show](docs/matcher-comparison.md)) |
+| Accuracy (shipped matcher) | **reference unit: 0 false rejects of 60 presses, 0 false accepts of 480** at the shipped threshold, populations not overlapping (genuine NCC 0.80 / 0.97 / 0.99, impostor 0.06 / 0.41 / 0.69; held-out threshold across folds gives the same). **Second unit** (its owner's own captures): **6.9 % false rejects at 1.1 % false accepts** held-out — there the populations do overlap, so the threshold is unit-dependent and one unit's 0 / 0 is not the driver's rate. "Impostor" is always the same person's other fingers: **no false-accept figure in this project comes from a second person**, and physical artefacts were never tried. The two comparison flavours, measured on identical captures, are in [docs/matcher-comparison.md](docs/matcher-comparison.md). |
 | Validated on | **four** laptop models (AMD + Intel; Fedora, Arch and Ubuntu); one of the four is a partial pass. See "Tested platforms" below. |
 
 ## The sensor, briefly
@@ -210,49 +210,42 @@ If it still points at the distro copy, add `PREFIX/lib` (or `lib64`) to
 `PREFIX=/usr` replaces the distro library outright — simplest, but a distro update
 can overwrite it, so you'd re-run `install.sh` after libfprint updates.)
 
-**Experimental — clean-room matcher.** The driver's default matcher is the
-vendor's own, machine-translated from the Windows driver, which is what keeps
-this driver out of upstream libfprint. Thaddeus Stepanovich's LGPL clean-room
-correlation matcher can be selected at build time instead, so the two can be
-compared on the same captures:
+**The matcher, and the two other flavours.** Since v0.5.0 the driver ships
+the **clean-room matcher** by default: own LGPL code — an
+orientation-selective Gabor front-end, a per-pixel coherence mask, a rotation
+search and a ridge-period consistency check
+([`driver/egis0576/gabor/`](driver/egis0576/gabor/)) behind Thaddeus
+Stepanovich's adapter interface — with no vendor code in the matching path at
+all. It is the flavour submitted to libfprint, and the one the numbers below
+are measured on: on the reference unit its genuine and impostor populations do
+not overlap (**0 % / 0 %** at its threshold, cross-fold checked — "impostor"
+means the same person's other fingers; no false-accept figure in this project
+comes from a second person yet); on a second unit, Thaddeus Stepanovich's, it
+takes his matcher from 51.7 % to **6.9 %** false rejects held-out, without
+reaching a clean gap there.
+
+Two other flavours build from the same tree, for comparison rather than use:
 
 ```bash
-EGIS0576_MESON_ARGS="-Degis0576_matcher=cleanroom" ./install.sh
+EGIS0576_MESON_ARGS="-Degis0576_matcher=vendor" ./install.sh     # Egis' own matcher
+EGIS0576_MESON_ARGS="-Degis0576_matcher=cleanroom" ./install.sh  # his original front-end
 ```
 
-Templates enrolled under one matcher are rejected by the other, so switching
-means re-enrolling. **Measured on the same captures as the vendor matcher, on
-all three accuracy-tested units**
-([`docs/matcher-comparison.md`](docs/matcher-comparison.md)): at its published
-threshold it rejects **35 %, 73.3 % and 93.3 %** of genuine presses (the vendor
-matcher on the same captures: 0 %, 3.33 %, 61.7 %), its genuine and impostor
-scores overlap on every run (EER 15 %, 35 %, 45 %), and on one of the three it
-produced the project's first measured false accepts — 5 of 480 impostor
-comparisons at or above the threshold, where the vendor matcher scored 0 on all
-480. It is not a drop-in replacement — it is the starting point for one. Details in
-[`driver/egis0576/egis_engine_cleanroom.c`](driver/egis0576/egis_engine_cleanroom.c);
-reproduce the measurement on your own unit with
-[`tools/accuracy/`](tools/accuracy/README.md).
+`vendor` is Egis' extractor and matcher, machine-translated from the Windows
+driver — what this driver used until v0.4.x, and what keeps it out of upstream
+libfprint. On the three accuracy-tested units it rejected 0 %, 3.33 % and
+61.7 % of genuine presses and scored 0 on all 480 impostor comparisons of each
+run. `cleanroom` is his original front-end behind the same adapter: at its
+published threshold it rejects 35 %, 73.3 % and 93.3 % of genuine presses on
+those same captures and produced this project's only measured false accepts
+(5 of 480 on one unit). All three are measured on identical captures in
+[`docs/matcher-comparison.md`](docs/matcher-comparison.md); reproduce on your
+own unit with [`tools/accuracy/`](tools/accuracy/README.md).
 
-**Experimental — Gabor front-end (the same adapter, a different front-end).**
-`-Degis0576_matcher=gabor` keeps his adapter and NCC and replaces what goes
-into them: an orientation-selective Gabor enhancement, a per-pixel coherence
-mask and a rotation search
-([`driver/egis0576/gabor/`](driver/egis0576/gabor/), own work, LGPL). On the
-reference unit its genuine and impostor populations do not overlap
-(**0 % / 0 %** at its own threshold, cross-fold checked — where "impostor"
-means the same person's other fingers: no false-accept figure in this
-project comes from a second person yet); on a second unit,
-Thaddeus Stepanovich's, it takes his matcher from 51.7 % to 6.9 % false rejects
-held-out, without reaching a clean gap. Since 2026-09-18 it is what the
-reference unit logs in with — the first login through this driver with no
-vendor code in the matcher (`fprintd-verify`: genuine match, other finger
-rejected at 0.71 against a threshold since raised to 0.78, ~60 ms per frame; lock screen via
-`pam_fprintd`). Fedora: `rpmbuild --with gabor` on the spec in
-[`packaging/fedora/`](packaging/fedora/). Whether it becomes the default
-clean-room flavour is decided by the units it has not seen yet
-([#5](https://github.com/PHILIPPDEV5396/libfprint-egis0576/issues/5));
-numbers and caveats in [`docs/matcher-comparison.md`](docs/matcher-comparison.md).
+**Templates do not survive a flavour switch** (nor the v0.4 → v0.5 upgrade):
+re-enrol after either. Fedora: the spec in
+[`packaging/fedora/`](packaging/fedora/) builds the default; `rpmbuild --with
+vendor` builds the vendor flavour.
 
 ## Enrolling
 

@@ -282,7 +282,7 @@ a wider or rotation-aware search, multi-frame templates scored jointly, a
 different enhancement — is now a concrete question with three datasets' worth of
 scores and a harness to answer it against.
 
-## Gabor front-end (`-Degis0576_matcher=gabor`), reference unit only
+## Gabor front-end (the shipped matcher since v0.5.0), reference unit only
 
 The third flavour keeps Thaddeus Stepanovich's adapter and masked NCC and
 replaces what is fed into it: an orientation-selective Gabor enhancement

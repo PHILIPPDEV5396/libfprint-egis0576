@@ -23,7 +23,7 @@ index dcf2d11..05c5ab8 100644
  usb:v1C7Ap057E*
  usb:v1C7Ap05A5*
 diff --git a/libfprint/meson.build b/libfprint/meson.build
-index f11533c..f5eb083 100644
+index f11533c..8e6389c 100644
 --- a/libfprint/meson.build
 +++ b/libfprint/meson.build
 @@ -116,6 +116,12 @@ driver_sources = {
@@ -39,23 +39,21 @@ index f11533c..f5eb083 100644
      'egismoc' : files('drivers/egismoc/egismoc.c'),
      'egis_etu905' : files('drivers/egismoc/egis_etu905.c'),
      'vfs0050' : files('drivers/vfs0050.c'),
-@@ -250,11 +256,71 @@ libfprint_private = static_library('fprint-private',
+@@ -250,11 +256,69 @@ libfprint_private = static_library('fprint-private',
      link_with: libnbis,
      install: false)
  
-+# The egis0576 driver's matcher is Egis' own extractor+matcher, reimplemented
-+# as native flat-memory C (reverse-engineered from the Windows driver). That
-+# translated code intentionally mixes int/pointer types and relies on exact
-+# stack layout, so it is built as a separate static library with relaxed flags
-+# instead of libfprint's strict -Werror driver build.
++# The egis0576 driver's matcher (meson option 'egis0576_matcher', default
++# 'gabor'): exactly one flavour is built into a static library the driver
++# links. 'gabor' and 'cleanroom' are LGPL clean-room C, documented in
++# drivers/egis0576/egis_engine_cleanroom.c; 'vendor' is Egis' own
++# extractor+matcher reimplemented as native flat-memory C from the Windows
++# driver, which intentionally mixes int/pointer types and relies on exact
++# stack layout, so it needs the relaxed flag set below instead of libfprint's
++# strict -Werror driver build. The USB protocol itself (egis0576_proto.c)
++# lives in the driver sources above, under the normal driver flags.
 +egis0576_engine_libs = []
 +if 'egis0576' in drivers
-+    # Host matcher flavour (meson option 'egis0576_matcher', default 'vendor').
-+    # 'cleanroom' swaps the vendor extractor/matcher for Thaddeus Stepanovich's
-+    # LGPL correlation matcher; documented in drivers/egis0576/egis_engine_cleanroom.c.
-+    # Exactly one of the two libraries is built. The USB protocol itself
-+    # (egis0576_proto.c) lives in the driver sources above, under the normal
-+    # driver flags -- only the translated vendor code needs the relaxed ones.
 +    egis0576_matcher = get_option('egis0576_matcher')
 +    if egis0576_matcher == 'vendor'
 +        egis0576_engine_libs = [ static_library('egis0576-engine',
@@ -88,8 +86,8 @@ index f11533c..f5eb083 100644
 +            dependencies: [ mathlib_dep ],
 +            install: false) ]
 +    else
-+        # The same adapter on the Gabor front-end (drivers/egis0576/gabor/),
-+        # the shipped clean-room matcher; plain C99 under the normal flags.
++        # The shipped matcher: the clean-room adapter on the Gabor front-end
++        # (drivers/egis0576/gabor/); plain C99 under the normal flags.
 +        egis0576_engine_libs = [ static_library('egis0576-gabor',
 +            sources: [
 +                'drivers/egis0576/egis_engine_cleanroom.c',
@@ -125,7 +123,7 @@ index ab09dc1..a51abd5 100644
      'synaptics': {},
      'elan': { 'endian_dependent': true },
 diff --git a/meson_options.txt b/meson_options.txt
-index 3c4cd26..defaf30 100644
+index 3c4cd26..916c037 100644
 --- a/meson_options.txt
 +++ b/meson_options.txt
 @@ -34,3 +34,9 @@ option('installed-tests',
@@ -134,7 +132,7 @@ index 3c4cd26..defaf30 100644
         value: true)
 +
 +option('egis0576_matcher',
-+       description: 'Which host matcher the egis0576 (EgisTec EH576) driver links: vendor = Egis extractor/matcher translated from the Windows driver (default, not upstreamable); cleanroom = Thaddeus Stepanovich\'s LGPL correlation matcher (egis_match.c); gabor = the same adapter on an orientation-selective front-end (gabor/egis_match_gabor.c). Re-enrol after switching: vendor templates are rejected by the other two, and cleanroom/gabor share a template format but not a score scale.',
++       description: 'Which host matcher the egis0576 (EgisTec EH576) driver links: gabor = the shipped LGPL correlation matcher, an orientation-selective front-end behind the clean-room adapter (default, and the only flavour submitted upstream); cleanroom = the same adapter on Thaddeus Stepanovich\'s original front-end (egis_match.c), kept for the comparison in docs/matcher-comparison.md; vendor = Egis\' extractor/matcher translated from the Windows driver, not upstreamable. Re-enrol after switching: vendor templates are rejected by the other two, and cleanroom/gabor share a template format but not a score scale.',
 +       type: 'combo',
-+       choices: ['vendor', 'cleanroom', 'gabor'],
-+       value: 'vendor')
++       choices: ['gabor', 'cleanroom', 'vendor'],
++       value: 'gabor')
