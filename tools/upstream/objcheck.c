@@ -27,10 +27,10 @@
  *   correlation, or -1 when the ridge-period consistency check rejects the
  *   pair as synthetic-looking.
  *
- * A pair the check rejects is reported as -1, the same value as "nothing to
- * score", so a tool that only looks at em_match cannot tell "these presses
- * do not match" from "these presses match and the check threw it away", and
- * its maximum lands just under the check's gate (0.70). Both are printed.
+ * A pair the check rejects scores EM_FQ_REJECT, well below the threshold, so
+ * a tool that only looks at em_match cannot tell "these presses do not
+ * match" from "these presses match and the check threw it away", and its
+ * maximum lands just under the check's gate (0.70). Both are printed.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -108,7 +108,7 @@ main (int argc, char **argv)
 
         if (raw > raw_best) raw_best = raw;
         if (dec > dec_best) dec_best = dec;
-        if (raw >= EM_FQ_GATE_FROM && dec < 0)
+        if (raw >= EM_FQ_GATE_FROM && dec != raw)
           {
             const char *w = blocked_by (&in);
             if (!strcmp (w, "nblk")) n_nblk++;

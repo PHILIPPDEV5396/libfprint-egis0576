@@ -75,7 +75,12 @@ int egis_gallery_load (EgisEngine           *e,
                        const uint8_t *const *blobs,
                        const int            *sizes,
                        int                   n);
-/* Score a frame against gallery entry idx; < 0 = nothing to score. */
+/* Score a frame against gallery entry idx. < 0 means the frame could not be
+ * scored at all (nothing usable in it, or a bad index), which the driver
+ * answers by asking for another press rather than counting a failed
+ * attempt; a frame that WAS compared and found not to match -- including one
+ * an engine's own plausibility checks reject -- scores low instead, and
+ * counts. */
 int egis_verify (EgisEngine    *e,
                  const uint8_t *frame,
                  int            idx);

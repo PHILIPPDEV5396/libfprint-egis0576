@@ -116,7 +116,9 @@ and angle. A ridge-period consistency check rejects generated textures whose
 period is constant (sine 0.87 → 0.70, arc 0.91 → 0.70 against real templates),
 but a period-modulated grating, a loop pattern or filtered ridge noise go
 through it at 0.80–0.90, and against an attacker who can read the score it is
-worth 0.002 NCC. This sensor offers no liveness signal, so presentation-attack
+worth 0.002 NCC. What it rejects it rejects as a non-match, which costs the
+presenter an attempt — the engine keeps "nothing to score" (which the driver
+answers with a retry) for frames it genuinely could not judge. This sensor offers no liveness signal, so presentation-attack
 detection is not available at all; the barrier is physical access plus making
 the artefact, as it is for every matcher without liveness detection. The
 numbers and the widened-grid measurement are in the out-of-tree

@@ -871,9 +871,10 @@ eg_match_core (const EmFrame *a, const EmFrame *b, int *odx, int *ody, int *orot
  * whole-frame sd 0.03-0.19) or a smooth chirp. em_match_ex() reruns the
  * search, warps the probe onto the template at the winning shift/rotation,
  * estimates the local period on a 4-px grid (12x12-px window) for both
- * frames over the overlap, and em_match() returns -1 unless the probe's
- * period varies (sd >= 0.25 px) over enough cells (>= 12) and agrees with the
- * template's (mean |dT| <= 0.5 px).
+ * frames over the overlap, and em_match() rejects the pair -- scoring it
+ * EM_FQ_REJECT, a plain non-match, NOT the "nothing to score" sentinel --
+ * unless the probe's period varies (sd >= 0.25 px) over enough cells
+ * (>= 12) and agrees with the template's (mean |dT| <= 0.5 px).
  *
  * MEASURED (reference dataset; bench.c kit protocol; verify_master.c and the
  * dictionary families of the adversarial review; own tools in the scratch
@@ -1221,7 +1222,7 @@ em_match (const EmFrame *a, const EmFrame *b)
     {
       if (in.nblk < EM_FQ_MIN_NBLK || in.mad > EM_FQ_MAX_MAD ||
           in.corr < EM_FQ_MIN_CORR)
-        return -1.0;
+        return EM_FQ_REJECT;
       /* A flat period map is what a synthetic grating has -- and also what a
        * real finger has over some of its regions: on the second reference
        * session a genuine pair at NCC 0.97 had p_spread 0.16 with the two
@@ -1233,7 +1234,7 @@ em_match (const EmFrame *a, const EmFrame *b)
           !(in.p_spread >= EM_FQ_RESCUE_PSPREAD &&
             in.corr >= EM_FQ_RESCUE_CORR &&
             in.mad <= EM_FQ_RESCUE_MAD))
-        return -1.0;
+        return EM_FQ_REJECT;
     }
 #else
   s = em_match_ex (a, b, &in);

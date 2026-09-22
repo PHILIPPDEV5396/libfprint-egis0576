@@ -61,9 +61,16 @@
  *   < 0 means "nothing to score". The NCC in [-1, 1] is scaled so that the
  *   front-end's threshold (em_match_threshold, 0.78) lands exactly on it:
  *   score = lround (ncc * 5000 / 0.78), i.e. 6410 per unit NCC; a perfect
- *   1.0 logs as 6410. -1 is returned verbatim for the front-end's overlap
- *   sentinel, a probe under the coverage gate, an empty slot or a bad index;
- *   the driver treats it as a plain non-match.
+ *   1.0 logs as 6410.
+ *
+ *   "Nothing to score" and "compared and rejected" are kept apart, because
+ *   the driver answers them differently -- the first asks the user to press
+ *   again (and fprintd restarts without spending an attempt), the second is
+ *   a failed attempt. -1 therefore means only: the front-end's overlap
+ *   sentinel, a probe under the coverage gate, an empty gallery slot, a bad
+ *   index. A pair the front-end's ridge-period check rejects scores 0 --
+ *   a non-match like any other, so an artefact that trips the check cannot
+ *   be presented over and over for free.
  *
  * TEMPLATE BYTES
  *

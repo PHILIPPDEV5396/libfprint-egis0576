@@ -421,6 +421,17 @@ cross-session presses. `tools/accuracy/evaluate.py` now reports both rules
 where that cost was hiding: the kit accepted a press on a single frame over
 the threshold, the driver needs two in a row.
 
+A rejection by the check is a **non-match**, not a "nothing to score". The
+two are different events and the driver answers them differently: a press it
+could not judge at all (too little finger on the sensor) asks the user to
+press again, and `fprintd` restarts it without spending one of the attempts,
+while a non-match costs an attempt. Until 2026-09-22 the check returned the
+"nothing to score" sentinel, so an artefact that tripped it could be
+presented again and again for free. It now scores 0. The distinction costs
+a genuine user nothing on the reference session (no press loses its accept
+to the check at all) and turns one cross-session press from a retry into a
+failed attempt.
+
 `EM_FQ_MIN_NBLK` is not a texture criterion: `nblk` is arithmetically the
 number of period blocks geometrically eligible over the overlap (correlation
 0.9996 with the eligibility count), so the clause is an overlap gate, and at

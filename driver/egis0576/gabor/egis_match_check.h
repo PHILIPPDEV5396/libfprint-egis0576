@@ -43,7 +43,23 @@ typedef struct
   double dmean;      /* mean(Tperiod) - mean(Pperiod) over common blocks   */
 } EmMatchInfo;
 
-/* Decision at the winning alignment (em_match returns -1 when it fails):
+/* What em_match returns for a pair the check REJECTS. A rejection is not the
+ * same event as "there was nothing to score": the pair was compared, it
+ * correlated well enough to reach the gate, and the ridge periods say it is
+ * not the same skin. The engine contract reserves a negative for "nothing to
+ * score", which the driver turns into a CENTER_FINGER retry that fprintd
+ * restarts without spending one of the user's attempts -- so returning -1
+ * here would have let an artefact that trips the check be presented again
+ * and again for free. A rejection therefore scores 0: below any threshold,
+ * a plain non-match, and it costs an attempt like every other non-match.
+ * (Measured genuine cost of that distinction, after EM_FQ_MIN_NBLK came down
+ * to 12: no press of the reference session loses its accept to the check, so
+ * no genuine press is turned from a retry into a failed attempt there; one
+ * cross-session press is.) */
+#define EM_FQ_REJECT 0.0
+
+/* Decision at the winning alignment (em_match returns EM_FQ_REJECT when it
+ * fails):
  *   nblk     >= EM_FQ_MIN_NBLK      enough cells with a period in BOTH frames
  *   mad      <= EM_FQ_MAX_MAD       template and probe period agree (px)
  *   p_spread >= EM_FQ_MIN_PSPREAD   the probe's period VARIES over the overlap

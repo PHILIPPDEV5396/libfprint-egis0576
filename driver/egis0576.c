@@ -835,9 +835,11 @@ capture_process (FpDeviceEgis0576 *self, FpiSsm *ssm)
     {
       /* finger lifted without a confirmed match. An unconfirmed candidate is
        * NOT a match (see cand_valid). A press that produced nothing scorable
-       * at all (every frame -1: coverage under the gate) is a placement
-       * problem, not a failed attempt -- ask for a retry instead of spending
-       * one of fprintd's tries. */
+       * at all (every frame < 0: too little of the finger on the sensor for
+       * the matcher to judge) is a placement problem, not a failed attempt
+       * -- ask for a retry instead of spending one of fprintd's tries. A
+       * frame the matcher DID judge and rejected scores low, not < 0, so a
+       * rejected press is a failed attempt like any other. */
       gboolean nothing = self->best_score < 0;
 
       if (self->cand_valid)
