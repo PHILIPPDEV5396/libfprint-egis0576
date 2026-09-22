@@ -27,7 +27,7 @@ static int rd (const char *p, uint8_t **out)
 int main (int argc, char **argv)
 {
   uint8_t *a, *b;
-  int na, nb, i, j;
+  int na, nb, i, j, blank_a = 0, blank_b = 0;
   static EmFrame A[64], B[64];
   double best = -2, cov_a = 0, cov_b = 0;
 
@@ -43,6 +43,7 @@ int main (int argc, char **argv)
       em_frame_compute (a + i * N, &A[i]);
       printf (" %.2f", A[i].coverage);
       if (A[i].coverage > cov_a) cov_a = A[i].coverage;
+      if (A[i].coverage == 0) blank_a++;
     }
   printf ("\npress 2: %d frames, coverage", nb);
   for (i = 0; i < nb; i++)
@@ -50,6 +51,7 @@ int main (int argc, char **argv)
       em_frame_compute (b + i * N, &B[i]);
       printf (" %.2f", B[i].coverage);
       if (B[i].coverage > cov_b) cov_b = B[i].coverage;
+      if (B[i].coverage == 0) blank_b++;
     }
   printf ("\n");
 
@@ -62,12 +64,29 @@ int main (int argc, char **argv)
   printf ("best coverage   %.2f / %.2f   (probe gate %.2f, enrolment gate 0.60)\n",
           cov_a, cov_b, em_min_coverage);
   printf ("best cross NCC  %.3f            (accept threshold %.2f)\n", best, em_match_threshold);
-  if (cov_a < 0.60 || cov_b < 0.60)
-    printf ("VERDICT: no -- too little ridge-like structure; the enrolment would refuse most presses\n");
-  else if (best < em_match_threshold)
-    printf ("VERDICT: no -- presses do not reproduce (best %.3f < %.2f); needs more repeatable placement\n",
-            best, em_match_threshold);
-  else
+  /* A frame whose coverage is exactly 0 did not clear the ridge-evidence
+   * gate: there was contact, but no ridge field to speak of -- almost always
+   * a press too light for this object rather than the wrong object. */
+  if (blank_a + blank_b > 0)
+    printf ("blank frames   %d of %d / %d of %d  (no ridge evidence: too light a press)\n",
+            blank_a, na, blank_b, nb);
+
+  if (cov_a >= 0.60 && cov_b >= 0.60 && best >= em_match_threshold)
     printf ("VERDICT: yes -- enrol and verify with this object\n");
+  else if (cov_a >= 0.60 && cov_b >= 0.60)
+    printf ("VERDICT: not yet -- the structure is there, the presses do not reproduce each other\n"
+            "         (best %.3f < %.2f). Same spot, same rotation, same force, and try again.\n",
+            best, em_match_threshold);
+  else if (cov_a >= 0.55 || cov_b >= 0.55)
+    printf ("VERDICT: not yet -- this object DOES have ridge-like structure (best coverage %.2f),\n"
+            "         but %s press was too light to show it. Press harder (aim for a variance\n"
+            "         over 400, both presses alike) and try again -- best cross NCC so far %.3f.\n",
+            cov_a > cov_b ? cov_a : cov_b,
+            cov_a >= 0.55 && cov_b >= 0.55 ? "neither" : (cov_a > cov_b ? "the second" : "the first"),
+            best);
+  else
+    printf ("VERDICT: no -- too little ridge-like structure on either press (%.2f / %.2f);\n"
+            "         this object's texture is not a ridge field. Try a softer one with\n"
+            "         irregular grooves 0.2-0.5 mm apart.\n", cov_a, cov_b);
   return 0;
 }
