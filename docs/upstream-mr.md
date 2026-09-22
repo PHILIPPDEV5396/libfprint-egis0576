@@ -61,10 +61,10 @@ the known-unsupported list to the driver's block) was validated: the sensor
 autosuspends 2 s after close, comes back on open, and is held active while
 open.
 
-`temp_hot_seconds = -1`: a capacitive sensor with no emitter, driven at ~30
-frames/s while an action runs; with the default model a lock screen left
-showing its dialog for three minutes would lose fingerprint authentication to
-`FP_DEVICE_ERROR_TOO_HOT` for nine, for a device that does not warm. If a
+`temp_hot_seconds = -1`: a capacitive sensor with no emitter, declaring
+100 mA at 5 V, driven at ~30 frames/s while an action runs; with the default
+model a lock screen left showing its dialog for three minutes would lose
+fingerprint authentication to `FP_DEVICE_ERROR_TOO_HOT` for nine. If a
 maintainer prefers the default model here, that is a one-line change.
 
 ### Matcher
