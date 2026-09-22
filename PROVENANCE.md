@@ -78,7 +78,27 @@ extent necessary for the device to function.
 
 The plaintext `EGIS`/`SIGE` framing and the first working capture path were
 established by the third-party [`Pengu601/EgisTec-EH576`](https://github.com/Pengu601/EgisTec-EH576)
-project, which this work started from. Consult that repository for its own terms.
+project, which this work started from. That repository carries no license, so
+here is exactly what of it is and is not in this one:
+
+- **Taken at the start, gone since:** the first version of this driver
+  (`3b6f850`, 2026-07-19) transcribed that project's packet lists into
+  `driver/egis0576.h` (`egis0576_init_pkts`, `egis0576_repeat_pkts`,
+  `egis0576_poll_pkt`, `egis0576_image_pkt`) as a starting point. The
+  bring-up they described was replaced in v0.4.0 (`94ca704`, 2026-09-09) by
+  the sequence in `egis_init.h`, recovered by this project from a decrypted
+  session of the vendor's own driver, and the transcribed tables sat unused
+  until `0e5f7bb` (2026-09-21) deleted them. No line of that project's code
+  — no function, structure, comment or table — is in the tree now.
+- **Still the same, because it is the device:** the per-frame command
+  sequence the transport sends before every `GetFrame` (five register
+  accesses, `egis0576_proto.c` `FRAME_PREAMBLE`) is byte for byte the sequence
+  that project published. It is what the vendor driver issues per frame — the
+  sensor's interface, observed by both projects independently of each other
+  and not an expression either could own — and is kept as protocol fact, the
+  same way the `egis_init.h` records are.
+- **Credit:** that project is named here and in the driver's documentation as
+  the origin of the plaintext protocol description this work began from.
 
 `egis0576/tsteppy/egis_match.c`, `.h` — the clean-room correlation matcher,
 © 2026 Thaddeus Stepanovich, LGPL-2.1-or-later, copied byte-for-byte (license
