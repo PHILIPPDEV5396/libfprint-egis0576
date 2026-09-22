@@ -155,7 +155,8 @@ int main(int argc, char **argv)
   }
   fclose(el);
 
-  sz = egis_enroll_finish(eng, &blob);
+  sz = egis_enroll_finish(eng, NULL, 0);
+  if (sz > 0) { blob = malloc((size_t)sz); sz = blob ? egis_enroll_finish(eng, blob, sz) : -1; }
   fprintf(stderr, "enrolled %d frames, template %d bytes\n", added, sz);
   if (sz <= 0) { fprintf(stderr, "enroll_finish failed %d\n", sz); return 4; }
   blobs[0] = blob;

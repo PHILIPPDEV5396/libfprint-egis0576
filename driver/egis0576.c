@@ -40,7 +40,6 @@
 #include "egis0576/egis_engine.h"
 #include "egis0576/egis0576_proto.h"
 #include "drivers_api.h"
-#include <stdlib.h>
 
 #define EGIS0576_ENROLL_STAGES EGIS_ENROLL_STAGES   /* one source: egis_engine.h */
 /* Enrolment takes the first finger-on frame of a press, and on a press that
@@ -960,10 +959,15 @@ capture_complete (FpDeviceEgis0576 *self, FpDevice *dev)
   if (self->action == FPI_DEVICE_ACTION_ENROLL)
     {
       FpPrint *print = NULL;
-      guint8 *blob = NULL;
-      int size = egis_enroll_finish (self->engine, &blob);
+      g_autofree guint8 *blob = NULL;
+      int size = egis_enroll_finish (self->engine, NULL, 0);
 
-      if (size <= 0 || !blob)
+      if (size > 0)
+        {
+          blob = g_malloc (size);
+          size = egis_enroll_finish (self->engine, blob, size);
+        }
+      if (size <= 0)
         {
           fpi_device_enroll_complete (dev, NULL,
                                       fpi_device_error_new_msg (FP_DEVICE_ERROR_GENERAL,
@@ -976,7 +980,6 @@ capture_complete (FpDeviceEgis0576 *self, FpDevice *dev)
           g_object_set (print, "fpi-data", print_wrap_blob (blob, size), NULL);
           fpi_device_enroll_complete (dev, g_object_ref (print), NULL);
         }
-      free (blob);                       /* libc malloc'd by egis_enroll_finish */
     }
   else if (self->action == FPI_DEVICE_ACTION_VERIFY)
     {

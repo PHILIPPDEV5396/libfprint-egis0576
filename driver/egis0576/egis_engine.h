@@ -57,10 +57,14 @@ int egis_enroll_begin (EgisEngine *e);
 int egis_enroll_add (EgisEngine    *e,
                      const uint8_t *frame,
                      int           *progress);
-/* Serialise the template: *out is malloc'd (caller frees), returns its size
- * (> 0) or < 0 on error. The bytes are opaque to the driver. */
+/* Serialise the template into the caller's buffer. Returns its size (> 0)
+ * or < 0 on error. With out == NULL nothing is written and only the size is
+ * returned, so the caller allocates and calls again: n = finish (e, NULL,
+ * 0); buf = alloc (n); finish (e, buf, n). The session ends with the call
+ * that writes. -1 if cap is too small. The bytes are opaque to the driver. */
 int egis_enroll_finish (EgisEngine *e,
-                        uint8_t   **out);
+                        uint8_t    *out,
+                        int         cap);
 
 /* --- verify / identify against stored templates --- */
 /* How many templates one egis_gallery_load() accepts. */

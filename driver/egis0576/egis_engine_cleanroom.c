@@ -375,29 +375,27 @@ egis_enroll_add (EgisEngine *e, const uint8_t *raw, int *progress)
 }
 
 int
-egis_enroll_finish (EgisEngine *e, uint8_t **out)
+egis_enroll_finish (EgisEngine *e, uint8_t *out, int cap)
 {
   CrEnrol *enrol = e ? &e->enrol : NULL;
+  int size;
 
-  if (!enrol || !enrol->active || !out)
-    return -1;
-  enrol->active = 0;
-  if (enrol->count < 1)
+  if (!enrol || !enrol->active || enrol->count < 1)
     return -1;
 
   /* The template is the stored frames, nothing else: count x EGIS_IMG_SIZE
    * bytes. Versioning and validation of what fprintd hands back belong to
    * the driver (it wraps this in a typed GVariant); here a blob is valid
    * iff it is a whole number of frames, 1..EGIS_CR_MAX_FRAMES of them. */
-  int size = enrol->count * EGIS_IMG_SIZE;
-  uint8_t *blob = malloc ((size_t) size);        /* libc malloc: driver frees with free() */
-  if (!blob)
+  size = enrol->count * EGIS_IMG_SIZE;
+  if (!out)
+    return size;
+  if (cap < size)
     return -1;
   for (int i = 0; i < enrol->count; i++)
-    memcpy (blob + i * EGIS_IMG_SIZE, enrol->raw[i], EGIS_IMG_SIZE);
-
+    memcpy (out + i * EGIS_IMG_SIZE, enrol->raw[i], EGIS_IMG_SIZE);
+  enrol->active = 0;
   enrol->count = 0;
-  *out = blob;
   return size;
 }
 

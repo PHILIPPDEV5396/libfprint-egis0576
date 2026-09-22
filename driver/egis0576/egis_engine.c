@@ -91,18 +91,27 @@ int egis_enroll_add(EgisEngine *e, const uint8_t *frame, int *progress) {
     return r;
 }
 
-int egis_enroll_finish(EgisEngine *e, uint8_t **out) {
+/* The packed blob lives in the arena; it is packed on the first call (the
+ * size query) and copied out on the second. */
+static void *packed_blob;
+static int   packed_size;
+
+int egis_enroll_finish(EgisEngine *e, uint8_t *out, int cap) {
     (void)e;
-    if (!cur_session) return -1;
-    STATE = ST_PACK;                    /* force pack-ready */
-    int size = 0;
-    void *blob = FUN_18002dc40(cur_session, &size, 0, 0);
-    cur_session = 0;
-    if (!blob || size <= 0) return -1;
-    uint8_t *copy = malloc(size);       /* libc malloc: outlives the arena */
-    if (!copy) return -1;
-    memcpy(copy, blob, size);
-    *out = copy;
+    if (!packed_blob) {
+        if (!cur_session) return -1;
+        STATE = ST_PACK;                /* force pack-ready */
+        packed_size = 0;
+        packed_blob = FUN_18002dc40(cur_session, &packed_size, 0, 0);
+        cur_session = 0;
+        if (!packed_blob || packed_size <= 0) { packed_blob = 0; return -1; }
+    }
+    if (!out) return packed_size;
+    if (cap < packed_size) return -1;
+    memcpy(out, packed_blob, packed_size);
+    int size = packed_size;
+    packed_blob = 0;
+    packed_size = 0;
     return size;
 }
 
