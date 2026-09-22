@@ -148,10 +148,21 @@ sequence, which both projects observed from the vendor driver independently).
 
 ### Testing
 
-- `tests/egis0576/custom.py` with a umockdev recording made with two
-  textured non-finger objects (no fingerprint is committed): enrol, verify
-  (match), identify (match), verify against the other object (no match),
-  identify with an empty gallery, in one session.
+- `tests/egis0576/custom.py` with a umockdev recording made with a textured
+  non-finger object — no fingerprint is committed to a public pcap. It pins
+  open with the exposure calibration, an empty-gallery identify that must
+  not touch the sensor, twelve enrolment stages including the settle loop
+  and the placement steering, template serialisation, a verify and an
+  asynchronous identify that must **not** match, a print with no egis0576
+  template refused with `DATA_INVALID`, the finger-status transitions and a
+  clean close. It cannot pin the successful-match report: no household
+  object reproduces a fingerprint's ridge-period statistics, which is the
+  matcher's check doing its job — the best candidate enrols at 0.63 coverage
+  with its two presses correlating at 0.947 and is still rejected, because
+  its grooves are finer than the 0.27–0.74 mm the period estimator can
+  measure. The match path is covered by the hardware runs quoted above. If a
+  matching recording is wanted, say so and I will look for a co-operative
+  artefact rather than put a fingerprint in the repository.
 - Hardware, reference unit: enrol / verify / identify through fprintd and
   the GNOME lock screen; cancel answered within one transfer sequence
   (3 ms measured); s2idle with a verify running (above); autosuspend with

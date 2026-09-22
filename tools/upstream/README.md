@@ -19,60 +19,45 @@ The script's docstring lists the file mapping. The merge-request text is
 
 libfprint replays a recorded USB session under umockdev and runs
 `custom.py` against it (`tests/README.md` upstream). The recording is made
-with two **textured non-finger objects** — never a finger, since the pcap
+with a **textured non-finger object** — never a finger, since the pcap
 contains every frame the sensor delivered and is committed to a public
 repository.
 
-Finding an object that works is trial and error, so check candidates with
-the fast probe (two presses, ~20 s, no enrolment) rather than a full
-enrolment:
+That choice decides what the test can assert, and it is worth stating
+plainly. The driver matches by correlating ridge texture and checking that
+the probe's local ridge period reproduces the template's. **No household
+object reproduces a fingerprint's ridge-period statistics**, and that is not
+a defect of the search — it is the check working. The best candidate found
+enrols cleanly (coverage 0.63 against a 0.60 gate) and its two presses
+correlate at **0.947**, and the driver still rejects every pair, because the
+ridge-period estimator finds 2 usable blocks of 270: the object's grooves are
+finer than the 0.27–0.74 mm it can measure. Objects tried and measured with
+`objprobe.py`: a rigid metal part (contact patch too small, presses reproduce
+at only 0.750) and a fine-grooved elastic one (the 0.947 above).
 
-```bash
-tools/upstream/objprobe.py
-```
+So the test asserts what the recording can honestly support:
 
-It prints the matcher's coverage per frame and two scores that are not the
-same thing: the **correlation** between the two presses (how alike they are)
-and the **decision** the driver would see, which is that correlation or -1
-when the ridge-period consistency check rejects the pair as
-synthetic-looking. A tool that reads only the decision cannot tell "these
-presses do not match" from "these presses match and the check threw it
-away", and its maximum lands just under the check's 0.70 gate. What the
-probe is looking for:
+- open with the exposure calibration, and an empty-gallery identify that
+  must not touch the sensor (what fprintd does before every enrolment);
+- twelve enrolment stages, including the settle loop and the placement
+  steering, and a template that survives serialisation;
+- a verify and an asynchronous identify against that template that **must
+  not match** — the object is not a finger, and the driver says so;
+- a print carrying no egis0576 template refused with `DATA_INVALID`;
+- finger-status transitions around every action, and a clean close.
 
-- **coverage ≥ 0.60 on both presses** — the object must produce ridge-*like*
-  structure, not just contrast. A rigid metal part gives plenty of variance
-  (measured 1300–2500, far above the finger-on threshold of 250) and still
-  fails here: its texture is not a ridge field, so the coherence mask keeps
-  almost nothing.
-- **best cross NCC ≥ 0.78** — two presses must reproduce each other. This is
-  where rigid objects fail for a second reason: a finger deforms and lands
-  the same way twice, a rigid object touches somewhere slightly different
-  every time. Measured on one candidate: 12 enrolment frames that correlated
-  0.16–0.67 *with each other*, against 0.82–0.97 for a finger.
+It pins the whole action path and the driver's refusal of a non-finger. What
+it cannot pin is the successful-match report; that path is covered by the
+hardware runs in [`docs/matcher-comparison.md`](../../docs/matcher-comparison.md)
+and by the live logs quoted there. A maintainer who would rather have a
+matching recording can say so — it needs a co-operative artefact, and this
+project would rather ship no fingerprint in a public pcap.
 
-- **a measurable ridge period** — the probe prints, per press, how many of
-  the 270 blocks the ridge-period estimator could measure and where those
-  periods sit in the 3.5–9.5 px window it can see (0.27–0.74 mm). A texture
-  outside that window leaves the estimator nothing, the check then has no
-  blocks to compare, and the driver rejects every pair however well the
-  presses correlate. Measured on one otherwise perfect candidate: coverage
-  0.63, presses correlating at **0.947**, and **2 of 270 blocks**, all pinned
-  at 3.5 px — its grooves were finer than 0.27 mm. Aim for the sensor's own
-  ridge period, about **0.5 mm**.
-- **no rejections by the period check** — the driver rejects a pair whose
-  ridge periods are not consistent with the template's. That is the
-  anti-spoofing check, and it fires on two kinds of object: one whose texture
-  is a regular grating (what it was built for), and one whose contact patch
-  is too small to give the check enough blocks to look at. The probe says
-  which, per pair.
-
-So the useful shape is **elastic, with irregular ridge-like texture of
-roughly 0.5 mm period (the sensor's own ridge period is 6.4 px at about
-12.8 px/mm), and a contact patch as large as a fingertip's**: textured rubber
-or silicone, an eraser with a pattern pressed into it, a piece of leather.
-Avoid regular gratings (a coin's reeded edge): the period check exists to
-reject exactly those.
+Choosing a candidate object, if you want to try anyway: `objprobe.py`
+(above) prints per press how many of the 270 blocks have a measurable ridge
+period and whether they are pinned at either edge of the 3.5–9.5 px window,
+so it says *which way* a texture is wrong. Aim for the sensor's own ridge
+period, about 0.5 mm, elastic, with a fingertip-sized contact patch.
 
 Recording, from a libfprint build directory with the driver laid in
 (needs `umockdev`, `tshark`, `usbmon` loaded, root):
