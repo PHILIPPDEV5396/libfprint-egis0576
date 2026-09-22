@@ -30,7 +30,8 @@
  * constants in egis_cr_tuning.h and the alignment report of
  * egis_match_check.h that the enrolment steering below uses.
  *
- * Why not minutiae: on a 70x57 sensor (3.5 x 2.9 mm) NBIS mindtct finds a
+ * Why not minutiae: on a 70x57 sensor (roughly 5.5 x 4.5 mm, inferred from
+ * the measured 6.4 px ridge period) NBIS mindtct finds a
  * median of one minutia per frame, and an own extractor about seven with
  * only ~50 % of them repeating between adjacent frames of the same press;
  * there is nothing to match. Correlation on the ridge texture is what the

@@ -58,8 +58,9 @@ probe is looking for:
   is too small to give the check enough blocks to look at. The probe says
   which, per pair.
 
-So the useful shape is **elastic, with irregular ridge-like texture at
-0.2–0.5 mm, and a contact patch as large as a fingertip's**: textured rubber
+So the useful shape is **elastic, with irregular ridge-like texture of
+roughly 0.5 mm period (the sensor's own ridge period is 6.4 px at about
+12.8 px/mm), and a contact patch as large as a fingertip's**: textured rubber
 or silicone, an eraser with a pattern pressed into it, a piece of leather.
 Avoid regular gratings (a coin's reeded edge): the period check exists to
 reject exactly those.

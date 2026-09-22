@@ -9,7 +9,9 @@ it in this repository. Update it whenever a number in the driver changes.
 ## egis0576: add a driver for the EgisTec EH576 (1c7a:0576)
 
 The EgisTec (LighTuning) EH576 is a small capacitive press sensor — 70×57
-pixels, 3.5×2.9 mm of skin, no hardware finger detection — found in Lenovo
+pixels of roughly 5.5×4.5 mm of skin (inferred from the measured 6.4 px
+ridge period; the sensor's pitch is in no datasheet this project has), no
+hardware finger detection — found in Lenovo
 consumer laptops (reference: Yoga 7 14ARB7; also reported working on an
 IdeaPad Flex 5 14ITL05 and one further unit by testers of the out-of-tree
 driver). It has no vendor Linux driver. This driver has been in out-of-tree use
@@ -109,7 +111,7 @@ raw bytes.
 
 A third one is **not** closed, and the driver should not be read as claiming
 otherwise: a fabricated ridge-textured artefact. A masked texture correlation
-on 3.5×2.9 mm matches any patch of locally parallel ridges at the right period
+on 5.5×4.5 mm matches any patch of locally parallel ridges at the right period
 and angle. A ridge-period consistency check rejects generated textures whose
 period is constant (sine 0.87 → 0.70, arc 0.91 → 0.70 against real templates),
 but a period-modulated grating, a loop pattern or filtered ridge noise go

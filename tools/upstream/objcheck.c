@@ -152,6 +152,6 @@ main (int argc, char **argv)
   else
     printf ("VERDICT: no -- too little ridge-like structure on either press (%.2f / %.2f);\n"
             "         this object's texture is not a ridge field. Try a softer one with\n"
-            "         irregular grooves 0.2-0.5 mm apart.\n", cov_a, cov_b);
+            "         irregular grooves about 0.5 mm apart.\n", cov_a, cov_b);
   return 0;
 }

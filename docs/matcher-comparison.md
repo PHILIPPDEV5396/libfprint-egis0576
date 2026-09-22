@@ -416,7 +416,10 @@ The check's genuine cost, after `EM_FQ_MIN_NBLK` came down from 20 to 12 (see
 below), is 0 of 60 presses under the kit's best-frame rule **and** 0 of 60
 under the driver's two-consecutive-frame rule, worst press 0.812 → 0.804. At
 20 it cost one press of 60 under the driver's rule, and three of the
-cross-session presses.
+cross-session presses. `tools/accuracy/evaluate.py` now reports both rules
+(`frr` and `frr_confirmed`), because the difference between them is exactly
+where that cost was hiding: the kit accepted a press on a single frame over
+the threshold, the driver needs two in a row.
 
 `EM_FQ_MIN_NBLK` is not a texture criterion: `nblk` is arithmetically the
 number of period blocks geometrically eligible over the overlap (correlation
@@ -474,7 +477,7 @@ tools/accuracy/nbis-count <dataset>/baseline.npy <dataset>/*.npy
 ```
 
 Reference dataset, 714 frames (2026-09-16, libfprint 1.94.100,
-`g_lfsparms_V2`, 12.8 px/mm from the measured 6.4 px ridge period):
+`g_lfsparms_V2`, 12.8 px/mm from the measured 6.4 px ridge period — the sensor's physical size is not in any datasheet this project has; the two figures the repository used to carry (3.5 × 2.9 mm, i.e. 508 dpi, and 12.8 px/mm from the measured ridge period, i.e. 5.5 × 4.5 mm) cannot both be right. The measurement is the ridge period: 6.4 px, which at 508 dpi would be a 0.32 mm ridge spacing and at 12.8 px/mm a 0.50 mm one. Human ridge spacing is 0.4–0.5 mm, so 5.5 × 4.5 mm (~325 dpi) is the supported figure and 3.5 × 2.9 mm was an assumed 508 dpi. Both are inferences from one measurement, not a specification.):
 
 | configuration | minutiae per frame, min / median / mean / max | frames with 0 | frames with ≥ 8 |
 |---|---|---|---|
@@ -482,7 +485,8 @@ Reference dataset, 714 frames (2026-09-16, libfprint 1.94.100,
 | perimeter points kept (`NBIS_KEEP_PERIM=1`) | 0 / 2 / 2.31 / 9 | 164 | 6 |
 
 `bozorth3` needs on the order of a dozen paired minutiae for a decision; a
-70×57 px frame (3.5 × 2.9 mm of skin) yields a median of one. Upscaling
+70×57 px frame (about 5.5 × 4.5 mm of skin, see below) yields a median of
+one. Upscaling
 (`NBIS_SCALE`), contrast normalisation (`NBIS_NORM`) and other `ppmm` values
 were tried in the same session; the best of the variants is the second row.
 An own extractor tuned to the frame size found ~7 per frame, of which only ~50 %
