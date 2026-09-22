@@ -54,12 +54,46 @@ typedef struct
  * at p_spread < 0.25 (sine 0.03, arc 0.05, loop 0.17, ridge noise 0.19,
  * wavy 0.18, hill-climb model 0.38 whole-frame but < 0.25 over the overlap
  * that wins). 0.25 is the largest value that costs no genuine press in the
- * kit (0.30 costs 4/60). See em_check.c for what this does NOT stop. */
+ * kit (0.30 costs 4/60).
+ *
+ * WHAT THIS CLOSES, MEASURED, AND WHAT IT DOES NOT (2026-09-22, six blind
+ * families over widened parameter grids against the 30 real enrolment
+ * templates of the reference dataset; best score reachable with the check
+ * passing, accept threshold 0.78):
+ *
+ *     family   check off   check on
+ *     sine       0.865       0.700   closed
+ *     arc        0.909       0.699   closed
+ *     chirp      0.784       0.768   closed
+ *     noise      0.875       0.795   PASSES
+ *     loop       0.907       0.892   PASSES
+ *     jitter     0.914       0.895   PASSES
+ *
+ * So it closes families whose period is CONSTANT, and an attacker who
+ * modulates the period -- two extra sine terms, no score oracle, no
+ * knowledge of the victim's print -- goes straight through. Against a
+ * score-oracle attacker it is worth 0.000-0.002 NCC (independently
+ * re-measured). Treat it as what it is: a cheap filter for the most naive
+ * generated textures, not the driver's answer to a fabricated artefact.
+ * That answer does not exist in this driver; see docs/matcher-comparison.md.
+ *
+ * EM_FQ_MIN_NBLK is NOT a texture criterion. nblk is arithmetically the
+ * number of blocks geometrically eligible over the overlap (r = 0.9996
+ * against the eligibility count; it equals it outright in 82 % of pairs),
+ * so the clause is an overlap gate, and at 20 it sat at ~1200-1400 px --
+ * well above the matcher's own EG_MIN_OVERLAP of 800 -- i.e. above the
+ * genuine 5th percentile above. Measured over all four blind families and
+ * both sessions: every value from 8 to 20 gives BIT-IDENTICAL attack
+ * numbers (no synthetic pair is stopped by this clause that another clause
+ * does not stop), while 20 costs one genuine press of 60 in-session and
+ * three of the cross-session presses under the driver's two-consecutive-
+ * frame rule. 12 costs none in-session and one across sessions, and still
+ * refuses to judge a pair with almost no eroded overlap. */
 #ifndef EM_FQ_ENABLE
 #define EM_FQ_ENABLE 1
 #endif
 #ifndef EM_FQ_MIN_NBLK
-#define EM_FQ_MIN_NBLK 20
+#define EM_FQ_MIN_NBLK 12
 #endif
 #ifndef EM_FQ_MAX_MAD
 #define EM_FQ_MAX_MAD 0.5

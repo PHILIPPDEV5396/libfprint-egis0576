@@ -377,16 +377,61 @@ reference dataset:
 | a re-served stale frame of an earlier press unlocks at the first frame over the threshold | two-frame confirmation in the driver (next frame must also clear the threshold and differ byte-wise) | 0 / 60, +1 frame latency |
 | a per-boot flat-field baseline captured with the enrolled finger resting lightly paints its ridges, inverted, into every later frame; a featureless smudge then scores 0.92–0.94 | every accept is corroborated on the un-flat-fielded frame (`egis_verify_raw_ok`, NCC ≥ 0.5; genuine raw probes score ≥ 0.83) | 0 / 60 |
 | a smooth, ridge-free gradient gets full mask coverage and is enrolled | absolute ridge-evidence gate in the front-end (Gabor response sd ≥ 5 over the mask) | 0 / 60 |
-| computer-generated ridge textures (sine 0.78, arc 0.91, loop/delta 0.88, ridge noise 0.85 against real templates) | local-ridge-period consistency at the winning alignment (`egis_match_check.h`): all blind families now ≤ 0.75 | genuine min 0.812 → 0.800, 0 / 60 |
+| computer-generated ridge textures (sine 0.87, arc 0.91, loop/delta 0.91, ridge noise 0.88, period-modulated grating 0.91 against real templates) | local-ridge-period consistency at the winning alignment (`egis_match_check.h`) — **partly**, see below | 0 / 60 under both accept rules |
 
-Not closed: an attacker with a score oracle hill-climbing a curved ridge model
-still reaches 0.93; a second check that corroborates the fine structure the
-Gabor filter smooths away (pores, ridge-width modulation) raised that
-attacker's cost materially in the review's measurement but costs 5–7 % of
-genuine presses on the kit protocol, and is therefore not shipped. Presenting
-any of these patterns needs physical access and an artefact, which also
-defeats every matcher without presentation-attack detection; this sensor has
-none.
+### The period check closes half of what was claimed
+
+An earlier version of this table said "all blind families now ≤ 0.75". That was
+true of the parameter grids the review had run and **not** true in general. Two
+independent re-measurements (2026-09-22) over widened grids, six blind families
+against the 30 real enrolment templates of the reference dataset, best score
+reachable **with the check passing** (accept threshold 0.78, worst genuine
+press 0.80):
+
+| family | check off | check on | |
+|---|---:|---:|---|
+| sine (constant period) | 0.865 | 0.700 | closed |
+| arc (constant period) | 0.909 | 0.699 | closed |
+| chirp (smooth period gradient) | 0.784 | 0.768 | closed |
+| filtered ridge noise | 0.875 | **0.795** | **passes** |
+| loop / delta | 0.907 | **0.892** | **passes** |
+| period-modulated grating | 0.914 | **0.895** | **passes** |
+
+The check tests whether the probe's ridge period *varies* and whether that
+variation *reproduces the template's*. It therefore closes families whose
+period is constant, and an attacker who modulates the period — two extra sine
+terms, no score oracle, no knowledge of the victim's print — walks through it
+and false-accepts against three of the five enrolled fingers. Against an
+attacker who can read the score and hill-climb, the check is worth
+**0.000–0.002 NCC**: it does not raise his cost at all.
+
+So the honest statement is: **this driver has no defence against a fabricated
+artefact.** What it has is a filter for the laziest generated textures, the
+two-frame confirmation and the raw-frame corroboration — none of which is
+presentation-attack detection, which this sensor offers no signal for. That is
+true of every matcher without liveness detection, but it should be read here
+rather than inferred.
+
+The check's genuine cost, after `EM_FQ_MIN_NBLK` came down from 20 to 12 (see
+below), is 0 of 60 presses under the kit's best-frame rule **and** 0 of 60
+under the driver's two-consecutive-frame rule, worst press 0.812 → 0.804. At
+20 it cost one press of 60 under the driver's rule, and three of the
+cross-session presses.
+
+`EM_FQ_MIN_NBLK` is not a texture criterion: `nblk` is arithmetically the
+number of period blocks geometrically eligible over the overlap (correlation
+0.9996 with the eligibility count), so the clause is an overlap gate, and at
+20 it sat at ~1200–1400 px — above the matcher's own `EG_MIN_OVERLAP` of 800
+and above the genuine 5th percentile of 12–14. Every value from 8 to 20 gives
+**bit-identical** attack numbers in all six families: the clause stops no
+synthetic pattern that another clause does not stop. It only ever cost
+genuine presses, so it is now 12.
+
+Not closed by anything shipped: the oracle attacker (0.91–0.98). A second
+check that corroborates the fine structure the Gabor filter smooths away
+(pores, ridge-width modulation) raised that attacker's cost materially in the
+review's measurement but costs 5–7 % of genuine presses on the kit protocol,
+and is therefore not shipped.
 
 **Across sessions (2026-09-18, second capture on the reference unit five days
 after the first):** templates from the first session, probes from the second,

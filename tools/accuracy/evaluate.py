@@ -176,6 +176,7 @@ def failure_info(r):
 
 def evaluate(flavour, binary, fingers, presses, base, thr, best_frame, var, ddir):
     gen, imp, diags, fails = [], [], [], []
+    gen_frames = []                       # per genuine press, every frame's score
     # Per-press extraction bookkeeping. The engine returns -1 for a frame whose
     # feature extraction failed (too few minutiae) and >= 0 for one it compared,
     # so a press score of 0 means "compared, no match" while a press where every
@@ -216,6 +217,7 @@ def evaluate(flavour, binary, fingers, presses, base, thr, best_frame, var, ddir
                     if all(v < 0 for v in s):
                         gen_nofeat += 1
                     gen.append(max(s))
+                    gen_frames.append(s)
                 for _, p in others:
                     s = [scores.get(x, -1) for x in p]
                     frames_total += len(s)
@@ -228,6 +230,15 @@ def evaluate(flavour, binary, fingers, presses, base, thr, best_frame, var, ddir
     if not gen:
         return {"flavour": flavour, "failures": fails, "n_genuine": 0, "n_impostor": 0}
     frr = sum(1 for s in gen if s < thr) / len(gen)
+    # The driver does not accept a press because one frame cleared the
+    # threshold: it holds that frame as a candidate and reports a match only
+    # when the NEXT finger-on frame clears it too (driver/egis0576.c
+    # match_result, "two-frame confirmation"). A press with a single
+    # accepting frame is a non-match there, so the kit's rule is optimistic;
+    # both are reported.
+    drv_acc = sum(1 for fr in gen_frames
+                  if any(fr[i] >= thr and fr[i + 1] >= thr for i in range(len(fr) - 1)))
+    frr_confirmed = 1.0 - drv_acc / len(gen_frames) if gen_frames else None
     far = (sum(1 for s in imp if s >= thr) / len(imp)) if imp else None
     # Equal error rate, but ONLY where the two curves actually cross. When no
     # impostor scores at all (the vendor matcher does this: every impostor
@@ -249,6 +260,8 @@ def evaluate(flavour, binary, fingers, presses, base, thr, best_frame, var, ddir
         "threshold": thr,
         "n_genuine": len(gen), "n_impostor": len(imp),
         "frr": frr, "far": far,
+        "frr_confirmed": frr_confirmed,
+        "genuine_presses_confirmed": drv_acc,
         "genuine_min": min(gen), "genuine_median": median(gen), "genuine_max": max(gen),
         "impostor_min": min(imp) if imp else None,
         "impostor_median": median(imp) if imp else None,
@@ -358,6 +371,12 @@ def main():
         r = results[fl]
         if r.get("n_genuine"):
             eer = f"EER {pct(r['eer'])} @ {r['eer_threshold']}" if r["eer"] is not None else "EER n/a"
+            conf = r.get("frr_confirmed")
+            if conf is not None:
+                print(f"[{fl}] press accepted by the kit's rule (any frame over the threshold): "
+                      f"{r['n_genuine'] - round(r['frr'] * r['n_genuine'])}/{r['n_genuine']}; "
+                      f"by the driver's rule (two consecutive frames): "
+                      f"{r['genuine_presses_confirmed']}/{r['n_genuine']}")
             print(f"[{fl}] genuine n={r['n_genuine']} impostor n={r['n_impostor']} | @{r['threshold']}: "
                   f"FRR {pct(r['frr'])}  FAR {pct(r['far'])} | "
                   f"genuine {stats3(r, 'genuine')}  impostor {stats3(r, 'impostor')} | {eer}")
@@ -391,7 +410,8 @@ def main():
         "protocol": {
             "folds": "two-fold per finger (first half enrol / second half test, then reversed)",
             "enrol_frame": "best-variance" if args.best_frame else "first finger-on",
-            "accept_rule": "press accepted if any of its frames scores >= threshold",
+            "accept_rule": "press accepted if any of its frames scores >= threshold "
+                           "(frr); the driver needs two consecutive such frames (frr_confirmed)",
             "impostor_set": "every press of every other finger of the same person",
             "threshold": args.threshold,
         },

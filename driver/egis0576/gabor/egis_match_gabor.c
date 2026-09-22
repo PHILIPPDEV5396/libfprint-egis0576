@@ -115,22 +115,37 @@
  *     (physical access, a fabricated artefact), which also defeats every
  *     other matcher without presentation-attack detection -- but a
  *     minutiae-based matcher would reject a featureless grating.
- *     PARTLY CLOSED by the local-ridge-period consistency check at the end
- *     of this file (egis_match_check.h): the probe's ridge period must vary
- *     over the overlap and agree with the template's. Every blind family
- *     of the review now scores below the threshold (sine 0.70, arc 0.70,
- *     loop/delta 0.75, ridge noise 0.70) at a measured genuine cost of
- *     0 of 60 presses (genuine min 0.812 -> 0.804, impostor max unchanged,
- *     cross-fold still 0 / 0). The first version of the rule also demanded
- *     that the probe's period VARY, and that threw away a genuine pair at
- *     NCC 0.97 on the second reference session (flat region of a real
- *     finger; press score 0.97 -> 0.73, a live false reject): a flat map
- *     now passes when it reproduces the template's (see the RESCUE
- *     constants), and on both sessions, with eleven templates per finger,
- *     no genuine press crosses the threshold downward because of the check.
- *     NOT closed: an attacker who can read the
- *     score and hill-climb a curved ridge model against it still reaches
- *     0.93 on one finger, because the period map of a 2x2 mm patch is
+ *     PARTLY CLOSED -- and less than was claimed here until 2026-09-22 --
+ *     by the local-ridge-period consistency check at the end of this file
+ *     (egis_match_check.h): the probe's ridge period must vary over the
+ *     overlap and agree with the template's. Re-measured over WIDENED
+ *     parameter grids (the earlier claim "every blind family now scores
+ *     below the threshold" held only on the grids the review itself had
+ *     tried), against the 30 real enrolment templates of the reference
+ *     dataset, best score reachable with the check passing:
+ *
+ *           sine 0.865 -> 0.700   arc 0.909 -> 0.699   chirp 0.784 -> 0.768
+ *           noise 0.875 -> 0.795  loop 0.907 -> 0.892  jitter 0.914 -> 0.895
+ *
+ *     i.e. it closes the families whose period is CONSTANT and does not
+ *     close a period-MODULATED grating, a loop/delta pattern or filtered
+ *     ridge noise -- three of six families still reach a full false accept
+ *     against three of the five enrolled fingers. Modulating the period
+ *     costs an attacker two extra sine terms and needs no score oracle.
+ *     Genuine cost of the check as it now stands: 0 of 60 presses under the
+ *     kit's best-frame rule and 0 of 60 under the driver's two-consecutive-
+ *     frame rule (it was 1 of 60 until EM_FQ_MIN_NBLK came down from 20 to
+ *     12, which changed no attack number at all), one cross-session press
+ *     of the second session.
+ *     The first version of the rule also demanded that the probe's period
+ *     VARY, and that threw away a genuine pair at NCC 0.97 on the second
+ *     reference session (flat region of a real finger; press score 0.97 ->
+ *     0.73, a live false reject): a flat map now passes when it reproduces
+ *     the template's (see the RESCUE constants).
+ *     NOT closed, and not closable here: an attacker who can read the score
+ *     and hill-climb a curved ridge model against it reaches 0.91-0.98 --
+ *     re-measured, the check costs him 0.000-0.002 NCC, not the 0.03 the
+ *     earlier text implied -- because the period map of a 2x2 mm patch is
  *     smooth enough for a low-order polynomial to reproduce. A second,
  *     independent check -- corroborating the fine structure the Gabor
  *     smooths away (pores, ridge-width modulation) at the winning
@@ -857,7 +872,7 @@ eg_match_core (const EmFrame *a, const EmFrame *b, int *odx, int *ody, int *orot
  * search, warps the probe onto the template at the winning shift/rotation,
  * estimates the local period on a 4-px grid (12x12-px window) for both
  * frames over the overlap, and em_match() returns -1 unless the probe's
- * period varies (sd >= 0.25 px) over enough cells (>= 20) and agrees with the
+ * period varies (sd >= 0.25 px) over enough cells (>= 12) and agrees with the
  * template's (mean |dT| <= 0.5 px).
  *
  * MEASURED (reference dataset; bench.c kit protocol; verify_master.c and the
@@ -870,24 +885,35 @@ eg_match_core (const EmFrame *a, const EmFrame *b, int *odx, int *ody, int *orot
  *   check on:   genuine min 0.800 / p05 0.900 / median 0.968, impostor max
  *               0.681, FRR@FAR0 0 %, cross-fold strict FRR 0 % / FAR 1.25 %,
  *               mid-gap 0 / 0 (thresholds 0.740 / 0.747); raw-probe
- *               corroboration min 0.756 (was 0.825; gate is 0.5). Every
- *               blind family falls below 0.78: sine -1, arc -1, loop 0.752,
- *               ridge noise 0.696, curved 0.614, wavy 0.612, review's
- *               hill-climb pattern -1 (all 8 phases).
- *   ADAPTIVE:   an attacker who sees the diagnostics and hill-climbs a
- *               12-parameter cubic-phase ridge model (period, angle, phase,
- *               centre, 7 polynomial coefficients) reaches 0.906 NCC WITH
- *               the check passing (mad 0.12, p_spread 0.31) after ~250
- *               coordinate-descent iterations (~15k score queries); on the
- *               coarser 8-px map 0.92-0.96. Blind random smooth period
- *               jitter (3 %) on a sine reaches 0.864 on the 8-px map.
- *   So this closes the review's blind families at no measured genuine cost
- *   on this unit, and does NOT close the oracle attack: the period map of
- *   a 2x2 mm patch is smooth enough that a cubic polynomial reproduces it.
+ *               corroboration min 0.756 (was 0.825; gate is 0.5).
+ *   RE-MEASURED 2026-09-22 over WIDENED grids, and this is the number that
+ *               counts: the families whose period is constant are closed
+ *               (sine 0.865 -> 0.700, arc 0.909 -> 0.699, chirp 0.784 ->
+ *               0.768) and three are NOT -- filtered ridge noise 0.875 ->
+ *               0.795, loop/delta 0.907 -> 0.892, a period-modulated
+ *               grating 0.914 -> 0.895, all full false accepts against
+ *               three of the five enrolled fingers. The earlier line here
+ *               ("every blind family falls below 0.78") was true only of
+ *               the grids the review had run.
+ *   ADAPTIVE:   an attacker who sees the score and hill-climbs a ridge
+ *               model reaches 0.91-0.98 with the check passing; measured
+ *               against the same attacker with the check off, it costs him
+ *               0.000-0.002 NCC. It does not raise his cost at all.
+ *   So this closes the naive half of the blind families at no measured
+ *   genuine cost on this unit, and closes neither the modulated blind
+ *   families nor the oracle attack. It is a cheap filter, not a defence;
+ *   what a fabricated artefact really faces in this driver is the two-frame
+ *   confirmation and the raw-frame corroboration, and neither is
+ *   presentation-attack detection. docs/matcher-comparison.md says so in
+ *   full.
  *
  * COST: em_match_ex adds one eg_rotate, one warp and two period maps
  * (3 blurs + 12 lags x 3990 bilinear samples each); measured idle, see the
- * report (~2 ms on top of em_match's 4 ms).
+ * report (~2 ms on top of em_match's 4 ms). em_match() on a pair above the
+ * gate runs the alignment search twice -- once for the gate, once inside
+ * em_match_ex -- which is another ~11 ms; the two calls are deterministic
+ * and return the same alignment, so this is removable and is not on the
+ * critical path of anything but a score above 0.70.
  */
 
 #ifndef EM_FQ_K0

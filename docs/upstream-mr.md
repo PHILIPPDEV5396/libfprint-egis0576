@@ -100,12 +100,25 @@ against):
   steering (refusing a press that lands where one already is) is for;
 - live through fprintd: genuine presses 0.86–0.95, another finger 0.55.
 
-Two measured attacks on the *driver* are closed, not just the matcher: the
-sensor was seen re-serving a stale frame of an earlier press with fresh noise,
-so a match is reported only when two consecutive frames clear the threshold
-and differ; and a poisoned flat-field baseline (a smudge during the no-finger
-frames) could lift an impostor to 0.92, so the confirming frame must also
-corroborate on its raw bytes.
+Two measured attacks on the *driver* are closed: the sensor was seen
+re-serving a stale frame of an earlier press with fresh noise, so a match is
+reported only when two consecutive frames clear the threshold and differ; and
+a poisoned flat-field baseline (a smudge during the no-finger frames) could
+lift an impostor to 0.92, so the confirming frame must also corroborate on its
+raw bytes.
+
+A third one is **not** closed, and the driver should not be read as claiming
+otherwise: a fabricated ridge-textured artefact. A masked texture correlation
+on 3.5×2.9 mm matches any patch of locally parallel ridges at the right period
+and angle. A ridge-period consistency check rejects generated textures whose
+period is constant (sine 0.87 → 0.70, arc 0.91 → 0.70 against real templates),
+but a period-modulated grating, a loop pattern or filtered ridge noise go
+through it at 0.80–0.90, and against an attacker who can read the score it is
+worth 0.002 NCC. This sensor offers no liveness signal, so presentation-attack
+detection is not available at all; the barrier is physical access plus making
+the artefact, as it is for every matcher without liveness detection. The
+numbers and the widened-grid measurement are in the out-of-tree
+docs/matcher-comparison.md.
 
 **Templates are frames.** A correlation matcher has nothing else to match
 against; the stored bytes are flat-fielded images of the fingertip, 47,880

@@ -1,0 +1,1 @@
+nohup: der Befehl './vi' konnte nicht ausgeführt werden: Datei oder Verzeichnis nicht gefunden
