@@ -392,3 +392,49 @@ is intended: it is never killed.
   only vendor rejection code is `-1`, an image with fewer than 11 minutiae.
   With the **clean-room** matcher, `-2` means the frame's coverage was below its
   enrolment gate.
+
+## `kit_version 3` (2026-09-23): the driver's rule, on both populations
+
+Until now the kit reported FRR under the driver's accept rule and FAR under
+its own, looser one — the press maximum. That is not a detail: it compares a
+strict rule against a lenient one, and **no false-accept figure this project
+ever published was the driver's**. It is fixed, and a re-run of any existing
+dataset (no new captures) now prints both:
+
+| | what it means |
+|---|---|
+| `frr` / `far` | any frame of the press cleared the threshold |
+| `frr_confirmed` / `far_confirmed` | the driver: two consecutive finger-on frames over the threshold, the second corroborated on the un-flat-fielded bytes, and only frames with raw variance ≥ 250 counted at all |
+
+Quote the pair, never one of each. `score.c` prints the corroboration verdict
+as a third column for this; an older scorer simply omits it and every frame
+counts as corroborated, which is what the kit assumed before.
+
+## `pairdiag`: why a unit separates, or does not
+
+`evaluate.py` says *whether* the populations separate. When they do not, the
+next question is what the alignment search had to work with, and press-level
+scores cannot answer it. `pairdiag` does, from the same dataset:
+
+```bash
+python3 evaluate.py <dataset> --pair-list      # writes <dataset>/pairdiag.lst
+./pairdiag <dataset>/baseline.npy <dataset>/pairdiag.lst
+```
+
+It prints one JSON block: frame coverage against the probe and enrolment
+gates, and for genuine and impostor pairs alike the correlation and the masked
+overlap **at the winning alignment**, plus what each population looks like
+above a range of overlap floors. Counts and rates only — safe to paste.
+
+Read it like this: coverage well under the 0.70–0.75 of a well-placed frame
+says the presses carry little ridge area (placement, force, a small contact
+patch). An impostor median that sits close to the genuine median says the
+matcher is too permissive on that skin, which is the project's problem and not
+the reporter's. The reference unit reads coverage median 0.713, genuine NCC
+median 0.903, impostor median 0.270, impostor max 0.666.
+
+To measure a proposed constant on your own captures without editing anything:
+
+```bash
+make clean && make GABOR_EXTRA=-DEG_MIN_OVERLAP=1400 && python3 evaluate.py <dataset> --flavour gabor
+```

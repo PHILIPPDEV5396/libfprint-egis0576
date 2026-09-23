@@ -172,8 +172,17 @@ int main(int argc, char **argv)
     if (rd(line, raw)) {
       printf("%d unreadable\n", idx);
     } else {
+      int s, ok;
       prep(raw, base, cor);
-      printf("%d %d\n", idx, egis_verify(eng, cor, 0));
+      s = egis_verify(eng, cor, 0);
+      /* The driver does not report a match on the score alone: it corroborates
+       * the confirming frame on the UN-flat-fielded bytes and discards the
+       * accept when that fails (driver/egis0576.c match_result). Printing the
+       * verdict as a third column lets evaluate.py apply the same gate to BOTH
+       * populations; a scorer that only prints the score can measure the
+       * driver's FRR and never its FAR. Engines without the concern return 1. */
+      ok = s >= 0 ? egis_verify_raw_ok(eng, raw, 0) : 1;
+      printf("%d %d %d\n", idx, s, ok);
     }
     idx++;
   }

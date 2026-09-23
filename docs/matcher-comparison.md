@@ -571,3 +571,67 @@ a private directory under your home and must never be sent to anyone,
 including the maintainers. Given how far the three runs above disagree, more
 runs — especially ones that come out badly — are the most useful thing this
 measurement can get.
+
+## 2026-09-23: the third unit on the Gabor front-end, and what the kit was measuring
+
+irvingpop re-ran the kit on his 2026-09-13 captures with the v0.5.1 tree — no
+new presses, the shipped default. On his Yoga 6 13ALC6, at threshold 5000:
+
+| | reference unit | tsteppy's second unit | irvingpop |
+|---|---:|---:|---:|
+| genuine min (NCC) | 5153 (0.804) | 0.600 | 1958 (0.305) |
+| impostor max (NCC) | 4426 (0.691) | **0.815** | **5788 (0.903)** |
+| FRR at 5000, any frame | 0 % | 6.9 % ¹ | 60.0 % |
+| FAR at 5000, any frame | 0 % | 1.1 % ¹ | **12.1 %** (58 / 480) |
+| FRR / FAR under the driver's rule | **0 % / 0 %** | not measured | not measured |
+
+¹ his own harness, his protocol, reported 2026-09-17.
+
+Two things follow, and they are separate.
+
+**The clean gap is a property of this unit, not of the matcher.** Both reported
+foreign units score same-person impostor presses *above* the 0.78 accept point
+— 0.815 there since 2026-09-17, 0.903 here. The reference unit's 0.12 of
+margin is the exception in the sample, not the rule, and the README said
+otherwise until today.
+
+**And no false-accept figure this project published was the driver's.** The kit
+applied the driver's two-frame rule to genuine presses and the press maximum to
+impostors, and never applied the raw-frame corroboration at all. `kit_version
+3` fixes both sides (`far_confirmed`, and a third column in `score.c`); the
+reference dataset re-measured under the true rule is unchanged at 0 % / 0 %,
+60 of 60 confirmed. What that rule does to a 12.1 % needs his re-run, not a
+guess: an isolated lucky frame is exactly what the two-frame rule exists to
+kill, and 58 of his false accepts are press maxima.
+
+**Tested and rejected: the overlap floor.** The returned NCC is a maximum over
+~7,600 coarse and 225 fine alignments admitted from 800 px of masked overlap,
+i.e. 20 % of the frame, with probes accepted from coverage 0.35 where a
+well-placed frame sits at 0.70–0.75. Maximising over many small-overlap
+hypotheses inflates an impostor's best score by construction, so raising the
+floor was the obvious lever — tsteppy had also measured 1400 as better on his
+unit. On the reference dataset it is not:
+
+| overlap floor | genuine min | impostor max | FRR (driver's rule) | FAR |
+|---:|---:|---:|---:|---:|
+| **800 (shipped)** | **5153** | **4426** | **0 %** | 0 % |
+| 1200 | 4841 | 4426 | 1.7 % | 0 % |
+| 1400 | 4810 | 4426 | 3.3 % | 0 % |
+| 1600 | 2532 | 4166 | 5.0 % | 0 % |
+| 2000 | 1740 | 3928 | 18.3 % | 0 % |
+
+It costs genuine presses and barely moves the impostor ceiling: the margin
+narrows. Here the strongest impostor pairs win at 940–1491 px of overlap, not
+at the floor, so the mechanism is real but the constant is not where this unit
+loses. Whether it is where a *failing* unit loses is exactly what `pairdiag`
+(`tools/accuracy/`) now reports, in scalars a reporter can paste.
+
+**What is NOT the explanation**, each checked: the flat-field (the kit's
+arithmetic is character-for-character the driver's, on the reporter's own
+baseline); the exposure (his calibrated frame mean lands 2 grey levels from
+target, the best-centred of the three units); the local-ridge-period check (a
+rejection scores 0, and not one of his 540 Gabor presses scored 0); and
+tsteppy's gain-0 regime — our init blob writes `reg 0x12 = 0x05`
+([`egis_init.h:63`](../driver/egis0576/egis_init.h)), so the community init
+sequence does set the gain and his low-contrast finding is a different problem
+from this one.

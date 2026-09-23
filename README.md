@@ -224,6 +224,20 @@ comes from a second person yet); on a second unit, Thaddeus Stepanovich's, it
 takes his matcher from 51.7 % to **6.9 %** false rejects held-out, without
 reaching a clean gap there.
 
+**That clean gap is a property of the reference unit, not of the matcher, and
+on the two reported foreign units it is absent** (2026-09-22). Both of them
+score same-person impostor presses ABOVE the accept point of 0.78: 0.815 on
+Stepanovich's unit and 0.903 on the third reported one, where the kit's
+press-maximum rule puts the false-accept rate at 12.1 % against 60 % false
+rejects. The driver does not accept on a press maximum — it needs two
+consecutive frames over the threshold and corroborates the second one on the
+un-flat-fielded bytes — but until `kit_version 3` the kit applied that rule to
+the genuine side only, so no measured false-accept figure in this project has
+ever been the driver's. Re-measuring both populations under the driver's rule,
+and closing the gap the numbers point at, is open work: see
+[`docs/matcher-comparison.md`](docs/matcher-comparison.md). Treat the 0 % / 0 %
+above as what one unit can tell you, and no more.
+
 Two other flavours build from the same tree, for comparison rather than use:
 
 ```bash
@@ -237,8 +251,11 @@ libfprint. On the three accuracy-tested units it rejected 0 %, 3.33 % and
 61.7 % of genuine presses and scored 0 on all 480 impostor comparisons of each
 run. `cleanroom` is his original front-end behind the same adapter: at its
 published threshold it rejects 35 %, 73.3 % and 93.3 % of genuine presses on
-those same captures and produced this project's only measured false accepts
-(5 of 480 on one unit). All three are measured on identical captures in
+those same captures (5 false accepts of 480 on one unit). It is not the only
+flavour with measured false accepts: the default produced 58 of 480 on the
+third unit under the same press-maximum rule. `vendor` is the only one that
+has never accepted an impostor press on any unit measured so far — at the cost
+of the 61.7 % above. All three are measured on identical captures in
 [`docs/matcher-comparison.md`](docs/matcher-comparison.md); reproduce on your
 own unit with [`tools/accuracy/`](tools/accuracy/README.md).
 

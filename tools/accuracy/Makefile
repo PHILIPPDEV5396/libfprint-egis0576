@@ -1,7 +1,7 @@
 # Builds the two offline scorers straight from the repo's driver sources.
 # No libfprint build tree, no meson, no glib: a C compiler and libm only.
 #
-#   make            -> score-vendor score-cleanroom score-gabor (next to this Makefile)
+#   make            -> score-vendor score-cleanroom score-gabor pairdiag (next to this Makefile)
 #   make clean
 #
 # The vendor objects are Egis' matcher machine-translated from the Windows
@@ -27,8 +27,14 @@ VENDOR_CFLAGS := $(COMMON) -w -fno-stack-protector -fpermissive -fwrapv \
 # (-DEGIS_CR_FRONTEND_TSTEPPY); see egis_engine_cleanroom.c.
 CLEAN_CFLAGS  := $(COMMON) -Wall -I$(DRV)/tsteppy -DEGIS_CR_VERIFY_EARLY_EXIT=0 \
                  -DEGIS_CR_FRONTEND_TSTEPPY
+# GABOR_EXTRA passes constants to the shipped front-end without editing it, so
+# a reporter can measure a proposed change on their own captures in one line:
+#   make clean && make GABOR_EXTRA=-DEG_MIN_OVERLAP=1400
+# (the alignment search's overlap floor, egis_match_gabor.c; every #define in
+# gabor/*.h is guarded by #ifndef for exactly this.)
+GABOR_EXTRA   ?=
 GABOR_CFLAGS  := $(COMMON) -Wall -std=c99 -I$(DRV)/tsteppy -I$(DRV)/gabor \
-                 -DEGIS_CR_VERIFY_EARLY_EXIT=0
+                 -DEGIS_CR_VERIFY_EARLY_EXIT=0 $(GABOR_EXTRA)
 SCORE_CFLAGS  := $(COMMON) -Wall
 
 VENDOR_SRC := egis_funcs.c egis_rt.c egis_engine.c egis_preprocess.c egis_coherence_map.c
@@ -38,7 +44,7 @@ VENDOR_OBJ := $(addprefix $(OBJ)/vendor/,$(VENDOR_SRC:.c=.o))
 CLEAN_OBJ  := $(addprefix $(OBJ)/cleanroom/,$(notdir $(CLEAN_SRC:.c=.o)))
 GABOR_OBJ  := $(OBJ)/gabor/egis_engine_cleanroom.o $(OBJ)/gabor/egis_match_gabor.o
 
-all: $(HERE)score-vendor $(HERE)score-cleanroom $(HERE)score-gabor
+all: $(HERE)score-vendor $(HERE)score-cleanroom $(HERE)score-gabor $(HERE)pairdiag
 
 $(HERE)score-vendor: $(OBJ)/score.o $(VENDOR_OBJ)
 	$(CC) -o $@ $^ -lm
@@ -48,6 +54,11 @@ $(HERE)score-cleanroom: $(OBJ)/score.o $(CLEAN_OBJ)
 
 $(HERE)score-gabor: $(OBJ)/score.o $(GABOR_OBJ)
 	$(CC) -o $@ $^ -lm
+
+# Diagnostic, not a scorer: coverage and winning-overlap aggregates for one
+# dataset (pairdiag.c). Built against the Gabor front-end only.
+$(HERE)pairdiag: $(HERE)pairdiag.c $(OBJ)/gabor/egis_match_gabor.o
+	$(CC) $(GABOR_CFLAGS) -o $@ $^ -lm
 
 $(OBJ)/gabor/egis_engine_cleanroom.o: $(DRV)/egis_engine_cleanroom.c $(DRV)/gabor/egis_cr_tuning_gabor.h $(DRV)/gabor/egis_match_check.h
 	@mkdir -p $(dir $@)
@@ -82,7 +93,7 @@ $(OBJ)/cleanroom/egis_match.o: $(DRV)/tsteppy/egis_match.c
 	$(CC) $(CLEAN_CFLAGS) -c -o $@ $<
 
 clean:
-	rm -rf $(OBJ) $(HERE)score-vendor $(HERE)score-cleanroom $(HERE)score-gabor $(HERE)nbis-count
+	rm -rf $(OBJ) $(HERE)score-vendor $(HERE)score-cleanroom $(HERE)score-gabor $(HERE)pairdiag $(HERE)nbis-count
 
 # How many minutiae NBIS mindtct finds per frame (the "why not an image
 # driver" number, docs/matcher-comparison.md). Needs a libfprint source tree
