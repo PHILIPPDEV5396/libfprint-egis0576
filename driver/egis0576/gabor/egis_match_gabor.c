@@ -247,6 +247,7 @@
 
 #include "egis_match.h"
 #include "egis_match_check.h"
+#include "egis_match_evidence.h"
 
 /* Operating point of THIS front-end (egis_match.h): the accept NCC sits in
  * the gap between the lowest genuine press (0.81) and the highest impostor
@@ -618,8 +619,15 @@ eg_mask (EgScratch *S, uint8_t *mask)
 }
 
 /* ---- public: frame -------------------------------------------------------*/
-void
-em_frame_compute (const uint8_t *raw, EmFrame *f)
+/* The frame, and optionally its Gabor RESIDUAL (res != NULL): the
+ * local-contrast-normalised frame minus its least-squares multiple of the
+ * ridge image over the mask -- the fine structure (ridge breaks, ridge-width
+ * and edge detail, minutia-scale features) that the steered filter throws
+ * away and that egis_match_evidence.c matches on -- band-limited by a
+ * normalised-convolution Gaussian of res_sigma px so the mask edge does not
+ * leak into it, and 0 outside the mask. */
+static void
+eg_frame (const uint8_t *raw, EmFrame *f, float *res, double res_sigma)
 {
   EgScratch *S = malloc (sizeof *S);
   double mean = 0, var = 0, sd;
@@ -629,6 +637,8 @@ em_frame_compute (const uint8_t *raw, EmFrame *f)
       /* Out of memory: hand back an empty frame. coverage 0 fails every
        * gate downstream (adapter: enrol -2 / verify -1), nothing crashes. */
       memset (f, 0, sizeof *f);
+      if (res)
+        memset (res, 0, EM_N * sizeof (float));
       return;
     }
   for (int i = 0; i < EM_N; i++)
@@ -637,7 +647,6 @@ em_frame_compute (const uint8_t *raw, EmFrame *f)
   eg_orientation (S);
   eg_gabor (S->norm, S->ridge, eg_period (S->norm, S->ridge, S->a, S->b), f->img);
   f->coverage = eg_mask (S, f->mask);
-  free (S);
 
   /* Ridge evidence on an ABSOLUTE scale, before the standardisation below
    * erases it: a frame whose Gabor response over the mask has no amplitude
@@ -681,6 +690,53 @@ em_frame_compute (const uint8_t *raw, EmFrame *f)
    * the rotation search resamples img bilinearly, and without this a pixel
    * just inside the mask borrows intensity from a neighbour the mask threw
    * away. The masked NCC itself never reads these pixels. */
+
+  if (res)
+    {
+      double m = 0, sg = 0, sng = 0, beta;
+      int n = 0;
+
+      memset (res, 0, EM_N * sizeof (float));
+      for (int i = 0; i < EM_N; i++)
+        if (f->mask[i])
+          {
+            m += S->norm[i];
+            n++;
+          }
+      if (n > 0)
+        {
+          m /= n;
+          for (int i = 0; i < EM_N; i++)
+            if (f->mask[i])
+              {
+                sng += (S->norm[i] - m) * f->img[i];
+                sg += f->img[i] * f->img[i];
+              }
+          beta = sng / (sg > 1e-12 ? sg : 1e-12);
+          for (int i = 0; i < EM_N; i++)
+            {
+              S->a[i] = f->mask[i] ? (S->norm[i] - m) - beta * f->img[i] : 0.0;
+              S->b[i] = f->mask[i] ? 1.0 : 0.0;
+            }
+          eg_blur (S->a, S->c, res_sigma, S->tmp);
+          eg_blur (S->b, S->d, res_sigma, S->tmp);
+          for (int i = 0; i < EM_N; i++)
+            res[i] = (f->mask[i] && S->d[i] > 1e-6) ? (float) (S->c[i] / S->d[i]) : 0.0f;
+        }
+    }
+  free (S);
+}
+
+void
+em_frame_compute (const uint8_t *raw, EmFrame *f)
+{
+  eg_frame (raw, f, NULL, 0.0);
+}
+
+void
+em_frame_residual (const uint8_t *raw, EmFrame *f, float *res, double sigma)
+{
+  eg_frame (raw, f, res, sigma);
 }
 
 /* ---- rotation ------------------------------------------------------------*/

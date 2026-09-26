@@ -42,7 +42,8 @@ CLEAN_SRC  := egis_engine_cleanroom.c tsteppy/egis_match.c
 
 VENDOR_OBJ := $(addprefix $(OBJ)/vendor/,$(VENDOR_SRC:.c=.o))
 CLEAN_OBJ  := $(addprefix $(OBJ)/cleanroom/,$(notdir $(CLEAN_SRC:.c=.o)))
-GABOR_OBJ  := $(OBJ)/gabor/egis_engine_cleanroom.o $(OBJ)/gabor/egis_match_gabor.o
+GABOR_OBJ  := $(OBJ)/gabor/egis_engine_cleanroom.o $(OBJ)/gabor/egis_match_gabor.o \
+              $(OBJ)/gabor/egis_match_evidence.o
 
 all: $(HERE)score-vendor $(HERE)score-cleanroom $(HERE)score-gabor $(HERE)pairdiag
 
@@ -67,11 +68,18 @@ $(HERE)pairdiag: $(HERE)pairdiag.c $(DRV)/gabor/egis_match_gabor.c $(DRV)/gabor/
 # which has none of the flags above and fails.
 pairdiag: $(HERE)pairdiag
 
-$(OBJ)/gabor/egis_engine_cleanroom.o: $(DRV)/egis_engine_cleanroom.c $(DRV)/gabor/egis_cr_tuning_gabor.h $(DRV)/gabor/egis_match_check.h
+$(OBJ)/gabor/egis_engine_cleanroom.o: $(DRV)/egis_engine_cleanroom.c $(DRV)/gabor/egis_cr_tuning_gabor.h $(DRV)/gabor/egis_match_check.h \
+                                      $(DRV)/gabor/egis_match_evidence.h
 	@mkdir -p $(dir $@)
 	$(CC) $(GABOR_CFLAGS) -c -o $@ $<
 
-$(OBJ)/gabor/egis_match_gabor.o: $(DRV)/gabor/egis_match_gabor.c $(DRV)/tsteppy/egis_match.h
+$(OBJ)/gabor/egis_match_gabor.o: $(DRV)/gabor/egis_match_gabor.c $(DRV)/tsteppy/egis_match.h \
+                                 $(DRV)/gabor/egis_match_evidence.h
+	@mkdir -p $(dir $@)
+	$(CC) $(GABOR_CFLAGS) -c -o $@ $<
+
+$(OBJ)/gabor/egis_match_evidence.o: $(DRV)/gabor/egis_match_evidence.c $(DRV)/gabor/egis_match_evidence.h \
+                                    $(DRV)/tsteppy/egis_match.h
 	@mkdir -p $(dir $@)
 	$(CC) $(GABOR_CFLAGS) -c -o $@ $<
 

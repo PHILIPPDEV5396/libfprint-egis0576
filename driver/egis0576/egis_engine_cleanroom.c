@@ -153,7 +153,9 @@
 #ifndef EGIS_CR_FRONTEND_TSTEPPY
 #include "gabor/egis_cr_tuning_gabor.h"
 #include "gabor/egis_match_check.h"
+#include "gabor/egis_match_evidence.h"
 #define EGIS_CR_HAVE_MATCH_EX 1
+#define EGIS_CR_HAVE_EVIDENCE 1
 #endif
 
 /* Must equal EGIS0576_ENROLL_STAGES in driver/egis0576.c. If the driver asks
@@ -241,13 +243,48 @@
 #define EGIS_CR_VERIFY_EARLY_EXIT 1
 #endif
 
+/* ---- the decision --------------------------------------------------------
+ *
+ * Gabor build: verify and identify decide on IDENTITY EVIDENCE
+ * (gabor/egis_match_evidence.c), not on the front-end's NCC: the fine
+ * structure the Gabor filter discards has to reproduce over a contiguous
+ * area of the overlap. The evidence W (milli-units) maps to the contract's
+ * score as score = W * EGIS_THRESHOLD / EGIS_CR_ACCEPT_EVIDENCE, so the
+ * accept point lands exactly on EGIS_THRESHOLD. The front-end's NCC only
+ * proposes the poses at which the evidence is looked for, and still drives
+ * enrolment (quality gate, steering) unchanged.
+ * tsteppy's build: the NCC decides, as before. */
+#ifdef EGIS_CR_HAVE_EVIDENCE
+#ifndef EGIS_CR_ACCEPT_EVIDENCE
+#define EGIS_CR_ACCEPT_EVIDENCE 2000              /* milli-W: accept at W >= 2 */
+#endif
+typedef EvFrame CrFrame;
+typedef EvProbe CrProbe;
+#define CR_PROBE_FRAME(p) (&(p)->e.f)
+#else
+typedef EmFrame CrFrame;
+typedef EmFrame CrProbe;
+#define CR_PROBE_FRAME(p) (p)
+#endif
+
 
 /* ---- state ---------------------------------------------------------------- */
 
 typedef struct
 {
   int      nframes;
-  EmFrame *frames;                                /* nframes EmFrames */
+  CrFrame *frames;                                /* nframes CrFrames */
+#ifdef EGIS_CR_HAVE_EVIDENCE
+  /* The pose and template frame of this entry's best evidence in the LAST
+   * egis_verify / egis_identify call, which egis_verify_raw_ok checks the
+   * raw frame at. Valid only for the frame just scored: the driver calls
+   * egis_verify_raw_ok right after the verify or identify whose accept it
+   * corroborates, on the same thread (driver/egis0576.c, match_thread).
+   * Nothing else reads it, so a frame's score never depends on what was
+   * scored before it. */
+  EvPose   last_pose;
+  int      last_frame;
+#endif
 } CrEntry;
 
 typedef struct
@@ -267,7 +304,7 @@ struct EgisEngine
   CrEnrol enrol;
   CrEntry gallery[EGIS_CR_MAX_GALLERY];
   int     gallery_n;
-  EmFrame probe;                                   /* scratch for verify/identify */
+  CrProbe probe;                                   /* scratch for verify/identify */
 };
 
 /* ---- helpers -------------------------------------------------------------- */
@@ -284,6 +321,43 @@ gallery_free (EgisEngine *e)
   e->gallery_n = 0;
 }
 
+#ifdef EGIS_CR_HAVE_EVIDENCE
+static int
+ev_to_score (int ev)
+{
+  if (ev < 0)
+    return -1;                                     /* no alignment at all */
+  return (int) lround (ev * ((double) EGIS_THRESHOLD / EGIS_CR_ACCEPT_EVIDENCE));
+}
+
+/* best-of-N over one gallery entry; -1 if nothing could be scored */
+static int
+score_entry (const CrProbe *p, CrEntry *e, int stop_at_accept)
+{
+  int best = -1;
+
+  e->last_pose.valid = 0;
+  e->last_frame = -1;
+  for (int i = 0; i < e->nframes; i++)
+    {
+      EvPose pose;
+      /* template first, probe second: only the probe is resampled */
+      int s = ev_match (&e->frames[i], p, stop_at_accept ? EGIS_CR_ACCEPT_EVIDENCE : 0, &pose);
+      if (s > best)
+        {
+          best = s;
+          e->last_pose = pose;
+          e->last_frame = i;
+        }
+      /* verify only needs "over the threshold or not", so it stops at the
+       * first template frame (and inside it, the first pose) that clears it.
+       * identify keeps the full maximum, because it ranks prints. */
+      if (stop_at_accept && best >= EGIS_CR_ACCEPT_EVIDENCE)
+        break;
+    }
+  return ev_to_score (best);
+}
+#else
 static int
 ncc_to_score (double ncc)
 {
@@ -294,7 +368,7 @@ ncc_to_score (double ncc)
 
 /* best-of-N over one gallery entry; -1 if nothing could be scored */
 static int
-score_entry (const EmFrame *p, const CrEntry *e, int stop_at_accept)
+score_entry (const CrProbe *p, CrEntry *e, int stop_at_accept)
 {
   double best = -1.0;
 
@@ -314,6 +388,17 @@ score_entry (const EmFrame *p, const CrEntry *e, int stop_at_accept)
         break;
     }
   return ncc_to_score (best);
+}
+#endif
+
+static void
+probe_compute (const uint8_t *raw, CrProbe *p)
+{
+#ifdef EGIS_CR_HAVE_EVIDENCE
+  ev_probe_compute (raw, p);
+#else
+  em_frame_compute (raw, p);
+#endif
 }
 
 static int
@@ -460,7 +545,7 @@ egis_gallery_load (EgisEngine *e, const uint8_t *const *blobs, const int *sizes,
   for (int i = 0; i < n; i++)
     {
       int nf = nframes[i];
-      e->gallery[i].frames = calloc ((size_t) nf, sizeof (EmFrame));
+      e->gallery[i].frames = calloc ((size_t) nf, sizeof (CrFrame));
       if (!e->gallery[i].frames)
         {
           gallery_free (e);
@@ -468,7 +553,11 @@ egis_gallery_load (EgisEngine *e, const uint8_t *const *blobs, const int *sizes,
         }
       e->gallery[i].nframes = nf;
       for (int k = 0; k < nf; k++)
+#ifdef EGIS_CR_HAVE_EVIDENCE
+        ev_frame_compute (blobs[i] + k * EGIS_IMG_SIZE, &e->gallery[i].frames[k]);
+#else
         em_frame_compute (blobs[i] + k * EGIS_IMG_SIZE, &e->gallery[i].frames[k]);
+#endif
     }
   e->gallery_n = n;
   return 0;
@@ -479,8 +568,8 @@ egis_verify (EgisEngine *e, const uint8_t *raw, int idx)
 {
   if (!e || !raw || idx < 0 || idx >= e->gallery_n || !e->gallery[idx].frames)
     return -1;
-  em_frame_compute (raw, &e->probe);
-  if (e->probe.coverage < EGIS_CR_MIN_COVERAGE)
+  probe_compute (raw, &e->probe);
+  if (CR_PROBE_FRAME (&e->probe)->coverage < EGIS_CR_MIN_COVERAGE)
     return -1;
   return score_entry (&e->probe, &e->gallery[idx], EGIS_CR_VERIFY_EARLY_EXIT);
 }
@@ -507,10 +596,14 @@ egis_verify_raw_ok (EgisEngine *e, const uint8_t *raw_unfielded, int idx)
    * measured NCC >= 0.79 on the reference unit; a featureless contact whose
    * flat-fielded twin scored 0.93 through a poisoned baseline scores like a
    * blank here. */
-  em_frame_compute (raw_unfielded, &e->probe);
+  probe_compute (raw_unfielded, &e->probe);
   for (int i = 0; i < e->gallery[idx].nframes; i++)
     {
+#ifdef EGIS_CR_HAVE_EVIDENCE
+      double v = ev_ridge_best (&e->gallery[idx].frames[i], &e->probe);
+#else
       double v = em_match (&e->gallery[idx].frames[i], &e->probe);
+#endif
       if (v > best)
         best = v;
       if (best >= EGIS_CR_RAW_CORROBORATE_NCC)
@@ -526,8 +619,8 @@ egis_identify (EgisEngine *e, const uint8_t *raw, int *out_idx)
     *out_idx = -1;
   if (!e || !raw || e->gallery_n <= 0)
     return -1;
-  em_frame_compute (raw, &e->probe);
-  if (e->probe.coverage < EGIS_CR_MIN_COVERAGE)
+  probe_compute (raw, &e->probe);
+  if (CR_PROBE_FRAME (&e->probe)->coverage < EGIS_CR_MIN_COVERAGE)
     return -1;
 
   int best = -1, besti = -1;

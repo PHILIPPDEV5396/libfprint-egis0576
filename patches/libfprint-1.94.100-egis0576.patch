@@ -39,7 +39,7 @@ index f11533c..8e6389c 100644
      'egismoc' : files('drivers/egismoc/egismoc.c'),
      'egis_etu905' : files('drivers/egismoc/egis_etu905.c'),
      'vfs0050' : files('drivers/vfs0050.c'),
-@@ -250,11 +256,69 @@ libfprint_private = static_library('fprint-private',
+@@ -250,11 +256,71 @@ libfprint_private = static_library('fprint-private',
      link_with: libnbis,
      install: false)
  
@@ -87,11 +87,13 @@ index f11533c..8e6389c 100644
 +            install: false) ]
 +    else
 +        # The shipped matcher: the clean-room adapter on the Gabor front-end
-+        # (drivers/egis0576/gabor/); plain C99 under the normal flags.
++        # and its identity evidence (drivers/egis0576/gabor/); plain C99 under
++        # the normal flags.
 +        egis0576_engine_libs = [ static_library('egis0576-gabor',
 +            sources: [
 +                'drivers/egis0576/egis_engine_cleanroom.c',
 +                'drivers/egis0576/gabor/egis_match_gabor.c',
++                'drivers/egis0576/gabor/egis_match_evidence.c',
 +            ],
 +            include_directories: include_directories('drivers/egis0576',
 +                                                     'drivers/egis0576/tsteppy',
