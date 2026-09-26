@@ -18,6 +18,7 @@ with no build option, no static library and no include directories:
         egis_match.h                        driver/egis0576/tsteppy/egis_match.h (byte for byte)
         egis_match_gabor.c                  driver/egis0576/gabor/egis_match_gabor.c
         egis_match_check.h                  driver/egis0576/gabor/egis_match_check.h
+        egis_match_evidence.c, .h           driver/egis0576/gabor/egis_match_evidence.{c,h}
         egis_cr_tuning.h                    driver/egis0576/gabor/egis_cr_tuning_gabor.h
 
 plus the meson entries (driver sources, drivers_info), the hwdb bookkeeping
@@ -54,23 +55,54 @@ def must_replace(s, old, new, what):
     return s.replace(old, new, 1)
 
 
+def resolve(s, macro):
+    """Keep what a build with `macro` defined compiles and drop the rest, for
+    every #ifdef/#ifndef on exactly that macro (nesting-aware)."""
+    out, stack = [], []          # stack entries: None (other #if) or [keep_now, is_ifdef]
+    for line in s.splitlines(keepends=True):
+        t = line.strip()
+        live = all(e is None or e[0] for e in stack)
+        if t in (f'#ifdef {macro}', f'#ifndef {macro}'):
+            stack.append([t.startswith('#ifdef'), True])
+            continue
+        if t.startswith('#if'):
+            stack.append(None)
+        elif t.startswith('#else') and stack and stack[-1] is not None:
+            stack[-1][0] = not stack[-1][0]
+            continue
+        elif t.startswith('#endif'):
+            if stack.pop() is not None:
+                continue
+        if live:
+            out.append(line)
+    if stack:
+        sys.exit(f'make-tree: unbalanced #if around {macro}')
+    return ''.join(out)
+
+
 def adapter(src):
     """egis_engine_cleanroom.c -> egis_engine.c: one front-end, flat includes."""
     s = read(src)
-    # the comparison-flavour selection block becomes the two includes
+    # the comparison-flavour selection block becomes the includes
     s = must_replace(
         s,
         '#ifndef EGIS_CR_FRONTEND_TSTEPPY\n'
         '#include "gabor/egis_cr_tuning_gabor.h"\n'
         '#include "gabor/egis_match_check.h"\n'
+        '#include "gabor/egis_match_evidence.h"\n'
         '#define EGIS_CR_HAVE_MATCH_EX 1\n'
+        '#define EGIS_CR_HAVE_EVIDENCE 1\n'
         '#endif\n',
         '#include "egis_cr_tuning.h"\n'
-        '#include "egis_match_check.h"\n',
+        '#include "egis_match_check.h"\n'
+        '#include "egis_match_evidence.h"\n',
         'the front-end selection block in egis_engine_cleanroom.c')
+    # the evidence decision is the only one submitted: its branches stay, the
+    # NCC decision of the comparison flavour goes
+    s = resolve(s, 'EGIS_CR_HAVE_EVIDENCE')
     # its comment paragraph
     s = re.sub(r'/\* The out-of-tree repository also builds this adapter on the original\n'
-               r'(?: \*.*\n)*? \* point\. Only the Gabor build is submitted\. \*/\n',
+               r'(?: \*.*\n)*? \* 2026-09-26, see docs/upstream-mr\.md\)\. \*/\n',
                '', s, count=1)
     # the steering block is unconditional
     if s.count('#ifdef EGIS_CR_HAVE_MATCH_EX') != 1:
@@ -88,6 +120,7 @@ def meson_libfprint(s):
              "        'drivers/egis0576/egis0576_proto.c',\n"
              "        'drivers/egis0576/egis_engine.c',\n"
              "        'drivers/egis0576/egis_match_gabor.c',\n"
+             "        'drivers/egis0576/egis_match_evidence.c',\n"
              "    ),\n")
     if "'egis0576' : files(" in s:
         return s
@@ -150,6 +183,8 @@ def main():
         'egis0576/egis_match.h': os.path.join(d, 'egis0576', 'tsteppy', 'egis_match.h'),
         'egis0576/egis_match_gabor.c': os.path.join(d, 'egis0576', 'gabor', 'egis_match_gabor.c'),
         'egis0576/egis_match_check.h': os.path.join(d, 'egis0576', 'gabor', 'egis_match_check.h'),
+        'egis0576/egis_match_evidence.c': os.path.join(d, 'egis0576', 'gabor', 'egis_match_evidence.c'),
+        'egis0576/egis_match_evidence.h': os.path.join(d, 'egis0576', 'gabor', 'egis_match_evidence.h'),
         'egis0576/egis_cr_tuning.h': os.path.join(d, 'egis0576', 'gabor', 'egis_cr_tuning_gabor.h'),
     }
     for rel, src in copies.items():
@@ -174,7 +209,8 @@ def main():
         p = os.path.join(lf, 'tests', 'meson.build'); write(p, tests_meson(read(p)))
 
     # nothing submitted may still name the flavours or the other front-end's files
-    bad = re.compile(r'EGIS_CR_FRONTEND_TSTEPPY|EGIS_CR_HAVE_MATCH_EX|gabor/|tsteppy/egis_match\.c|egis0576_matcher')
+    bad = re.compile(r'EGIS_CR_FRONTEND_TSTEPPY|EGIS_CR_HAVE_MATCH_EX|EGIS_CR_HAVE_EVIDENCE|gabor/|'
+                     r'tsteppy/egis_match\.c|egis0576_matcher')
     for rel in list(copies) + ['egis0576/egis_engine.c']:
         for n, line in enumerate(read(os.path.join(out, rel)).splitlines(), 1):
             if bad.search(line):

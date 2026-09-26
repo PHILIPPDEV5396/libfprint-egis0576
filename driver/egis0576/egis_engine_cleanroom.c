@@ -19,16 +19,20 @@
  * WHAT THIS FILE IS
  *
  * The egis0576 driver talks to its matcher only through egis_engine.h. This
- * file implements that contract as an image-correlation matcher: each
- * enrolment press is kept as a 70x57 frame, a probe frame is compared with
- * every stored frame by masked normalised cross-correlation over a shift and
- * rotation search, and the best score decides. The frame representation
- * (EmFrame) and the two functions em_frame_compute() / em_match() are the
- * interface Thaddeus Stepanovich designed for his LGPL correlation matcher
- * (egis_match.h, his file, unchanged); the implementation compiled here is
- * the Gabor front-end in egis_match_gabor.c, with its operating-point
- * constants in egis_cr_tuning.h and the alignment report of
- * egis_match_check.h that the enrolment steering below uses.
+ * file implements that contract as an image matcher: each enrolment press is
+ * kept as a 70x57 frame, a probe frame is compared with every stored frame,
+ * and the best score decides. The frame representation (EmFrame) and the two
+ * functions em_frame_compute() / em_match() are the interface Thaddeus
+ * Stepanovich designed for his LGPL correlation matcher (egis_match.h, his
+ * file, unchanged); the implementation compiled here is the Gabor front-end
+ * in egis_match_gabor.c, with its operating-point constants in
+ * egis_cr_tuning.h and the alignment report of egis_match_check.h that the
+ * enrolment steering below uses. Since 2026-09-26 the front-end's
+ * correlation no longer decides verify and identify: the decision is the
+ * IDENTITY EVIDENCE of egis_match_evidence.c -- whether the fine structure
+ * the Gabor filter discards reproduces over a contiguous area -- and the
+ * correlation only proposes the poses it is looked for at (see "the
+ * decision" below).
  *
  * Why not minutiae: on a 70x57 sensor (roughly 5.5 x 4.5 mm, inferred from
  * the measured 6.4 px ridge period) NBIS mindtct finds a
@@ -37,10 +41,24 @@
  * there is nothing to match. Correlation on the ridge texture is what the
  * sensor's size leaves.
  *
- * MEASURED (tools/accuracy of the out-of-tree repository, one person per
- * unit, every frame of a press scored, impostors = the same person's other
- * fingers; scores are NCC; rejects / accepts under the driver's two-frame
- * rule unless noted):
+ * MEASURED, THE IDENTITY EVIDENCE (this build; tools/accuracy kit_version 4
+ * of the out-of-tree repository, driver's rule, one person, impostors = the
+ * same person's other fingers):
+ *
+ *   reference unit, session 2026-09-18 -- the session every constant of the
+ *     evidence stage was set on, so IN-SAMPLE: 3 / 60 rejects, 0 / 480
+ *     accepts, strongest impostor 0.45 x the accept point; the vendor
+ *     matcher on the same frames 4 / 60 and 0 / 480. Of the three rejects
+ *     two have no block evidence against any stored frame at any rotation
+ *     and shift within +-42 px, the third only at a rotation outside the
+ *     +-90 deg search
+ *     (egis_match_evidence.c, MEASURED); the vendor matcher rejects all
+ *     three too. Not yet measured on data it was not tuned on.
+ *
+ * MEASURED, THE FRONT-END'S NCC AS THE DECISION (until 2026-09-26; one
+ * person per unit, every frame of a press scored, impostors = the same
+ * person's other fingers; scores are NCC; rejects / accepts under the
+ * driver's two-frame rule unless noted):
  *
  *   reference unit, session 2026-09-13, 60 genuine / 480 impostor presses
  *     (the kit's two folds of six-press templates; until 2026-09-26 this
@@ -65,13 +83,13 @@
  *     press-maximum rule (the driver's rule not measured there)
  *   live through fprintd: genuine presses 0.86-0.95, another finger 0.55
  *
- * Why: the front-end scores whether two patches agree in ridge flow and
- * ridge period, and that is not identity. Two different fingers that put
- * near-parallel ridges at a similar angle and period on the sensor score
- * like one finger, and whether they do depends on how the fingers land in
- * a session. Threshold, overlap floor and search width were measured
- * against it; each only trades false rejects for false accepts. See
- * egis_match_gabor.c, LIMITS, and the out-of-tree repository's
+ * Why the NCC stopped deciding: the front-end scores whether two patches
+ * agree in ridge flow and ridge period, and that is not identity. Two
+ * different fingers that put near-parallel ridges at a similar angle and
+ * period on the sensor score like one finger, and whether they do depends on
+ * how the fingers land in a session. Threshold, overlap floor and search
+ * width were measured against it; each only trades false rejects for false
+ * accepts. See egis_match_gabor.c, LIMITS, and the out-of-tree repository's
  * docs/matcher-comparison.md, "2026-09-26: what prevents a universal 0/0".
  *
  * The same-person impostor set is the ceiling this could be measured
@@ -81,28 +99,33 @@
  * SCORE MAPPING
  *
  *   The contract is an int score, accept iff score >= EGIS_THRESHOLD (5000),
- *   < 0 means "nothing to score". The NCC in [-1, 1] is scaled so that the
- *   front-end's threshold (em_match_threshold, 0.78) lands exactly on it:
- *   score = lround (ncc * 5000 / 0.78), i.e. 6410 per unit NCC; a perfect
- *   1.0 logs as 6410.
+ *   < 0 means "nothing to score". The evidence W (egis_match_evidence.c,
+ *   in milli-units) is scaled so that its accept point
+ *   (EGIS_CR_ACCEPT_EVIDENCE, W 2.0) lands exactly on it: score = lround
+ *   (W * 2500). It is unbounded above: on the 2026-09-18 session the
+ *   genuine presses' median is 50,909, the highest impostor press 3,108.
+ *   (tsteppy's build keeps the NCC: score = lround (ncc * 5000 /
+ *   em_match_threshold).)
  *
  *   "Nothing to score" and "compared and rejected" are kept apart, because
  *   the driver answers them differently -- the first asks the user to press
  *   again (and fprintd restarts without spending an attempt), the second is
- *   a failed attempt. -1 therefore means only: the front-end's overlap
- *   sentinel, a probe under the coverage gate, an empty gallery slot, a bad
- *   index. A pair the front-end's ridge-period check rejects scores 0 --
- *   a non-match like any other, so an artefact that trips the check cannot
- *   be presented over and over for free.
+ *   a failed attempt. -1 therefore means only: no pose of any stored frame
+ *   reaches the overlap floor, a probe under the coverage gate, an empty
+ *   gallery slot, a bad index. A pair with no evidence scores 0 -- a
+ *   non-match like any other, so an artefact cannot be presented over and
+ *   over for free.
  *
  * TEMPLATE BYTES
  *
  *   egis_enroll_finish() hands the driver the stored frames back to back,
  *   nframes x 3990 bytes and nothing else (47,880 bytes for twelve presses);
  *   the driver wraps them in a versioned GVariant. A blob is valid iff it is
- *   a whole number of frames, 1..EGIS_CR_MAX_FRAMES of them. EmFrames are
+ *   a whole number of frames, 1..EGIS_CR_MAX_FRAMES of them. The frames'
+ *   features (ridge image, mask, residual, orientation lattice) are
  *   recomputed from the bytes once per action in egis_gallery_load()
- *   (~1.6 ms each), never per probe.
+ *   (~1.8 ms each), never per probe. The template format did not change when
+ *   the evidence took over the decision: v0.5 templates keep working.
  *
  *   PRIVACY: these bytes are images of the fingertip, flat-fielded. A
  *   minutiae driver stores coordinates that cannot be turned back into an
@@ -132,8 +155,14 @@
  *   static. The driver calls egis_enroll_begin / egis_enroll_finish on the
  *   main loop between captures and everything else from one GTask at a
  *   time, so nothing here runs concurrently and no locking is needed.
- *   EmFrames live on the heap (35,920 bytes each); em_frame_compute() uses
- *   < 8 kB of stack and a malloc'd scratch block.
+ *   Gallery frames live on the heap (52,840 bytes each as EvFrames, about
+ *   10 MB for 16 prints of 12 frames); the frame computations use < 8 kB of
+ *   stack and a malloc'd scratch block, ev_match() about 210 kB of heap
+ *   scratch per call, freed before it returns.
+ *
+ *   The one thing kept between calls besides the gallery is each entry's
+ *   last evidence pose (CrEntry.last_pose), which egis_verify_raw_ok checks
+ *   the raw frame at; a score never depends on what was scored before it.
  */
 
 #include <math.h>
@@ -227,16 +256,19 @@
 #ifndef EGIS_CR_STEER_MAX_RETRY
 #define EGIS_CR_STEER_MAX_RETRY 2
 #endif
-/* Raw-frame corroboration (egis_verify_raw_ok): the un-flat-fielded confirming
- * frame must reach this NCC against the accepted gallery entry, else the
- * accept is dropped. 0 disables the check (returns 1 always). tsteppy's
+/* Raw-frame corroboration (egis_verify_raw_ok) in tsteppy's build: the
+ * un-flat-fielded confirming frame must reach this NCC against the accepted
+ * gallery entry, else the accept is dropped; 0 disables the check. His
  * front-end has not been measured on raw-vs-flat-fielded pairs, so it ships
- * disabled; the Gabor tuning header sets it. */
+ * disabled. The Gabor build corroborates on the identity evidence instead
+ * (EGIS_CR_RAW_EVIDENCE, egis_cr_tuning_gabor.h). */
+#ifndef EGIS_CR_HAVE_EVIDENCE
 #ifndef EGIS_CR_RAW_CORROBORATE_NCC
 #define EGIS_CR_RAW_CORROBORATE_NCC 0.0
 #endif
+#endif
 /* egis_verify() stops scoring template frames at the first one over the
-* accept NCC (the driver only compares the result with the threshold). The
+* accept point (the driver only compares the result with the threshold). The
 * accuracy kit builds with this at 0 so its score distributions show the
 * true best-of-template maximum, not the first frame that cleared it. */
 #ifndef EGIS_CR_VERIFY_EARLY_EXIT
@@ -245,20 +277,20 @@
 
 /* ---- the decision --------------------------------------------------------
  *
- * Gabor build: verify and identify decide on IDENTITY EVIDENCE
- * (gabor/egis_match_evidence.c), not on the front-end's NCC: the fine
- * structure the Gabor filter discards has to reproduce over a contiguous
- * area of the overlap. The evidence W (milli-units) maps to the contract's
- * score as score = W * EGIS_THRESHOLD / EGIS_CR_ACCEPT_EVIDENCE, so the
- * accept point lands exactly on EGIS_THRESHOLD. The front-end's NCC only
- * proposes the poses at which the evidence is looked for, and still drives
- * enrolment (quality gate, steering) unchanged.
- * tsteppy's build: the NCC decides, as before. */
+ * verify and identify decide on IDENTITY EVIDENCE (egis_match_evidence.c),
+ * not on the front-end's NCC: the fine structure the Gabor filter discards
+ * has to reproduce over a contiguous area of the overlap. The evidence W
+ * (milli-units) maps to the contract's score as score = W * EGIS_THRESHOLD /
+ * EGIS_CR_ACCEPT_EVIDENCE, so the accept point lands exactly on
+ * EGIS_THRESHOLD. The ridge image only proposes the poses the evidence is
+ * looked for at; the front-end's NCC still drives enrolment (quality gate,
+ * steering) unchanged. */
 #ifdef EGIS_CR_HAVE_EVIDENCE
 typedef EvFrame CrFrame;
 typedef EvProbe CrProbe;
 #define CR_PROBE_FRAME(p) (&(p)->e.f)
 #else
+/* tsteppy's front-end has no residual: its NCC decides, as before */
 typedef EmFrame CrFrame;
 typedef EmFrame CrProbe;
 #define CR_PROBE_FRAME(p) (p)
@@ -292,7 +324,7 @@ typedef struct
   uint8_t raw[EGIS_CR_MAX_FRAMES][EGIS_IMG_SIZE];
   EmFrame frames[EGIS_CR_MAX_FRAMES];
   EmFrame scratch;
-} CrEnrol;                                         /* ~479 KB */
+} CrEnrol;                                         /* ~515 kB */
 
 /* One matcher instance: everything the adapter remembers between calls.
  * Allocated by egis_engine_new(), owned by the driver's device instance. */
@@ -413,7 +445,7 @@ blob_nframes (const uint8_t *blob, int size)
 EgisEngine *
 egis_engine_new (void)
 {
-  EgisEngine *e = calloc (1, sizeof (*e));         /* ~1.2 MB, once per device */
+  EgisEngine *e = calloc (1, sizeof (*e));         /* ~630 kB, once per device */
 
   return e;
 }
@@ -581,9 +613,9 @@ egis_gallery_capacity (EgisEngine *e)
 int
 egis_verify_raw_ok (EgisEngine *e, const uint8_t *raw_unfielded, int idx)
 {
+#ifndef EGIS_CR_HAVE_EVIDENCE
   double best = -1.0;
 
-#ifndef EGIS_CR_HAVE_EVIDENCE
   if (EGIS_CR_RAW_CORROBORATE_NCC <= 0.0)
     return 1;
 #endif
@@ -591,17 +623,15 @@ egis_verify_raw_ok (EgisEngine *e, const uint8_t *raw_unfielded, int idx)
     return 0;
   /* The raw frame still carries the sensor's fixed pattern (that is the
    * point: nothing has been subtracted from it, so nothing can have been
-   * painted into it). Genuine raw probes against flat-fielded templates
-   * measured NCC >= 0.79 on the reference unit; a featureless contact whose
-   * flat-fielded twin scored 0.93 through a poisoned baseline scores like a
-   * blank here. */
+   * painted into it). */
   probe_compute (raw_unfielded, &e->probe);
 #ifdef EGIS_CR_HAVE_EVIDENCE
   /* The accept being corroborated is the pose and template frame the last
    * egis_verify / egis_identify found for this entry; the raw frame has to
-   * reproduce the fine structure there too. No pose (nothing was compared,
-   * or this is not right after a verify of idx): nothing to corroborate. */
-  (void) best;
+   * reproduce the fine structure there too (EGIS_CR_RAW_EVIDENCE, with its
+   * measurement, in egis_cr_tuning_gabor.h). No pose -- nothing was
+   * compared, or this is not right after a verify of idx -- means nothing
+   * to corroborate. */
   {
     const CrEntry *en = &e->gallery[idx];
     if (!en->last_pose.valid || en->last_frame < 0 || en->last_frame >= en->nframes)
@@ -610,6 +640,10 @@ egis_verify_raw_ok (EgisEngine *e, const uint8_t *raw_unfielded, int idx)
            EGIS_CR_RAW_EVIDENCE;
   }
 #else
+  /* Genuine raw probes against flat-fielded templates measured NCC >= 0.79
+   * on the reference unit (Gabor front-end); a featureless contact whose
+   * flat-fielded twin scored 0.93 through a poisoned baseline scores like a
+   * blank here. */
   for (int i = 0; i < e->gallery[idx].nframes; i++)
     {
       double v = em_match (&e->gallery[idx].frames[i], &e->probe);

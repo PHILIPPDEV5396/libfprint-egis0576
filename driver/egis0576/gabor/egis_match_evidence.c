@@ -23,16 +23,21 @@
  *   1. Pose hypotheses: a phase-invariant ENVELOPE correlation of the
  *      template's ridge image against the probe's ridge image and its
  *      quadrature, over +-EV_ROT_MAX deg (EV_ROT_COARSE steps) and
- *      +-EV_SRCH px (EV_CSTEP grid); the EV_NHYP best distinct peaks are
- *      refined at full resolution. A hypothesis whose refined ridge-image NCC
- *      is under EV_GFLOOR is dropped. The ridge image only PROPOSES poses.
- *   2. At each hypothesis the overlap is cut into blocks, each block
+ *      +-EV_SRCH px (EV_CSTEP grid), down to EV_MIN_OVERLAP px of overlap.
+ *      The EV_NHYP best distinct peaks, plus the best peak at each of the
+ *      EV_NOF rotations the ORIENTATION FIELD ranks highest, are refined at
+ *      full resolution; a hypothesis whose refined ridge-image NCC is under
+ *      EV_GFLOOR is dropped. The ridge image only PROPOSES poses.
+ *   2. At each hypothesis the frame is cut into blocks that tile it
+ *      completely; each block with at least half its pixels in the overlap
  *      searches its own shift for the best masked NCC of the Gabor RESIDUAL
  *      (em_frame_residual), and blocks that reproduce the residual under one
  *      smoothly varying displacement form connected sets.
  *   3. The evidence W of a set is the sum of its blocks' Fisher-z excess over
  *      EV_TAU; the result is the best W over sets and hypotheses, in
- *      milli-W. The adapter accepts at W >= 2 (egis_engine_cleanroom.c).
+ *      milli-W. The adapter accepts at W >= 2 (egis_engine_cleanroom.c) and
+ *      corroborates an accept by the evidence of the un-flat-fielded frame
+ *      at the same pose (ev_evidence_at).
  *
  * Why the blocks shift independently: on near-parallel ridges the ridge
  * image is nearly blind to a shift along the ridges, so its best alignment
@@ -50,6 +55,55 @@
  * Why a flow coincidence cannot produce it: the residual is by construction
  * what the ridge image (flow and period) does not explain, so two fingers
  * with matching flow and period have uncorrelated residuals.
+ *
+ * Why the search reaches small edge overlaps: on the reference unit's
+ * 2026-09-18 session three genuine presses (left index 1, 7, 8) sat at
+ * 35-41 px shift with 510-700 px of masked overlap, where the ridge image
+ * matched at NCC 0.97-0.98 and 6-9 blocks reproduced the residual (W up to
+ * 5.9) -- and the step-3 prototype's search (+-30 px, 800 px floor, blocks
+ * missing the frame's last 6 columns and last row) never scored them. W
+ * needs no overlap floor of its own: a smaller overlap holds fewer blocks,
+ * so a chance W shrinks with it. The floor only keeps the pose ranking
+ * meaningful, at about the least area in which W can reach the accept point
+ * at a genuine press's block NCC: three blocks at the 8 px step, 16 x 32 px.
+ * The translation range is about the largest shift that still leaves that
+ * much (a 70 x 15 px strip at the masks' typical 0.7 x 0.7 coverage).
+ *
+ * Why the orientation-field proposals: on near-parallel ridges the envelope
+ * peaks of a genuine pair are broad and several can outrank the true pose;
+ * the orientation field's rotation profile depends on how the flow turns
+ * across the overlap, not on the ridge phase, and so ranks rotations
+ * independently. Measured on 2026-09-18: about one extra hypothesis per
+ * pair; 52 genuine frame pairs reach W 2 that did not, no impostor pair
+ * gains above W 0.81, and no press decision changes on that session.
+ *
+ * Why a block needs half its pixels, at full weight: weighting each block's
+ * atanh(r) by sqrt(n / 256) and letting blocks of >= 48 px count --
+ * per-pixel significance -- was measured on 2026-09-18 and not adopted: at
+ * the same accept point it rejected 5 of 60 genuine presses instead of 3
+ * (the strongest impostor fell from W 0.89 to 0.51, the separation between
+ * the weakest accepted genuine press and the strongest impostor stayed about
+ * the same), and counting such partial blocks at full weight accepted 3 of
+ * 480 impostor presses.
+ *
+ * MEASURED (tools/accuracy of the out-of-tree repository, kit_version 4,
+ * the driver's two-frame + raw rule; reference unit, session 2026-09-18,
+ * one person, impostors = the same person's other fingers). IN-SAMPLE:
+ * every constant here and in the adapter was set on this session.
+ *
+ *     60 genuine / 480 impostor presses: 3 / 60 rejects, 0 / 480 accepts;
+ *     strongest impostor 0.45 x the accept point (press maximum 0.62 x),
+ *     weakest accepted genuine 1.38 x; the vendor matcher on the same
+ *     frames 4 / 60 and 0 / 480. Of the three rejects, two (left index 0,
+ *     right thumb 2) show no block evidence against any stored frame at any
+ *     rotation and any shift within +-42 px (W <= 0.83), and the third
+ *     (right index 9) reaches W 2.1-2.2 only at a rotation of 110-115 deg,
+ *     outside the +-90 deg search; the vendor matcher rejects all three.
+ *
+ * COST (egis_verify, impostor probes, early exit on, DEV frames, gcc,
+ * 10-frame templates): 10.3 ms per template frame at -O2 and 12.0 ms at -O3
+ * against the front-end's 4.0 / 4.5 ms (2.6-2.7x). About half of it is the
+ * envelope search, a quarter the refinement, a sixth the block evidence.
  *
  * Plain C99, libm only, deterministic, no global or static state: every
  * call's scratch is malloc'd and freed before it returns.

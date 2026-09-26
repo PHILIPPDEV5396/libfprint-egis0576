@@ -35,6 +35,10 @@
 #endif
 
 /* ---- pose hypotheses --------------------------------------------------------
+ * Where a constant says "2026-09-18", it was set on the reference unit's
+ * session of that day (tools/accuracy of the out-of-tree repository), the
+ * only data any constant of this file was tuned on.
+ *
  * Rotation half-range and coarse step of the envelope search, deg. +-90 was
  * chosen as the full practical placement range, not measured on 2026-09-18
  * (rotations there are <= 12.5 deg); the decision below it was checked on
@@ -45,7 +49,10 @@
 #ifndef EV_ROT_COARSE
 #define EV_ROT_COARSE 10              /* deg */
 #endif
-/* Translation half-range, px (2026-09-18: two presses needed more than 25). */
+/* Translation half-range, px: about the largest shift that still leaves
+ * EV_MIN_OVERLAP (a 70 x 15 px strip at the masks' typical 0.7 x 0.7
+ * coverage). 2026-09-18: 30 -> 42 recovers two genuine presses whose poses
+ * sit at 38-41 px; at 38 one of them is lost again, at 46 nothing changes. */
 #ifndef EV_SRCH
 #define EV_SRCH 42
 #endif
@@ -54,12 +61,15 @@
 #ifndef EV_CSTEP
 #define EV_CSTEP 3
 #endif
-/* Distinct envelope peaks refined and scored (2026-09-18). */
+/* Distinct envelope peaks refined and scored. 2026-09-18: at the wider
+ * search and without the orientation-field proposals, 4 lose one genuine
+ * press (more candidates compete for the slots); with them 4-7 give the same
+ * press decisions. 6 keeps that margin either way. */
 #ifndef EV_NHYP
 #define EV_NHYP 6
 #endif
 /* A coarse envelope below this is not a hypothesis (inactive on 2026-09-18:
- * the top four peaks always exceed it). */
+ * the top peaks always exceed it). */
 #ifndef EV_HYP_MIN
 #define EV_HYP_MIN 0.30
 #endif
@@ -73,21 +83,31 @@
 #ifndef EV_GFLOOR
 #define EV_GFLOOR 0.50
 #endif
-/* The front-end's own overlap floor (EG_MIN_OVERLAP in egis_match_gabor.c):
- * a pose with less masked overlap is not a hypothesis. */
+/* A pose with less masked overlap, px, is not a hypothesis. Not the
+ * front-end's 800 (EG_MIN_OVERLAP in egis_match_gabor.c): the evidence
+ * needs no floor of its own -- a smaller overlap holds fewer blocks -- and
+ * this one only keeps the pose ranking meaningful, at about the least area
+ * in which W can reach the accept point at a genuine press's block NCC
+ * (three blocks at the 8 px step, 16 x 32 px). 2026-09-18: 800 -> 500
+ * recovers three genuine presses at 510-700 px; at 550 one of them is lost
+ * again, at 450 nothing changes. */
 #ifndef EV_MIN_OVERLAP
 #define EV_MIN_OVERLAP 500
 #endif
 
 /* Rotation step of the full-resolution refinement, deg, within half a coarse
- * step either side. */
+ * step either side. The step-3 prototype's 1.25 costs a third more time;
+ * blocks shift independently and adjacent ones may disagree by EV_EPS, so a
+ * pose 1.25 deg off moves adjacent blocks against each other by 0.2 px.
+ * 2026-09-18: 2.5 gives the same press decisions as 1.25. */
 #ifndef EV_REF_ROT
 #define EV_REF_ROT 2.5
 #endif
 /* Rotation proposals from the orientation field (ev_of_rots in
  * egis_match_evidence.c): how many of the coarse rotations it proposes, the
- * lattice it is sampled on (px), and how far apart two proposals must be
- * (deg). */
+ * lattice it is sampled on (px; the field is smooth over a ridge period),
+ * and how far apart two proposals must be (deg). 2026-09-18: 1-3 proposals,
+ * lattices of 5-7 px give the same press decisions. */
 #ifndef EV_NOF
 #define EV_NOF 2
 #endif
@@ -102,11 +122,12 @@
 #define EV_OLN (EV_OLX * EV_OLY)
 
 /* ---- block evidence ---------------------------------------------------------
- * The overlap is cut into EV_BS x EV_BS blocks every EV_STEP px; each block
- * searches its own shift (+-EV_RS px) for its best residual NCC; blocks at or
- * above EV_TAU whose shifts agree with a neighbour's within EV_EPS px form
- * 8-connected sets, and a set's evidence is the sum of its blocks' Fisher-z
- * excess over EV_TAU. All set on 2026-09-18. */
+ * The frame is cut into EV_BS x EV_BS blocks every EV_STEP px; each block
+ * with at least half its pixels in the overlap searches its own shift
+ * (+-EV_RS px) for its best residual NCC; blocks at or above EV_TAU whose
+ * shifts agree with a neighbour's within EV_EPS px form 8-connected sets,
+ * and a set's evidence is the sum of its blocks' Fisher-z excess over
+ * EV_TAU. All set on 2026-09-18 by the step-3 prototype. */
 #ifndef EV_BS
 #define EV_BS 16
 #endif
@@ -129,15 +150,16 @@
  * 57 = 5 x 8 + 16 + 1) the frame's last 6 columns and last row belonged to no
  * block, and an overlap at the template's right or bottom border -- a
  * placement shifted by 25-40 px, which leaves a strip of 30-45 px -- lost up
- * to a fifth of its width. Measured on 2026-09-18 (driver's rule, the wider
- * search below): FRR 5 -> 3 / 60 (L-Zeige presses 7 and 8, both such strips),
- * strongest impostor W 0.66 -> 1.02. */
+ * to a fifth of its width. Measured on 2026-09-18 (driver's rule, with the
+ * rest of this file as it is): without the last column and row two genuine
+ * presses are rejected that are accepted with them (5 / 60 -> 3 / 60), and
+ * no impostor press is accepted either way. */
 #define EV_NBX ((EM_W - EV_BS) / EV_STEP + 1 + ((EM_W - EV_BS) % EV_STEP != 0))
 #define EV_NBY ((EM_H - EV_BS) / EV_STEP + 1 + ((EM_H - EV_BS) % EV_STEP != 0))
 #define EV_NB (EV_NBX * EV_NBY)
 
 /* A frame as the evidence stage sees it: the front-end's ridge image and
- * mask, plus the residual. ~52 kB. */
+ * mask, the residual and the orientation-field lattice. 52,840 bytes. */
 typedef struct
 {
   EmFrame f;
@@ -149,7 +171,8 @@ typedef struct
 /* A probe: an EvFrame plus the quadrature of its ridge image (-grad, scaled
  * to the ridge image's energy over the mask), which the envelope search
  * correlates against so that its landscape does not oscillate with the ridge
- * phase. Only the probe needs it. ~84 kB. */
+ * phase, and its full-resolution orientation field. Only the probe needs
+ * them. 116,680 bytes. */
 typedef struct
 {
   EvFrame e;

@@ -79,7 +79,7 @@
 
 #define EGIS_CR_MIN_ENROL_COVERAGE 0.60   /* well-placed frames: 0.70-0.75 */
 #define EGIS_CR_REDUNDANT_NCC 1.0
-/* The accept point of the identity evidence (gabor/egis_match_evidence.c),
+/* The accept point of the identity evidence (egis_match_evidence.c),
  * milli-W: accept at W >= 2.0, mapped onto EGIS_THRESHOLD. Set on the
  * reference unit's 2026-09-18 session by the step-3 prototype, at about the
  * geometric middle of its gap (strongest impostor press W 1.24, weakest
