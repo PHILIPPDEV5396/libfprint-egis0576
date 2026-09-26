@@ -635,3 +635,44 @@ tsteppy's gain-0 regime — our init blob writes `reg 0x12 = 0x05`
 ([`egis_init.h:63`](../driver/egis0576/egis_init.h)), so the community init
 sequence does set the gain and his low-contrast finding is a different problem
 from this one.
+
+### 2026-09-26: the first foreign unit under `kit_version 3`
+
+sam-dant captured a fresh session on his IdeaPad Flex 5 14ITL05 (now Ubuntu
+26.04.1; the Zorin captures of 13/20 September no longer exist) and evaluated
+it with the kit at 68456ff, default build, no overrides:
+
+| matcher | FRR any frame | FAR any frame | FRR driver's rule | FAR driver's rule |
+|---|---:|---:|---:|---:|
+| vendor | 0 / 60 | 0 / 480 | 0 / 60 | 0 / 480 |
+| cleanroom | 20 / 60 | 0 / 480 | 20 / 60 | 0 / 480 |
+| **gabor** | 2 / 60 | 3 / 480 | 2 / 60 | **2 / 480** |
+
+Gabor press maxima: genuine 3252 / 6194 / 6374, impostor 223 / 2366.5 / 5417
+(max NCC 0.845). The two-frame rule removes one of three false accepts; it
+does not close the overlap.
+
+His `pairdiag` is what makes the run informative. Coverage p10 / median / max
+0.683 / 0.717 / 0.747, genuine NCC median 0.841, impostor NCC median 0.243 —
+the bulk of both populations looks like the reference unit's (0.713, 0.903,
+0.270). So on this unit the false accepts are the matcher's tail, not presses
+carrying too little ridge area. And his overlap-floor table places the top
+impostor pair in a small-overlap alignment: 0.845 at the 800 px floor, 0.741
+above 1200 px. That is the opposite of the reference unit, where the top
+impostor stayed at 0.666 until 1600 px. Filtering winning alignments is not
+the same experiment as rebuilding with a higher floor (a higher floor changes
+which alignment wins); the rebuilt run on his frames has been asked for.
+
+**Where the matchers stand, on every dataset where both were measured under
+the same protocol:**
+
+| dataset | vendor FRR / FAR | gabor FRR / FAR (driver's rule unless noted) |
+|---|---:|---:|
+| reference unit | 0 % / 0 % | 0 % / 0 % |
+| sam-dant, 2026-09-25 | 0 % / 0 % | 3.3 % / 0.42 % |
+| irvingpop, 2026-09-13 | 61.7 % / 0 % | 63.3 % / 12.1 % (FAR any-frame; driver's-rule FAR not yet measured) |
+
+On each of them the vendor matcher rejects no more genuine presses than Gabor
+and accepts no impostor. The Gabor front-end's real gains were measured
+against the *original clean-room* front-end (Stepanovich's unit, 51.7 % → 6.9 %),
+not against vendor.

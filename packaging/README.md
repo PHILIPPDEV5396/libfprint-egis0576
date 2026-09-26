@@ -554,8 +554,25 @@ on a Lenovo Yoga 7, passed through with `/dev/bus/usb`. The stock archive
 `fp_device_open_sync` completed the full bring-up on the physical sensor:
 the readiness poll, the 33-record vendor replay, and the six-step exposure
 calibration. He also confirmed the same noble-built binary loads under
-`1.95.1+tod1` on `ubuntu:26.04`. Enrolling and verifying a real finger are
-still pending; he is running those himself.
+`1.95.1+tod1` on `ubuntu:26.04`.
+
+Enrolling and verifying a real finger through the published package was
+first done by **sam-dant** on 2026-09-26, on a Lenovo IdeaPad Flex 5 14ITL05
+under Ubuntu 26.04.1 with the official
+`ubuntu-resolute-libfprint-2-tod1-egis0576_0.5.1.26.04_amd64.deb`
+(SHA-256 matched the release checksum, `dpkg -V` clean): all 12 enrolment
+stages, five of five `verify-match`, fingerprint `sudo` after `sudo -k`,
+screen-lock unlock, and unlock after suspend/resume both from the menu and via
+the lid. Not yet covered: login after a reboot, and long-term stability on
+v0.5.1.
+
+**Which matcher this package builds.** The TOD module compiles the translated
+Egis engine (`egis_funcs.c` and friends, see `ubuntu-tod/meson.build`), i.e.
+the **vendor** matcher — not the clean-room Gabor matcher the Fedora, Arch and
+Debian packages install by default. That was an oversight when v0.5.0 changed
+the default, not a decision, and the v0.5.1 release notes said otherwise until
+they were corrected on 2026-09-26. The real-finger test above is therefore a
+test of the vendor build.
 
 ### What the package contains
 
