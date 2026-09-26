@@ -255,9 +255,6 @@
  * enrolment (quality gate, steering) unchanged.
  * tsteppy's build: the NCC decides, as before. */
 #ifdef EGIS_CR_HAVE_EVIDENCE
-#ifndef EGIS_CR_ACCEPT_EVIDENCE
-#define EGIS_CR_ACCEPT_EVIDENCE 2000              /* milli-W: accept at W >= 2 */
-#endif
 typedef EvFrame CrFrame;
 typedef EvProbe CrProbe;
 #define CR_PROBE_FRAME(p) (&(p)->e.f)
@@ -586,8 +583,10 @@ egis_verify_raw_ok (EgisEngine *e, const uint8_t *raw_unfielded, int idx)
 {
   double best = -1.0;
 
+#ifndef EGIS_CR_HAVE_EVIDENCE
   if (EGIS_CR_RAW_CORROBORATE_NCC <= 0.0)
     return 1;
+#endif
   if (!e || !raw_unfielded || idx < 0 || idx >= e->gallery_n || !e->gallery[idx].frames)
     return 0;
   /* The raw frame still carries the sensor's fixed pattern (that is the
@@ -597,19 +596,30 @@ egis_verify_raw_ok (EgisEngine *e, const uint8_t *raw_unfielded, int idx)
    * flat-fielded twin scored 0.93 through a poisoned baseline scores like a
    * blank here. */
   probe_compute (raw_unfielded, &e->probe);
+#ifdef EGIS_CR_HAVE_EVIDENCE
+  /* The accept being corroborated is the pose and template frame the last
+   * egis_verify / egis_identify found for this entry; the raw frame has to
+   * reproduce the fine structure there too. No pose (nothing was compared,
+   * or this is not right after a verify of idx): nothing to corroborate. */
+  (void) best;
+  {
+    const CrEntry *en = &e->gallery[idx];
+    if (!en->last_pose.valid || en->last_frame < 0 || en->last_frame >= en->nframes)
+      return 0;
+    return ev_evidence_at (&en->frames[en->last_frame], &e->probe, &en->last_pose) >=
+           EGIS_CR_RAW_EVIDENCE;
+  }
+#else
   for (int i = 0; i < e->gallery[idx].nframes; i++)
     {
-#ifdef EGIS_CR_HAVE_EVIDENCE
-      double v = ev_ridge_best (&e->gallery[idx].frames[i], &e->probe);
-#else
       double v = em_match (&e->gallery[idx].frames[i], &e->probe);
-#endif
       if (v > best)
         best = v;
       if (best >= EGIS_CR_RAW_CORROBORATE_NCC)
         return 1;
     }
   return 0;
+#endif
 }
 
 int

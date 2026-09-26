@@ -40,14 +40,14 @@
  * (rotations there are <= 12.5 deg); the decision below it was checked on
  * that session at +-10, +-30 and +-60 with the same impostor ceiling. */
 #ifndef EV_ROT_MAX
-#define EV_ROT_MAX 90.0
+#define EV_ROT_MAX 90                 /* deg, a multiple of EV_ROT_COARSE */
 #endif
 #ifndef EV_ROT_COARSE
-#define EV_ROT_COARSE 10.0
+#define EV_ROT_COARSE 10              /* deg */
 #endif
 /* Translation half-range, px (2026-09-18: two presses needed more than 25). */
 #ifndef EV_SRCH
-#define EV_SRCH 30
+#define EV_SRCH 42
 #endif
 /* Coarse shift grid of the envelope, px: the envelope does not oscillate
  * with the ridge phase, so a grid coarser than the ridge period samples it. */
@@ -56,7 +56,7 @@
 #endif
 /* Distinct envelope peaks refined and scored (2026-09-18). */
 #ifndef EV_NHYP
-#define EV_NHYP 4
+#define EV_NHYP 6
 #endif
 /* A coarse envelope below this is not a hypothesis (inactive on 2026-09-18:
  * the top four peaks always exceed it). */
@@ -76,8 +76,30 @@
 /* The front-end's own overlap floor (EG_MIN_OVERLAP in egis_match_gabor.c):
  * a pose with less masked overlap is not a hypothesis. */
 #ifndef EV_MIN_OVERLAP
-#define EV_MIN_OVERLAP 800
+#define EV_MIN_OVERLAP 500
 #endif
+
+/* Rotation step of the full-resolution refinement, deg, within half a coarse
+ * step either side. */
+#ifndef EV_REF_ROT
+#define EV_REF_ROT 2.5
+#endif
+/* Rotation proposals from the orientation field (ev_of_rots in
+ * egis_match_evidence.c): how many of the coarse rotations it proposes, the
+ * lattice it is sampled on (px), and how far apart two proposals must be
+ * (deg). */
+#ifndef EV_NOF
+#define EV_NOF 2
+#endif
+#ifndef EV_OF_LAT
+#define EV_OF_LAT 6
+#endif
+#ifndef EV_OF_SEP
+#define EV_OF_SEP 20.0
+#endif
+#define EV_OLX ((EM_W + EV_OF_LAT - 1) / EV_OF_LAT)
+#define EV_OLY ((EM_H + EV_OF_LAT - 1) / EV_OF_LAT)
+#define EV_OLN (EV_OLX * EV_OLY)
 
 /* ---- block evidence ---------------------------------------------------------
  * The overlap is cut into EV_BS x EV_BS blocks every EV_STEP px; each block
@@ -101,8 +123,17 @@
 #define EV_EPS 1.5
 #endif
 
-#define EV_NBX ((EM_W - EV_BS) / EV_STEP + 1)
-#define EV_NBY ((EM_H - EV_BS) / EV_STEP + 1)
+/* The blocks tile the WHOLE frame: every EV_STEP px from the top-left corner,
+ * plus one column / row anchored at the right / bottom border where the step
+ * does not end on it. Without that last column and row (70 = 6 x 8 + 16 + 6,
+ * 57 = 5 x 8 + 16 + 1) the frame's last 6 columns and last row belonged to no
+ * block, and an overlap at the template's right or bottom border -- a
+ * placement shifted by 25-40 px, which leaves a strip of 30-45 px -- lost up
+ * to a fifth of its width. Measured on 2026-09-18 (driver's rule, the wider
+ * search below): FRR 5 -> 3 / 60 (L-Zeige presses 7 and 8, both such strips),
+ * strongest impostor W 0.66 -> 1.02. */
+#define EV_NBX ((EM_W - EV_BS) / EV_STEP + 1 + ((EM_W - EV_BS) % EV_STEP != 0))
+#define EV_NBY ((EM_H - EV_BS) / EV_STEP + 1 + ((EM_H - EV_BS) % EV_STEP != 0))
 #define EV_NB (EV_NBX * EV_NBY)
 
 /* A frame as the evidence stage sees it: the front-end's ridge image and
@@ -111,6 +142,8 @@ typedef struct
 {
   EmFrame f;
   float   res[EM_N];       /* band-limited Gabor residual, 0 outside mask */
+  float   olr[EV_OLN], oli[EV_OLN];  /* orientation field coh e^{2i theta}
+                                      * on the EV_OF_LAT lattice, 0 off-mask */
 } EvFrame;
 
 /* A probe: an EvFrame plus the quadrature of its ridge image (-grad, scaled
@@ -121,6 +154,7 @@ typedef struct
 {
   EvFrame e;
   float   q1[EM_N], q2[EM_N];
+  float   ofr[EM_N], ofi[EM_N];      /* orientation field, full resolution */
 } EvProbe;
 
 /* The pose the evidence was found at: the probe rotated by rot_deg about the
@@ -136,7 +170,9 @@ typedef struct
 void em_frame_residual (const uint8_t *raw,
                         EmFrame       *f,
                         float         *res,
-                        double         sigma);
+                        double         sigma,
+                        float         *ofr,
+                        float         *ofi);
 
 void ev_frame_compute (const uint8_t *raw,
                        EvFrame       *F);
@@ -160,6 +196,3 @@ int ev_evidence_at (const EvFrame *t,
                     const EvProbe *p,
                     const EvPose  *pose);
 
-/* PORT STAGE ONLY: best refined ridge-image NCC over the hypothesis search. */
-double ev_ridge_best (const EvFrame *t,
-                      const EvProbe *p);

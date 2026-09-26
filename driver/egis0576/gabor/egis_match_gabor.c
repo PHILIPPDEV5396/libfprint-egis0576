@@ -627,7 +627,7 @@ eg_mask (EgScratch *S, uint8_t *mask)
  * normalised-convolution Gaussian of res_sigma px so the mask edge does not
  * leak into it, and 0 outside the mask. */
 static void
-eg_frame (const uint8_t *raw, EmFrame *f, float *res, double res_sigma)
+eg_frame (const uint8_t *raw, EmFrame *f, float *res, double res_sigma, float *ofr, float *ofi)
 {
   EgScratch *S = malloc (sizeof *S);
   double mean = 0, var = 0, sd;
@@ -639,6 +639,10 @@ eg_frame (const uint8_t *raw, EmFrame *f, float *res, double res_sigma)
       memset (f, 0, sizeof *f);
       if (res)
         memset (res, 0, EM_N * sizeof (float));
+      if (ofr)
+        memset (ofr, 0, EM_N * sizeof (float));
+      if (ofi)
+        memset (ofi, 0, EM_N * sizeof (float));
       return;
     }
   for (int i = 0; i < EM_N; i++)
@@ -724,19 +728,28 @@ eg_frame (const uint8_t *raw, EmFrame *f, float *res, double res_sigma)
             res[i] = (f->mask[i] && S->d[i] > 1e-6) ? (float) (S->c[i] / S->d[i]) : 0.0f;
         }
     }
+  /* the structure tensor's orientation field, coherence-weighted, doubled
+   * angle (so that theta and theta + 180 deg agree), 0 outside the mask */
+  if (ofr && ofi)
+    for (int i = 0; i < EM_N; i++)
+      {
+        ofr[i] = f->mask[i] ? (float) (S->coh[i] * cos (2.0 * S->ridge[i])) : 0.0f;
+        ofi[i] = f->mask[i] ? (float) (S->coh[i] * sin (2.0 * S->ridge[i])) : 0.0f;
+      }
   free (S);
 }
 
 void
 em_frame_compute (const uint8_t *raw, EmFrame *f)
 {
-  eg_frame (raw, f, NULL, 0.0);
+  eg_frame (raw, f, NULL, 0.0, NULL, NULL);
 }
 
 void
-em_frame_residual (const uint8_t *raw, EmFrame *f, float *res, double sigma)
+em_frame_residual (const uint8_t *raw, EmFrame *f, float *res, double sigma,
+                   float *ofr, float *ofi)
 {
-  eg_frame (raw, f, res, sigma);
+  eg_frame (raw, f, res, sigma, ofr, ofi);
 }
 
 /* ---- rotation ------------------------------------------------------------*/

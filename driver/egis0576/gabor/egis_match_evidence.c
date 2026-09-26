@@ -134,10 +134,32 @@ ev_bil_f (const float *a, double sx, double sy)
 }
 
 /* ---- per-frame features ----------------------------------------------------- */
+static void
+ev_lattice (EvFrame *F, const float *ofr, const float *ofi)
+{
+  for (int j = 0; j < EV_OLY; j++)
+    for (int i = 0; i < EV_OLX; i++)
+      {
+        int q = (j * EV_OF_LAT) * EM_W + i * EV_OF_LAT;
+        F->olr[j * EV_OLX + i] = ofr[q];
+        F->oli[j * EV_OLX + i] = ofi[q];
+      }
+}
+
 void
 ev_frame_compute (const uint8_t *raw, EvFrame *F)
 {
-  em_frame_residual (raw, &F->f, F->res, EV_RES_SIGMA);
+  float *of = malloc (2 * EM_N * sizeof (float));
+
+  em_frame_residual (raw, &F->f, F->res, EV_RES_SIGMA, of, of ? of + EM_N : NULL);
+  if (of)
+    ev_lattice (F, of, of + EM_N);
+  else
+    {
+      memset (F->olr, 0, sizeof F->olr);
+      memset (F->oli, 0, sizeof F->oli);
+    }
+  free (of);
 }
 
 /* Quadrature of the ridge image: for a locally plane ridge wave g = A cos(k.x)
@@ -149,7 +171,8 @@ ev_probe_compute (const uint8_t *raw, EvProbe *P)
   const double *g = P->e.f.img;
   double eg = 0, eq = 0, sc;
 
-  ev_frame_compute (raw, &P->e);
+  em_frame_residual (raw, &P->e.f, P->e.res, EV_RES_SIGMA, P->ofr, P->ofi);
+  ev_lattice (&P->e, P->ofr, P->ofi);
   memset (P->q1, 0, sizeof P->q1);
   memset (P->q2, 0, sizeof P->q2);
   for (int y = 1; y < EM_H - 1; y++)
@@ -257,21 +280,51 @@ ev_grid_env (const EvWork *W, int dx, int dy)
       const float *ta = W->ta + j * EV_GX, *tm = W->tm + j * EV_GX, *ta2 = W->ta2 + j * EV_GX;
       int o = (j + oy) * EV_GX + ox;
       const float *pm = W->pm + o, *pg = W->pg + o, *pg2 = W->pg2 + o, *p1 = W->p1 + o, *p2 = W->p2 + o;
-      float rn = 0, ra = 0, rg = 0, raa = 0, rgg = 0, rag = 0, r1 = 0, ra1 = 0, r2 = 0, ra2 = 0;
-      for (int i = i0; i < i1; i++)
+      float L[10][4] = { { 0 } };
+      float rn, ra, rg, raa, rgg, rag, r1, ra1, r2, ra2;
+      int i = i0;
+      /* four interleaved partial sums per quantity, summed in a fixed order:
+       * the lanes are independent, so the compiler can keep them in vector
+       * registers (a third of this search's time at -O2) */
+      for (; i + 4 <= i1; i += 4)
+        for (int l = 0; l < 4; l++)
+          {
+            float a = ta[i + l], m = tm[i + l], q = pm[i + l], g = pg[i + l];
+            L[0][l] += m * q;
+            L[1][l] += a * q;
+            L[2][l] += ta2[i + l] * q;
+            L[3][l] += m * g;
+            L[4][l] += m * pg2[i + l];
+            L[5][l] += a * g;
+            L[6][l] += m * p1[i + l];
+            L[7][l] += a * p1[i + l];
+            L[8][l] += m * p2[i + l];
+            L[9][l] += a * p2[i + l];
+          }
+      for (; i < i1; i++)
         {
-          float m = tm[i] * pm[i];
-          rn += m;
-          ra += ta[i] * pm[i];
-          raa += ta2[i] * pm[i];
-          rg += tm[i] * pg[i];
-          rgg += tm[i] * pg2[i];
-          rag += ta[i] * pg[i];
-          r1 += tm[i] * p1[i];
-          ra1 += ta[i] * p1[i];
-          r2 += tm[i] * p2[i];
-          ra2 += ta[i] * p2[i];
+          float a = ta[i], m = tm[i], q = pm[i], g = pg[i];
+          L[0][0] += m * q;
+          L[1][0] += a * q;
+          L[2][0] += ta2[i] * q;
+          L[3][0] += m * g;
+          L[4][0] += m * pg2[i];
+          L[5][0] += a * g;
+          L[6][0] += m * p1[i];
+          L[7][0] += a * p1[i];
+          L[8][0] += m * p2[i];
+          L[9][0] += a * p2[i];
         }
+      rn = (L[0][0] + L[0][1]) + (L[0][2] + L[0][3]);
+      ra = (L[1][0] + L[1][1]) + (L[1][2] + L[1][3]);
+      raa = (L[2][0] + L[2][1]) + (L[2][2] + L[2][3]);
+      rg = (L[3][0] + L[3][1]) + (L[3][2] + L[3][3]);
+      rgg = (L[4][0] + L[4][1]) + (L[4][2] + L[4][3]);
+      rag = (L[5][0] + L[5][1]) + (L[5][2] + L[5][3]);
+      r1 = (L[6][0] + L[6][1]) + (L[6][2] + L[6][3]);
+      ra1 = (L[7][0] + L[7][1]) + (L[7][2] + L[7][3]);
+      r2 = (L[8][0] + L[8][1]) + (L[8][2] + L[8][3]);
+      ra2 = (L[9][0] + L[9][1]) + (L[9][2] + L[9][3]);
       n += rn;
       sa += ra;
       saa += raa;
@@ -372,70 +425,202 @@ ev_full_ncc (const EvWork *W, int dx, int dy)
   return cov / (sqrt (va * vb) + 1e-6);
 }
 
-/* The best distinct hypotheses, refined at full resolution and sorted by
- * refined NCC, descending. Returns how many, or -1 if no alignment reaches
- * the overlap floor at all. */
+/* The envelope landscape at one rotation: its local maxima (3x3 on the
+ * coarse grid) above EV_HYP_MIN go into cand[], kept sorted by envelope,
+ * descending, at most ncap; *rbest receives the highest of them (s = -2 if
+ * none). Returns 1 if any shift reached the overlap floor. */
 static int
-ev_hyps (const EvFrame *A, const EvProbe *B, EvHyp *H, int nmax, EvWork *W)
+ev_land_peaks (const EvProbe *B, double rot, EvWork *W, EvHyp *cand, int *nc, int ncap, EvHyp *rbest)
 {
-  enum { NCAND = 64 };
-  EvHyp cand[NCAND];
-  int nc = 0, any = 0, nr = (int) (EV_ROT_MAX / EV_ROT_COARSE + 1e-9), nh = 0;
+  int any = 0;
+
+  rbest->s = -2.0;
+
+  ev_grid_probe (B, rot * EV_PI / 180.0, W);
+  for (int y = 0; y < EV_S2; y++)
+    for (int x = 0; x < EV_S2; x++)
+      {
+        double v = ev_grid_env (W, (x - EV_S2 / 2) * EV_CSTEP, (y - EV_S2 / 2) * EV_CSTEP);
+        W->land[y * EV_S2 + x] = (float) v;
+        if (v > -1.0)
+          any = 1;
+      }
+  for (int y = 0; y < EV_S2; y++)
+    for (int x = 0; x < EV_S2; x++)
+      {
+        float v = W->land[y * EV_S2 + x];
+        int lm = v > EV_HYP_MIN;
+        for (int j = -1; j <= 1 && lm; j++)
+          for (int i = -1; i <= 1 && lm; i++)
+            {
+              int yy = y + j, xx = x + i;
+              if ((i || j) && yy >= 0 && yy < EV_S2 && xx >= 0 && xx < EV_S2 &&
+                  W->land[yy * EV_S2 + xx] > v)
+                lm = 0;
+            }
+        if (!lm)
+          continue;
+        if (v > rbest->s)
+          *rbest = (EvHyp) { v, rot, (x - EV_S2 / 2) * EV_CSTEP, (y - EV_S2 / 2) * EV_CSTEP };
+        if (*nc < ncap || v > cand[*nc - 1].s)
+          {
+            int k = *nc < ncap ? (*nc)++ : ncap - 1;
+            while (k > 0 && cand[k - 1].s < v)
+              {
+                cand[k] = cand[k - 1];
+                k--;
+              }
+            cand[k] = (EvHyp) { v, rot, (x - EV_S2 / 2) * EV_CSTEP, (y - EV_S2 / 2) * EV_CSTEP };
+          }
+      }
+  return any;
+}
+
+#if EV_NOF > 0
+/* Rotation proposals from the orientation field: the coherence-weighted
+ * doubled ridge angle z = coh e^{2i theta} of the template, on an
+ * EV_OF_LAT-px lattice, against the probe's rotated by phi (positions
+ * rotated, phase turned by e^{-2i phi}), maximised over lattice shifts within
+ * +-EV_SRCH: P(phi) = max sum Re(zT conj zP) / sum |zT||zP|. It depends on how
+ * the ridge FLOW turns across the overlap, not on the ridge phase or period,
+ * so it ranks rotations independently of the envelope. Evaluated on the
+ * envelope's own coarse rotations (an orientation field cannot tell phi from
+ * phi + 180, so -EV_ROT_MAX stands for +EV_ROT_MAX too); the EV_NOF highest
+ * peaks at least EV_OF_SEP deg apart, as rotation indices -nr .. nr - 1.
+ * Returns how many (<= EV_NOF). */
+static int
+ev_of_rots (const EvFrame *A, const EvProbe *B, int nr, int *out)
+{
+  enum { SL = EV_SRCH / EV_OF_LAT };
+  int na = 2 * nr, nout = 0;
+  double prof[2 * (EV_ROT_MAX / EV_ROT_COARSE)];
+  float pr[EV_OLN], pi[EV_OLN], pm[EV_OLN], tm[EV_OLN];
+  double cy = (EM_H - 1) / 2.0, cx = (EM_W - 1) / 2.0;
+  int minn = EV_MIN_OVERLAP / (EV_OF_LAT * EV_OF_LAT);
+
+  for (int k = 0; k < EV_OLN; k++)
+    tm[k] = (float) sqrt ((double) A->olr[k] * A->olr[k] + (double) A->oli[k] * A->oli[k]);
+  for (int a = 0; a < na; a++)
+    {
+      double th = (a - nr) * EV_ROT_COARSE * EV_PI / 180.0;
+      double ct = cos (th), st = sin (th), c2 = cos (-2 * th), s2 = sin (-2 * th);
+      double best = -2.0;
+      for (int j = 0; j < EV_OLY; j++)
+        for (int i = 0; i < EV_OLX; i++)
+          {
+            int k = j * EV_OLX + i, ix, iy, q;
+            double ddx = i * EV_OF_LAT - cx, ddy = j * EV_OF_LAT - cy;
+            ix = (int) lround (cx + ddx * ct - ddy * st);
+            iy = (int) lround (cy + ddx * st + ddy * ct);
+            pr[k] = pi[k] = pm[k] = 0.0f;
+            if (ix < 0 || ix >= EM_W || iy < 0 || iy >= EM_H || !B->e.f.mask[iy * EM_W + ix])
+              continue;
+            q = iy * EM_W + ix;
+            pr[k] = (float) (B->ofr[q] * c2 - B->ofi[q] * s2);
+            pi[k] = (float) (B->ofr[q] * s2 + B->ofi[q] * c2);
+            pm[k] = (float) sqrt ((double) B->ofr[q] * B->ofr[q] + (double) B->ofi[q] * B->ofi[q]);
+          }
+      for (int sy = -SL; sy <= SL; sy++)
+        for (int sx = -SL; sx <= SL; sx++)
+          {
+            double num = 0, den = 0;
+            int n = 0;
+            for (int j = 0; j < EV_OLY; j++)
+              {
+                int jj = j - sy;
+                if (jj < 0 || jj >= EV_OLY)
+                  continue;
+                for (int i = 0; i < EV_OLX; i++)
+                  {
+                    int ii = i - sx, k = j * EV_OLX + i, kk;
+                    if (ii < 0 || ii >= EV_OLX || tm[k] <= 0)
+                      continue;
+                    kk = jj * EV_OLX + ii;
+                    if (pm[kk] <= 0)
+                      continue;
+                    num += A->olr[k] * pr[kk] + A->oli[k] * pi[kk];
+                    den += tm[k] * pm[kk];
+                    n++;
+                  }
+              }
+            if (n >= minn && den > 0 && num / den > best)
+              best = num / den;
+          }
+      prof[a] = best;
+    }
+  /* circular local maxima (the profile has period 180 deg), highest first */
+  while (nout < EV_NOF)
+    {
+      int bi = -1;
+      for (int a = 0; a < na; a++)
+        {
+          double v = prof[a];
+          int ok = v > -1.0 && v >= prof[(a + na - 1) % na] && v >= prof[(a + 1) % na];
+          for (int q = 0; q < nout && ok; q++)
+            {
+              int d = abs (a - (out[q] + nr));
+              if (d > na / 2)
+                d = na - d;
+              if (d * EV_ROT_COARSE < EV_OF_SEP)
+                ok = 0;
+            }
+          if (ok && (bi < 0 || v > prof[bi]))
+            bi = a;
+        }
+      if (bi < 0)
+        break;
+      out[nout++] = bi - nr;
+    }
+  return nout;
+}
+#endif
+
+static int
+ev_distinct (const EvHyp *c, const EvHyp *H, int nh)
+{
+  for (int k = 0; k < nh; k++)
+    if (fabs (c->rot - H[k].rot) <= 5.0 &&
+        hypot (c->dx - H[k].dx, c->dy - H[k].dy) <= EV_CSTEP + 0.5)
+      return 0;
+  return 1;
+}
+
+/* The best distinct hypotheses -- the EV_NHYP highest envelope peaks over the
+ * coarse rotation grid, plus up to EV_NOF more from the orientation field's
+ * rotations -- refined at full resolution and sorted by refined NCC,
+ * descending. H must hold EV_NHYP + EV_NOF. Returns how many, or -1 if no
+ * alignment reaches the overlap floor at all. */
+static int
+ev_hyps (const EvFrame *A, const EvProbe *B, EvHyp *H, EvWork *W)
+{
+  enum { NCAND = 64, NROT = 2 * (EV_ROT_MAX / EV_ROT_COARSE) + 1 };
+  EvHyp cand[NCAND], rbest[NROT];
+  int nc = 0, any = 0, nr = EV_ROT_MAX / EV_ROT_COARSE, nh = 0;
 
   ev_grid_template (A, W);
   for (int r = -nr; r <= nr; r++)
-    {
-      double rot = r * EV_ROT_COARSE;
-      ev_grid_probe (B, rot * EV_PI / 180.0, W);
-      for (int y = 0; y < EV_S2; y++)
-        for (int x = 0; x < EV_S2; x++)
-          {
-            double v = ev_grid_env (W, (x - EV_S2 / 2) * EV_CSTEP, (y - EV_S2 / 2) * EV_CSTEP);
-            W->land[y * EV_S2 + x] = (float) v;
-            if (v > -1.0)
-              any = 1;
-          }
-      /* local maxima (3x3 on the coarse grid) above EV_HYP_MIN */
-      for (int y = 0; y < EV_S2; y++)
-        for (int x = 0; x < EV_S2; x++)
-          {
-            float v = W->land[y * EV_S2 + x];
-            int lm = v > EV_HYP_MIN;
-            for (int j = -1; j <= 1 && lm; j++)
-              for (int i = -1; i <= 1 && lm; i++)
-                {
-                  int yy = y + j, xx = x + i;
-                  if ((i || j) && yy >= 0 && yy < EV_S2 && xx >= 0 && xx < EV_S2 &&
-                      W->land[yy * EV_S2 + xx] > v)
-                    lm = 0;
-                }
-            if (!lm)
-              continue;
-            if (nc < NCAND || v > cand[nc - 1].s)
-              {
-                int k = nc < NCAND ? nc++ : NCAND - 1;
-                while (k > 0 && cand[k - 1].s < v)
-                  {
-                    cand[k] = cand[k - 1];
-                    k--;
-                  }
-                cand[k] = (EvHyp) { v, rot, (x - EV_S2 / 2) * EV_CSTEP, (y - EV_S2 / 2) * EV_CSTEP };
-              }
-          }
-    }
+    any |= ev_land_peaks (B, r * EV_ROT_COARSE, W, cand, &nc, NCAND, &rbest[r + nr]);
   if (!any)
     return -1;
   /* distinct: another candidate within 5 deg AND one grid step is the same peak */
-  for (int c = 0; c < nc && nh < nmax; c++)
-    {
-      int dup = 0;
-      for (int k = 0; k < nh && !dup; k++)
-        if (fabs (cand[c].rot - H[k].rot) <= 5.0 &&
-            hypot (cand[c].dx - H[k].dx, cand[c].dy - H[k].dy) <= EV_CSTEP + 0.5)
-          dup = 1;
-      if (!dup)
-        H[nh++] = cand[c];
-    }
+  for (int c = 0; c < nc && nh < EV_NHYP; c++)
+    if (ev_distinct (&cand[c], H, nh))
+      H[nh++] = cand[c];
+#if EV_NOF > 0
+  /* the best envelope peak at each rotation the orientation field proposes,
+   * whatever its rank among all peaks */
+  {
+    int ro[EV_NOF], no = ev_of_rots (A, B, nr, ro);
+    for (int q = 0; q < no; q++)
+      {
+        EvHyp c = rbest[ro[q] + nr];
+        if (ro[q] == -nr && rbest[2 * nr].s > c.s)
+          c = rbest[2 * nr];                     /* -90 and +90 deg: one orientation */
+        if (c.s > EV_HYP_MIN && ev_distinct (&c, H, nh))
+          H[nh++] = c;
+      }
+  }
+#endif
   /* refine at full resolution: +-EV_REF px at the coarse rotation, then the
    * 1.25-deg rotations within half a coarse step at +-1 px */
   ev_full_template (A, W);
@@ -458,10 +643,10 @@ ev_hyps (const EvFrame *A, const EvProbe *B, EvHyp *H, int nmax, EvWork *W)
           }
       cx0 = b.dx;
       cy0 = b.dy;
-      for (int st = 1; st * 1.25 <= EV_ROT_COARSE / 2 + 1e-6; st++)
+      for (int st = 1; st * EV_REF_ROT <= EV_ROT_COARSE / 2.0 + 1e-6; st++)
         for (int sg = -1; sg <= 1; sg += 2)
           {
-            double rot = H[k].rot + sg * st * 1.25;
+            double rot = H[k].rot + sg * st * EV_REF_ROT;
             ev_full_probe (B, rot * EV_PI / 180.0, W);
             for (int dy = cy0 - 1; dy <= cy0 + 1; dy++)
               for (int dx = cx0 - 1; dx <= cx0 + 1; dx++)
@@ -621,7 +806,9 @@ ev_evidence (const EvEvWork *E, int dx, int dy)
   for (int j = 0; j < EV_NBY; j++)
     for (int i = 0; i < EV_NBX; i++)
       {
-        int k = j * EV_NBX + i, x0 = i * EV_STEP, y0 = j * EV_STEP, on;
+        int k = j * EV_NBX + i, on;
+        int x0 = i * EV_STEP < EM_W - EV_BS ? i * EV_STEP : EM_W - EV_BS;
+        int y0 = j * EV_STEP < EM_H - EV_BS ? j * EV_STEP : EM_H - EV_BS;
         ok[k] = 0;
         best[k] = -2;
         ax[k] = ay[k] = 0;
@@ -684,7 +871,7 @@ ev_match (const EvFrame *t, const EvProbe *p, int stop_at, EvPose *pose)
 {
   EvWork *W = malloc (sizeof *W);
   EvEvWork *E = malloc (sizeof *E);
-  EvHyp H[EV_NHYP];
+  EvHyp H[EV_NHYP + EV_NOF];
   EvPose bp = { 0.0, 0, 0, 0 };
   int nh, best = -1;
   double wmax = 0;
@@ -697,7 +884,7 @@ ev_match (const EvFrame *t, const EvProbe *p, int stop_at, EvPose *pose)
         *pose = bp;
       return -1;
     }
-  nh = ev_hyps (t, p, H, EV_NHYP, W);
+  nh = ev_hyps (t, p, H, W);
   if (nh >= 0)
     {
       best = 0;
@@ -750,23 +937,4 @@ ev_evidence_at (const EvFrame *t, const EvProbe *p, const EvPose *pose)
   w = ev_evidence (E, pose->dx, pose->dy);
   free (E);
   return (int) lround (w * 1000.0);
-}
-
-/* PORT STAGE ONLY: the step-3 prototype's raw corroboration, the best refined
- * ridge-image NCC over the hypothesis search. */
-double
-ev_ridge_best (const EvFrame *t, const EvProbe *p)
-{
-  EvWork *W = malloc (sizeof *W);
-  EvHyp H[EV_NHYP];
-  int nh;
-  double s = -1.0;
-
-  if (!W)
-    return -1.0;
-  nh = ev_hyps (t, p, H, EV_NHYP, W);
-  if (nh > 0)
-    s = H[0].s;
-  free (W);
-  return s;
 }

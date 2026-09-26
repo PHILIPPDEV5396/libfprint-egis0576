@@ -79,9 +79,24 @@
 
 #define EGIS_CR_MIN_ENROL_COVERAGE 0.60   /* well-placed frames: 0.70-0.75 */
 #define EGIS_CR_REDUNDANT_NCC 1.0
+/* The accept point of the identity evidence (gabor/egis_match_evidence.c),
+ * milli-W: accept at W >= 2.0, mapped onto EGIS_THRESHOLD. Set on the
+ * reference unit's 2026-09-18 session by the step-3 prototype, at about the
+ * geometric middle of its gap (strongest impostor press W 1.24, weakest
+ * accepted genuine 3.09); not moved since. */
+#ifndef EGIS_CR_ACCEPT_EVIDENCE
+#define EGIS_CR_ACCEPT_EVIDENCE 2000
+#endif
 /* Raw-frame corroboration of an accept (egis_verify_raw_ok, see
- * egis_engine.h for the hole it closes). Genuine un-flat-fielded probes
- * against flat-fielded templates: min 0.79 over 66 frames on the reference
- * unit; a featureless contact that reached 0.93 flat-fielded through a
- * poisoned baseline reaches ~0.2 raw. 0.5 sits between with margin both ways. */
-#define EGIS_CR_RAW_CORROBORATE_NCC 0.5
+ * egis_engine.h for the hole it closes): the evidence of the UN-flat-fielded
+ * frame at the pose and template frame that produced the accept, milli-W.
+ * The raw frame carries the sensor's fixed pattern into the residual, so
+ * genuine raw evidence runs at about 0.44 of the flat-fielded (median,
+ * 2026-09-18); at 0.75, over that session's on-gate frames, 98.7 % of the
+ * genuine frames that clear the accept point pass, 0.16 % of all impostor
+ * frames (the step-3 prototype's raw check, the best ridge-image NCC over the
+ * whole hypothesis search, passed 94 %). Set on 2026-09-18, between the
+ * impostor frames' p99 (0.36) and the accepted genuine frames' p5 (1.39). */
+#ifndef EGIS_CR_RAW_EVIDENCE
+#define EGIS_CR_RAW_EVIDENCE 750
+#endif
