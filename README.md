@@ -19,7 +19,7 @@ login / `sudo` / screen-unlock through PAM, on stock GNOME/KDE.
 | Enroll / verify / identify | ✅ works via `fprintd` |
 | PAM login, `sudo`, unlock | ✅ works (`sufficient`, password fallback intact) |
 | Cross-reboot matching | ✅ (per-boot flat-field) |
-| Accuracy (shipped matcher) | **reference unit: 0 false rejects of 60 presses, 0 false accepts of 480** at the shipped threshold — under the kit's best-frame rule *and* under the driver's stricter two-consecutive-frame rule — populations not overlapping (genuine NCC 0.80 / 0.97 / 0.99, impostor 0.06 / 0.41 / 0.69; held-out threshold across folds gives the same). **Second unit** (its owner's own captures): **6.9 % false rejects at 1.1 % false accepts** held-out — there the populations do overlap, so the threshold is unit-dependent and one unit's 0 / 0 is not the driver's rate. "Impostor" is always the same person's other fingers: **no false-accept figure in this project comes from a second person**, and physical artefacts were never tried. The two comparison flavours, measured on identical captures, are in [docs/matcher-comparison.md](docs/matcher-comparison.md). |
+| Accuracy (shipped matcher) | **It admits false accepts on every dataset but one.** Under the driver's own rule (two consecutive frames over the threshold): the reference unit's session of 2026-09-13 — the one every matcher constant was tuned on — 0 of 60 false rejects, 0 of 480 false accepts; **the same unit, person and fingers five days later: 13 of 60 false rejects, 18 of 480 false accepts** (right thumb taken for right index, where the vendor matcher on the same frames accepts none); enrolled on one of those sessions and tried with the other, 9 and 15 of 240 false accepts; sam-dant's unit 2 of 60 and 2 of 480. On irvingpop's unit 58 of 480 under the kit's looser press-maximum rule; on the second unit, under its owner's protocol, 6.9 % false rejects at 1.1 % false accepts. The cause is what the matcher measures (ridge flow and period, not identity), not any constant measured so far — see [2026-09-26: what prevents a universal 0/0](docs/matcher-comparison.md#2026-09-26-what-prevents-a-universal-00). Until that date this row led with the 2026-09-13 0 / 0 as the reference unit's result. "Impostor" is always the same person's other fingers: **no false-accept figure in this project comes from a second person**, and physical artefacts were never tried. |
 | Validated on | **four** laptop models (AMD + Intel; Fedora, Arch and Ubuntu); one of the four is a partial pass. See "Tested platforms" below. |
 
 ## The sensor, briefly
@@ -216,27 +216,45 @@ orientation-selective Gabor front-end, a per-pixel coherence mask, a rotation
 search and a ridge-period consistency check
 ([`driver/egis0576/gabor/`](driver/egis0576/gabor/)) behind Thaddeus
 Stepanovich's adapter interface — with no vendor code in the matching path at
-all. It is the flavour submitted to libfprint, and the one the numbers below
-are measured on: on the reference unit its genuine and impostor populations do
-not overlap (**0 % / 0 %** at its threshold, cross-fold checked — "impostor"
-means the same person's other fingers; no false-accept figure in this project
-comes from a second person yet); on a second unit, Thaddeus Stepanovich's, it
-takes his matcher from 51.7 % to **6.9 %** false rejects held-out, without
+all. It is the flavour prepared for libfprint (that submission is on hold, see
+below), and the one the numbers below are measured on: on one session of the
+reference unit (2026-09-13, the session all its constants were tuned on) its
+genuine and impostor populations do not overlap (**0 % / 0 %** at its
+threshold, cross-fold checked — "impostor" means the same person's other
+fingers; no false-accept figure in this project comes from a second person
+yet); on no other dataset do they. On a second unit, Thaddeus Stepanovich's,
+it takes his matcher from 51.7 % to **6.9 %** false rejects held-out, without
 reaching a clean gap there.
 
-**That clean gap is a property of the reference unit, not of the matcher, and
-on the two reported foreign units it is absent** (2026-09-22). Both of them
-score same-person impostor presses ABOVE the accept point of 0.78: 0.815 on
-Stepanovich's unit and 0.903 on the third reported one, where the kit's
-press-maximum rule puts the false-accept rate at 12.1 % against 60 % false
-rejects. The driver does not accept on a press maximum — it needs two
-consecutive frames over the threshold and corroborates the second one on the
-un-flat-fielded bytes — but until `kit_version 3` the kit applied that rule to
-the genuine side only, so no measured false-accept figure in this project has
-ever been the driver's. Re-measuring both populations under the driver's rule,
-and closing the gap the numbers point at, is open work: see
-[`docs/matcher-comparison.md`](docs/matcher-comparison.md). Treat the 0 % / 0 %
-above as what one unit can tell you, and no more.
+**That clean gap is a property of one session — not of the reference unit,
+and not of the matcher** (2026-09-26). From 2026-09-22 until then this
+paragraph called it a property of the reference unit; before that the README
+presented it as the matcher's result. The same unit, person and fingers five
+days later give **18 false accepts of 480 under the driver's own rule** (two
+consecutive frames over the threshold, the second corroborated on the
+un-flat-fielded bytes), at a same-person impostor score of 0.896 against the
+accept point of 0.78, where the vendor matcher on the identical frames
+accepts none. Every foreign unit reported so far also scores a same-person
+impostor above 0.78: 0.815 on Stepanovich's, 0.845 on sam-dant's (2 of 480
+under the driver's rule), 0.903 on irvingpop's (12.1 % false accepts under
+the kit's press-maximum rule, 60 % false rejects — a second failure mode,
+not yet explained, in which the vendor matcher loses genuine presses too).
+The reason, shown on the reference unit's own frames, is what the matcher
+measures: whether two patches agree in ridge flow and ridge period, which two
+different fingers can do when they land at the same angle — not whose finger
+it is. None of the constants measured fixes that: threshold, overlap floor
+and search width each only trade false rejects for false accepts (the
+front-end's filter constants were not swept; the mechanism argues against
+them, which is an argument, not a measurement). The project's target is now
+an own matcher that is at least as good as the vendor one — no false accept
+under the driver's rule on both reference-unit sessions, across them, on
+sam-dant's and on tsteppy's data; no more false rejects than vendor on the
+same data; tuned on one dataset and certified on the others, never on the
+same session — and the upstream submission is on hold until one exists.
+Measurements and root cause:
+[`docs/matcher-comparison.md`](docs/matcher-comparison.md#2026-09-26-what-prevents-a-universal-00).
+Treat the 0 % / 0 % above as what one favourable session can tell you, and
+no more.
 
 Two other flavours build from the same tree, for comparison rather than use:
 
@@ -253,7 +271,8 @@ run. `cleanroom` is his original front-end behind the same adapter: at its
 published threshold it rejects 35 %, 73.3 % and 93.3 % of genuine presses on
 those same captures (5 false accepts of 480 on one unit). It is not the only
 flavour with measured false accepts: the default produced 58 of 480 on the
-third unit under the same press-maximum rule. `vendor` is the only one that
+third unit under the same press-maximum rule, and 18 of 480 on the reference
+unit's own second session under the driver's rule. `vendor` is the only one that
 has never accepted an impostor press on any unit measured so far — at the cost
 of the 61.7 % above. All three are measured on identical captures in
 [`docs/matcher-comparison.md`](docs/matcher-comparison.md); reproduce on your
@@ -440,7 +459,10 @@ driver shortcoming. Details and the full investigation:
 Most wanted, in order:
 
 1. **A clean-room fingerprint matcher** good enough to distinguish adjacent same-hand
-   fingers at 70×57 — this is what blocks clean libfprint upstreaming. See the
+   fingers at 70×57 — this is what blocks clean libfprint upstreaming. The
+   shipped Gabor matcher does not (it compares ridge flow and period, not
+   identity); the bar a replacement has to clear, and why, is in
+   [`docs/matcher-comparison.md`](docs/matcher-comparison.md#2026-09-26-what-prevents-a-universal-00). See the
    ["Why the reverse-engineered matcher (and not a clean-room one)?"](PROVENANCE.md#why-the-reverse-engineered-matcher-and-not-a-clean-room-one)
    in `PROVENANCE.md`.
 2. **Test reports from other physical EH576 units** (see "Universality").

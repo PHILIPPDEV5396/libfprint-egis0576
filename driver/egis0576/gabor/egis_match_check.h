@@ -93,6 +93,17 @@ typedef struct
  * generated textures, not the driver's answer to a fabricated artefact.
  * That answer does not exist in this driver; see docs/matcher-comparison.md.
  *
+ * Nor does it tell two REAL fingers apart when their periods agree, which is
+ * when the front-end confuses them in the first place (egis_match_gabor.c,
+ * LIMITS, first item). It does reject impostor pairs whose periods differ,
+ * but the 18 of 480 impostor presses the reference unit's 2026-09-18 session
+ * accepts under the driver's rule -- right thumb against right index, whose
+ * median periods there differ by 0.49 px, about the check's own tolerance --
+ * all passed it (it rejects 10 of the 16 first-frame thumb/index pairs at or
+ * above 0.78 on that session; the 18 of 480 presses the driver's rule
+ * accepts there all come from this pair). A rejection says "the periods
+ * disagree"; a pass does not say "same skin".
+ *
  * EM_FQ_MIN_NBLK is NOT a texture criterion. nblk is arithmetically the
  * number of blocks geometrically eligible over the overlap (r = 0.9996
  * against the eligibility count; it equals it outright in 82 % of pairs),

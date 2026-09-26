@@ -7,6 +7,9 @@ attacked by two independent reviewers; 53 gaps survived, listed here by severity
 asked to fix; `note` = information). Duplicates across lenses are kept where the wording adds something.
 This file is the definition of v0.5.0: the release is cut when every blocker and major below is closed.
 
+*2026-09-26: closing every gap below is necessary for the upstream submission, not sufficient. The submission is on
+hold on matcher accuracy, which no gap here covers -- see the "matcher accuracy" row of the status table.*
+
 ## Status
 
 | step | state | where |
@@ -17,6 +20,7 @@ This file is the definition of v0.5.0: the release is cut when every blocker and
 | 4 umockdev test | custom.py written for what a non-finger recording can honestly assert (enrol, non-match verify/identify, empty gallery, alien print, finger status, close); tooling ready; the recording itself needs ~14 presses of the measured object at the machine | |
 | 5 style, headers, statement, MR text | in progress: uncrustify passes (`113ba93`), LGPL blocks (`32e065c`), Pengu601 statement (`6fbb7b8`), adapter/contract headers (`ef93f46`), nbis_count (`30ad123`), submission-tree generator (`d1503fc`), MR draft `docs/upstream-mr.md`; open: the umockdev recording (step 4). Closed since: the engine contract takes a caller buffer (`b94a371`), the thermal choice is argued in the MR text, the clean-room matcher is the default (`03f65b4`) | |
 | matcher audit (2026-09-22) | done: the period check closes only constant-period families (jitter/loop/noise pass at 0.80-0.90, oracle attacker unaffected) and the claims are corrected; `EM_FQ_MIN_NBLK` 20 -> 12 (attack numbers bit-identical from 8 to 20, one genuine press of 60 recovered under the driver's rule); the alignment search runs once instead of twice (11.18 -> 6.20 ms a pair, identical on 32400 pairs); the kit reports the driver's accept rule | `5aecaeb`, `f23ac5c`, `49448b9` |
+| **matcher accuracy (2026-09-26)** | **not met — the submission is on hold.** No gap below covers it: the audit cited the Gabor front-end's 0 %/0 % on the reference unit as a precondition met (the `egis_engine.h` contract gap) and nothing in it measured a second session. That figure is one session (2026-09-13), in-sample; the same unit's 2026-09-18 session gives 13/60 false rejects and 18/480 false accepts under the driver's own rule (vendor on the same frames: 2/60, 0/480), cross-session 9/240 and 15/240, and no constant measured reaches 0/0. Bar for resuming: an own matcher at least as good as vendor -- 0 false accepts under the driver's rule on every dataset (both reference-unit sessions, both cross-session directions, sam-dant, tsteppy), no more false rejects than vendor, tuned on one dataset and certified on the others | `docs/matcher-comparison.md` "2026-09-26: what prevents a universal 0/0"; `docs/upstream-mr.md` |
 
 ## The work, in the order it should be done
 
@@ -219,7 +223,7 @@ s2idle, the long-lock run), because a rewritten capture path inherits none of th
 
 *Where:* driver/egis0576/egis_engine.h:12-24 (EGIS_THRESHOLD 5000 explained via 'The Windows default (660)'), :25 (egis_engine_init 'map + configure (mode 5)'), :56-61 (egis_preprocess 'byte-exact Windows per-frame preprocessing'
 
-*Fix:* Precondition: the submission carries exactly one matcher, the Gabor front-end (tools/accuracy numbers: 0 %/0 % vs 35 % FRR on the reference unit, 6.9 % vs 51.7 % on the second). tsteppy/egis_match.c stays in the out-of-tree repo for the accuracy kit only and is not submitted.  1. New header driver/egis0576/egis0576_match.h (own work, LGPL-2.1-or-later, with the attribution line for Thaddeus Stepanovich's frame layout and masked NCC that PROVENANCE.md already makes):    - typedef struct { double img[EGIS0576_FRAME_N]; guint8 mask[EGIS0576_FRAME_N]; double coverage; } Egis0576Frame;  (moved from tsteppy/egis_match.h so no orphan header remains)    - typedef struct { double ncc; int dx, dy; dou
+*Fix:* Precondition: the submission carries exactly one matcher, the Gabor front-end (tools/accuracy numbers: 0 %/0 % vs 35 % FRR on the reference unit, 6.9 % vs 51.7 % on the second). [2026-09-26: the numbers this precondition rests on do not hold. The 0 %/0 % is one in-sample session of the reference unit; its second session gives 18/480 false accepts under the driver's rule. The Gabor front-end does not meet the bar the submission now waits for -- see the "matcher accuracy" row of the status table.] tsteppy/egis_match.c stays in the out-of-tree repo for the accuracy kit only and is not submitted.  1. New header driver/egis0576/egis0576_match.h (own work, LGPL-2.1-or-later, with the attribution line for Thaddeus Stepanovich's frame layout and masked NCC that PROVENANCE.md already makes):    - typedef struct { double img[EGIS0576_FRAME_N]; guint8 mask[EGIS0576_FRAME_N]; double coverage; } Egis0576Frame;  (moved from tsteppy/egis_match.h so no orphan header remains)    - typedef struct { double ncc; int dx, dy; dou
 
 ### [major] Vendor-derived remnants and decompilation references remain in the clean-room path and must be removed before the tree is shown to reviewers
 

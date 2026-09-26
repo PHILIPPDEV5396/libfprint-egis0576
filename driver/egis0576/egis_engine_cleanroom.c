@@ -38,18 +38,41 @@
  * sensor's size leaves.
  *
  * MEASURED (tools/accuracy of the out-of-tree repository, one person per
- * unit, twelve-press enrolment, every frame of a press scored, impostors =
- * the same person's other fingers; scores are NCC):
+ * unit, every frame of a press scored, impostors = the same person's other
+ * fingers; scores are NCC; rejects / accepts under the driver's two-frame
+ * rule unless noted):
  *
- *   reference unit, 60 genuine / 480 impostor presses:
+ *   reference unit, session 2026-09-13, 60 genuine / 480 impostor presses
+ *     (the kit's two folds of six-press templates; until 2026-09-26 this
+ *     header said twelve-press enrolment):
  *     genuine 0.80 / 0.97 / 0.99 (min / median / max), impostor 0.06 / 0.41 /
  *     0.69 -> at the shipped 0.78: 0 rejects, 0 accepts; held-out threshold
- *     across folds 0.75 with the same result
- *   second unit (T. Stepanovich, flat-fielded frames): 6.9 % FRR, 0 % FAR
- *   a session five days later on the reference unit: fingers whose presses
- *     covered the enrolled skin matched at 0.83-0.94, two placed on skin the
- *     enrolment never saw did not -- which is what the steering addresses
+ *     across folds 0.75 with the same result. IN-SAMPLE: every constant of
+ *     the front-end was chosen on this session.
+ *   the same unit, person and fingers, session 2026-09-18: 13 / 60 rejects,
+ *     18 / 480 accepts, worst impostor 0.896 (right thumb against right
+ *     index); the vendor matcher on the same frames 2 / 60 and 0 / 480.
+ *     Twelve-press templates from one session, probes from the other:
+ *     9 / 240 and 15 / 240 accepts, worst impostor 0.895 / 0.886. So the
+ *     0 / 0 above is one favourable session, not a property of the unit --
+ *     until 2026-09-26 this comment presented it as the unit's, and read
+ *     this session as two fingers placed on skin the enrolment never saw
+ *     (withdrawn at the enrolment steering below: they came back rotated).
+ *   second unit (T. Stepanovich, flat-fielded frames, his protocol, held
+ *     out): 6.9 % FRR, 1.1 % FAR (this line said 0 % FAR until 2026-09-26)
+ *   sam-dant's unit (2026-09-25): 2 / 60 rejects, 2 / 480 accepts, worst
+ *     impostor 0.845; irvingpop's: 58 / 480 accepts under the kit's
+ *     press-maximum rule (the driver's rule not measured there)
  *   live through fprintd: genuine presses 0.86-0.95, another finger 0.55
+ *
+ * Why: the front-end scores whether two patches agree in ridge flow and
+ * ridge period, and that is not identity. Two different fingers that put
+ * near-parallel ridges at a similar angle and period on the sensor score
+ * like one finger, and whether they do depends on how the fingers land in
+ * a session. Threshold, overlap floor and search width were measured
+ * against it; each only trades false rejects for false accepts. See
+ * egis_match_gabor.c, LIMITS, and the out-of-tree repository's
+ * docs/matcher-comparison.md, "2026-09-26: what prevents a universal 0/0".
  *
  * The same-person impostor set is the ceiling this could be measured
  * against; nobody else's fingers were available. Physical artefacts were not
@@ -125,7 +148,8 @@
  * front-end (tsteppy/egis_match.c, -DEGIS_CR_FRONTEND_TSTEPPY) for the
  * comparison in its docs/matcher-comparison.md; that front-end has no
  * alignment report, so no steering, and the defaults below are its operating
- * point. Only the Gabor build is submitted. */
+ * point. Only the Gabor build is meant for submission (on hold since
+ * 2026-09-26, see docs/upstream-mr.md). */
 #ifndef EGIS_CR_FRONTEND_TSTEPPY
 #include "gabor/egis_cr_tuning_gabor.h"
 #include "gabor/egis_match_check.h"
@@ -165,13 +189,21 @@
 #ifndef EGIS_CR_MIN_ENROL_COVERAGE
 #define EGIS_CR_MIN_ENROL_COVERAGE EGIS_CR_MIN_COVERAGE
 #endif
-/* Enrolment steering. Coverage decides the genuine floor: on the reference
- * unit a second session five days later matched the first session's
- * templates at a median of 0.94 / 0.92 / 0.83 on three fingers and 0.55 /
- * 0.15 on two, because those two landed on skin the twelve enrolment presses
- * never covered -- and enrolling from a session whose presses were spread
+/* Enrolment steering. Placement decides part of the genuine floor: on the
+ * reference unit a second session five days later matched the first
+ * session's templates at a median of 0.94 / 0.92 / 0.83 on three fingers and
+ * 0.55 / 0.15 on two, and enrolling from a session whose presses were spread
  * out lifted the cross-session minimum from 0.52-0.59 to 0.82-0.92 on the
- * fingers that overlap at all. tsteppy saw the same on his unit. The driver
+ * fingers that overlap at all. tsteppy saw the same on his unit. Until
+ * 2026-09-26 this comment said the two low fingers "landed on skin the
+ * twelve enrolment presses never covered". That was partly wrong: they came
+ * back ROTATED, the thumb by about 50-60 deg and the right middle finger by
+ * about 30 deg, outside the front-end's +-10 deg search. Widening only the
+ * rotation search (+-90 / +-30 deg) accepts 21 of 24 cross-session presses
+ * of each instead of 0 (the thumb's 21 under the press maximum; 19 of 24
+ * under the driver's rule) -- and is no fix, because the wider search
+ * admits more impostors too (18 -> 32 of 480 at +-30 deg on the second
+ * session, driver's rule). Steering addresses placement only. The driver
  * cannot say "a bit to the left", but it can refuse to spend a stage on a
  * press that lands where one already is: from the EGIS_CR_STEER_FROM-th
  * stored frame on, a candidate whose best template match is at NCC >=

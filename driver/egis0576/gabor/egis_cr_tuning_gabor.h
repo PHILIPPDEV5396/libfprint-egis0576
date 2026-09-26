@@ -30,17 +30,32 @@
  *
  *   em_match_threshold     (egis_match_gabor.c, 0.78) placed in the gap between the lowest genuine press
  *                          (0.81, flat-fielded and raw alike) and the highest
- *                          impostor press (0.69) on the reference dataset
- *                          (tools/accuracy, 60 / 480) -- deliberately NOT at
+ *                          impostor press (0.69) of ONE session of the
+ *                          reference unit (2026-09-13, tools/accuracy, 60 /
+ *                          480 -- the session every front-end constant was
+ *                          tuned on) -- deliberately NOT at
  *                          its mid-point (0.75, where the two folds agree to
  *                          0.001) but 0.03 above it, on the genuine side. A
  *                          false reject costs a retry; a false accept costs
  *                          the login, so the margin belongs on the impostor
- *                          side: 0.09 against the reference dataset's worst
- *                          impostor, 0.07 against the worst live one seen so
- *                          far (0.71, 2026-09-18), 0.03 under the worst
- *                          genuine press. Maps to EGIS_THRESHOLD (5000)
- *                          exactly. What this margin is NOT: a defence
+ *                          side: 0.09 against that session's worst
+ *                          impostor, 0.03 under its worst genuine press.
+ *                          That gap exists on no other dataset. Until
+ *                          2026-09-26 this line also claimed 0.07 of margin
+ *                          against "the worst live impostor seen so far
+ *                          (0.71, 2026-09-18)": wrong -- the kit on the
+ *                          2026-09-18 session of the same unit, person and
+ *                          fingers measures 0.896 under the driver's own rule
+ *                          (right thumb against right index; 18 of 480
+ *                          impostor presses accepted, where the vendor
+ *                          matcher on the same frames accepts none). No
+ *                          value of this constant gives 0 / 0 outside the
+ *                          tuning session: FAR 0 on 2026-09-18 needs 0.885
+ *                          and rejects 15 of 60 genuine presses; enrolled on
+ *                          one session and probed with the other it needs
+ *                          0.892 / 0.853 and rejects 42 / 32 of 60. Why:
+ *                          egis_match_gabor.c, LIMITS. Maps to EGIS_THRESHOLD
+ *                          (5000) exactly. What this margin is NOT: a defence
  *                          against synthetic ridge textures -- a curved
  *                          grating at the right period scores 0.88-0.96
  *                          against real templates, above the worst genuine

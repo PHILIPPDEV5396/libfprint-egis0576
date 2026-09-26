@@ -107,14 +107,14 @@ here is exactly what of it is and is not in this one:
 header intact) from
 [`tsteppy/egistec-eh576-libfprint`](https://github.com/tsteppy/egistec-eh576-libfprint)
 at commit `56ac424f` (`driver/egis_match.{c,h}` there). It is built only when the
-driver is configured with `-Degis0576_matcher=cleanroom` (default: `vendor`),
-together with the author's adapter `egis0576/egis_engine_cleanroom.c` (category
-1). Exactly one matcher flavour is compiled: in a `cleanroom` build none of the
-category-2 matcher sources (`egis_funcs.c`, `egis_coherence_map.c`,
-`egis_preprocess.c` and the headers they pull in) are compiled at all — of the
-reverse-engineered material only `egis_init.h` (the sensor bring-up sequence)
-remains. Its measured accuracy is in
-[`docs/matcher-comparison.md`](docs/matcher-comparison.md).
+driver is configured with `-Degis0576_matcher=cleanroom` (default: `gabor`,
+below; the Ubuntu TOD package builds `vendor`), together with the author's
+adapter `egis0576/egis_engine_cleanroom.c` (category 1). Exactly one matcher
+flavour is compiled: in a `cleanroom` build none of the category-2 matcher
+sources (`egis_funcs.c`, `egis_coherence_map.c`, `egis_preprocess.c` and the
+headers they pull in) are compiled at all — of the reverse-engineered material
+only `egis_init.h` (the sensor bring-up sequence) remains. Its measured
+accuracy is in [`docs/matcher-comparison.md`](docs/matcher-comparison.md).
 
 ### Everything outside `driver/`
 
@@ -164,17 +164,33 @@ in-tree (`egis0576/tsteppy/egis_match.{c,h}`, adapter
 `egis0576/egis_engine_cleanroom.c`) and can be built instead of the vendor matcher
 with `-Degis0576_matcher=cleanroom` (see the README, "Experimental — clean-room
 matcher"). The `gabor` flavour (`egis0576/gabor/`, own work, LGPL) keeps his
-adapter and NCC but replaces the front-end; on the reference dataset it is the
-first clean-room configuration whose genuine and impostor populations do not
-overlap (0 % / 0 % at the shipped threshold, cross-fold checked), measured so far
-on one unit only. Measured on identical captures from three units, one person each
+adapter and NCC but replaces the front-end; it is the first clean-room
+configuration whose genuine and impostor populations do not overlap on one
+session of the reference unit (2026-09-13, the session its constants were tuned
+on: 0 % / 0 % at the shipped threshold, cross-fold checked); the same unit's
+2026-09-18 session gives 13 / 60 false rejects and 18 / 480 false accepts under
+the driver's rule (see
+[`docs/matcher-comparison.md`, "2026-09-26: what prevents a universal 0/0"](docs/matcher-comparison.md#2026-09-26-what-prevents-a-universal-00)).
+*(Until 2026-09-26 this sentence said "on the reference dataset … measured so
+far on one unit only", which presented the separation as the unit's.)*
+Measured on identical captures from three units, one person each
 ([`docs/matcher-comparison.md`](docs/matcher-comparison.md)): the vendor matcher
 scored 0/60, 2/60 and 37/60 false rejects and 0/480 false accepts on each; the
 clean-room matcher rejected 35 %, 73.3 % and 93.3 % of genuine presses at its
 published threshold, its genuine/impostor scores overlap on every run (EER 15 %,
 35 %, 45 %), and on one of the three it admitted 5 of 480 impostor comparisons
-where the vendor matcher admitted none. So it is not a drop-in replacement —
-which is why the vendor matcher remains the default. It is, however, the
-starting point for one. (Genuine acceptance of the *vendor* matcher varies
-sharply between those runs too; that is a separate, unexplained finding, not an
-argument about the clean-room matcher.)
+where the vendor matcher admitted none. So it is not a drop-in replacement. It
+is, however, the starting point for one. (Genuine acceptance of the *vendor*
+matcher varies sharply between those runs too; that is a separate, unexplained
+finding, not an argument about the clean-room matcher.)
+
+The vendor matcher is no longer the default: since v0.5.0 the meson option
+`egis0576_matcher` defaults to `gabor`, and the Fedora, Arch and Debian packages
+build that. The exception is the Ubuntu TOD package, which builds the vendor
+matcher — an oversight when the default changed, recorded in
+[`packaging/README.md`](packaging/README.md). The reasoning at the top of this
+section is why the vendor matcher was the default until then; measured against
+that reasoning, the `gabor` default takes the right thumb for the right index
+on the reference unit's 2026-09-18 session (18 of 480 impostor presses, above).
+*(Until 2026-09-26 this paragraph said "the vendor matcher remains the
+default".)*

@@ -405,7 +405,8 @@ def main():
         os.chmod(lp, 0o600)
         print(f"wrote {lp} ({sum(len(presses[f]) for f in fingers)} presses)\n\n"
               f"    {os.path.join(HERE, 'pairdiag')} {base} {lp}\n\n"
-              "prints a JSON block of counts and rates only -- that one is safe to paste.")
+              "prints a JSON block of counts, rates and per-pair scalars with finger labels, no image "
+              "data -- that one is safe to paste.")
         return 0
 
     if len(fingers) == 1:

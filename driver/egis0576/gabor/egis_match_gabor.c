@@ -67,9 +67,14 @@
  * rule -- threshold AT the other fold's highest impostor -- gives 0 % FRR at
  * 1.7 % FAR, i.e. the impostor tail is still only known to +-0.05 from 480
  * samples. What the numbers do NOT say: anything about other units or other
- * people (issue #5 is where that gets measured). The +0.12 NCC gap between
- * the populations is 4x what his front-end reaches at +-19 (-0.38, they
- * overlap) and is the whole point.
+ * people (issue #5 is where that gets measured) -- nor, as it turned out,
+ * about other sessions of the same unit. The dataset above is the session of
+ * 2026-09-13. The same unit, person and fingers five days later (2026-09-18,
+ * same kit, default build) give 13 / 60 false rejects and 18 / 480 false
+ * accepts under the driver's two-frame rule, worst impostor 0.896, and no
+ * threshold separates them (see LIMITS, the first item). The +0.12 NCC gap
+ * between the populations is 4x what his front-end reaches at +-19 (-0.38,
+ * they overlap) -- on the tuning session, and on no other dataset.
  *
  * SECOND UNIT (Thaddeus Stepanovich, Yoga 7 16IRL8, Intel; 29 genuine / 88
  * impostor decisions, cross-fold with the strictest zero-false-accept
@@ -96,14 +101,45 @@
  * threshold it lands on is still unit-dependent at this sample size (the
  * mid-gap is 0.75 here, 0.81 there; the shipped 0.78 sits on the genuine side
  * of this unit's gap on purpose, see egis_cr_tuning_gabor.h); a third unit
- * decides. One caveat on the comparison itself: his numbers come from HIS
+ * decides. [2026-09-26: "unit-dependent" undersold it. There is no gap to
+ * place a threshold in on sam-dant's unit, on irvingpop's, or on the second
+ * session of mine; "here" means one session. See LIMITS.] One caveat on
+ * the comparison itself: his numbers come from HIS
  * capture path (gain switching between reg 0x12 = 0 and 6, one settled frame
  * per press, 3-frame reference), not this driver's (calibrated exposure at a
  * fixed gain, 8-frame baseline, every frame scored), so his 0.815 impostor
  * ceiling is a property of that pipeline as much as of his unit, and it is
  * not an argument for where this driver's constant should sit.
  *
- * LIMITS (from an adversarial review, 2026-09-18, all measured):
+ * LIMITS (from an adversarial review, 2026-09-18, all measured; the first
+ * item from a root-cause investigation, 2026-09-26):
+ *   - Different real fingers. THE limit of this front-end, and the reason
+ *     the out-of-tree project stopped tuning it. The masked NCC below
+ *     measures whether two patches agree in ridge FLOW and ridge PERIOD,
+ *     not whose skin they are: a reconstruction built only from a frame's
+ *     own orientation field and period map, with no minutiae in it, is
+ *     accepted as its own finger on 34 of 60 presses (2026-09-13) and 31 of
+ *     60 (2026-09-18), period check on. So two different fingers that put
+ *     near-parallel ridges at a similar angle and period on the sensor score
+ *     like one finger. How often that happens depends on how the fingers
+ *     land in a session: impostor pairs whose flow agrees within 4 deg were
+ *     0 of 2880 on 2026-09-13 and 19 of 2880 on 2026-09-18 (same person,
+ *     unit and fingers; 14 of the 19 reach 0.78), mostly because the thumb's
+ *     dominant ridge angle had moved from ~31 to ~162 deg, 1.3 deg from the
+ *     right index finger's. That session gives 18 / 480 false accepts under
+ *     the driver's rule, worst 0.896; the vendor matcher on the same frames
+ *     accepts none. The ridge-period check rejects such a pair only where
+ *     the two periods differ, and these agree; threshold, EG_MIN_OVERLAP
+ *     (1200 / 1600 leave 17 / 11 of 480) and search width (+-5 .. +-90 deg)
+ *     were measured to trade false rejects for false accepts, nothing more.
+ *     The identity is in the frames, in the fine structure this front-end
+ *     filters away: none of the 54 impostor pairs em_match accepts over both
+ *     sessions and both cross-session directions reaches a masked NCC of
+ *     0.20 on the Gabor residual at the winning alignment (max 0.169),
+ *     where 78.8 % of 1050 accepted genuine pairs do -- a prototype
+ *     measurement, in-sample, first frames, one person. Detail:
+ *     docs/matcher-comparison.md, "2026-09-26: what prevents a universal
+ *     0/0".
  *   - Synthetic ridge textures. A curved grating (arc) at the sensor's ridge
  *     period scores 0.909 against real templates, a hill-climbed ridge model
  *     0.960, filtered ridge-frequency noise 0.849 -- above the worst genuine
@@ -163,8 +199,13 @@
  *     no ridges (-1), genuine raw probes score >= 0.83 against flat-fielded
  *     templates on the reference dataset.
  *   - Partial presses. A small well-aligned patch of one finger can match a
- *     different finger's template over the 800 px minimum overlap. Under
- *     evaluation (raising the floor to 1200 costs one genuine press in 60).
+ *     different finger's template over the 800 px minimum overlap. Evaluated
+ *     since (2026-09-23 / 26): on the tuning session raising the floor only
+ *     costs genuine presses (1 of 60 at 1200, 3 of 60 at 1600), and on the
+ *     second session the colliding pairs win at 1100-1900 px of overlap, so
+ *     a rebuild at 1200 / 1600 still accepts 17 / 11 of 480 impostors. The
+ *     floor is not where this front-end loses on my unit; whether it is on
+ *     sam-dant's is not settled.
  *
  * WHERE THE GAIN COMES FROM (numpy prototype of this pipeline, exhaustive
  * search, 240 impostors; the C reproduces its per-frame features
@@ -181,8 +222,8 @@
  * (search, mask, rotation take the worst impostor 0.44 -> 0.67 and the worst
  * genuine press 0.13 -> 0.64); on this dataset the Gabor step is what
  * finally lifts the genuine floor clear of the impostor ceiling, and none of
- * the pieces does it alone. See SECOND UNIT for why "on this dataset" is
- * load-bearing.
+ * the pieces does it alone. See SECOND UNIT and the first item of LIMITS
+ * for why "on this dataset" is load-bearing.
  *
  * COST (synthetic frames, idle laptop, gcc -O3): em_frame_compute 1.6 ms
  * against his 0.17 ms, once per frame; em_match 4.0 ms against his 0.85 ms
@@ -211,7 +252,11 @@
  * the gap between the lowest genuine press (0.81) and the highest impostor
  * press (0.69) on the reference dataset, deliberately on the genuine side of
  * its mid-point (0.75) -- a false reject is a retry, a false accept is the
- * login. The probe coverage gate is placed where the per-pixel mask separates
+ * login. That dataset is one session (2026-09-13), the one the front-end was
+ * tuned on; no other dataset measured has such a gap, the same unit's
+ * 2026-09-18 session included (worst impostor 0.896), so outside it this
+ * constant is a trade-off, not a separation (LIMITS, first item).
+ * The probe coverage gate is placed where the per-pixel mask separates
  * well-placed frames (0.70-0.75) from empty or smeared ones (< 0.2). Both are
  * measured on flat-fielded frames; see egis_cr_tuning_gabor.h for the
  * adapter-side policy that depends on them. */
@@ -876,7 +921,8 @@ eg_match_core (const EmFrame *a, const EmFrame *b, int *odx, int *ody, int *orot
  * unless the probe's period varies (sd >= 0.25 px) over enough cells
  * (>= 12) and agrees with the template's (mean |dT| <= 0.5 px).
  *
- * MEASURED (reference dataset; bench.c kit protocol; verify_master.c and the
+ * MEASURED (reference dataset, i.e. the 2026-09-13 session; bench.c kit
+ * protocol; verify_master.c and the
  * dictionary families of the adversarial review; own tools in the scratch
  * dir):
  *   check off:  genuine min 0.812 / p05 0.904 / median 0.970, impostor max

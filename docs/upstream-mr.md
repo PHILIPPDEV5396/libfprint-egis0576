@@ -4,6 +4,32 @@ The description for the libfprint merge request, kept here so it is reviewed
 with the code it describes. Facts only; every number has a measurement behind
 it in this repository. Update it whenever a number in the driver changes.
 
+> **On hold since 2026-09-26. Do not submit this text.** Its accuracy claims
+> rest on one session of the reference unit (2026-09-13), the session every
+> matcher constant was tuned on. The same unit, person and fingers five days
+> later give 13 false rejects of 60 and **18 false accepts of 480 under the
+> driver's own rule** (right thumb taken for right index, impostor NCC 0.896),
+> where the vendor matcher on the same frames accepts none; enrolled on one
+> session and tried with the other, 9 and 15 of 240. The cause is what the
+> matcher measures — agreement of ridge flow and ridge period, which two
+> different fingers can share, not identity — and no constant measured fixes
+> it: threshold, overlap floor and search width each only trade false rejects
+> for false accepts. Root cause and numbers:
+> [`matcher-comparison.md`, "2026-09-26: what prevents a universal 0/0"](matcher-comparison.md#2026-09-26-what-prevents-a-universal-00).
+>
+> The bar a matcher has to clear before this goes upstream: an own matcher
+> (no vendor code, upstreamable) at least as good as the vendor one — **0
+> false accepts under the driver's rule on every dataset** (both reference-unit
+> sessions, both cross-session directions, sam-dant's, tsteppy's), **no more
+> false rejects than vendor** on the same data, **tuned on one dataset and
+> certified on the others, never on the same session**. Nothing measured so
+> far meets it.
+>
+> The draft below is kept as it was written, so the record stays readable.
+> Claims now known to be false are struck through, misleading ones are
+> qualified, and each correction stands next to it as *[2026-09-26: …]*; the
+> protocol, architecture, provenance and testing parts are unaffected.
+
 ---
 
 ## egis0576: add a driver for the EgisTec EH576 (1c7a:0576)
@@ -75,8 +101,10 @@ libfprint's own path for image sensors is NBIS. On these frames `mindtct`
 finds a median of **one** minutia (714-frame dataset, 33 % of frames with
 none, max 7; with perimeter points kept, median two) — nothing `bozorth3` can
 match. An own extractor found ~7 per frame with ~50 % repeatability between
-adjacent frames of one press; mosaicking is useless because presses land on
-the same spot. So the driver matches by correlation: each of 12 enrolment
+adjacent frames of one press; ~~mosaicking is useless because presses land on
+the same spot~~ *[2026-09-26: mosaicking was measured useless on one session
+whose presses landed on the same spot; not re-measured on spread
+placements]*. So the driver matches by correlation: each of 12 enrolment
 presses is kept as a frame; a probe frame is compared with every stored frame
 by masked normalised cross-correlation over a shift and rotation search, on a
 Gabor-filtered ridge map with a local-ridge-period consistency check. The
@@ -91,15 +119,28 @@ against):
 - reference unit, 60 genuine / 480 impostor presses: genuine NCC
   0.80 / 0.97 / 0.99 (min / median / max), impostor 0.06 / 0.41 / 0.69; at the
   shipped threshold 0.78: 0 false rejects, 0 false accepts; held-out
-  threshold across folds 0.75, same result;
+  threshold across folds 0.75, same result; *[2026-09-26: true of one
+  session, 2026-09-13, the one every constant was tuned on — in-sample, and
+  not the unit's result]*
+- *[2026-09-26, added:]* the same unit, person and fingers, session
+  2026-09-18, driver's rule: 13 / 60 false rejects, 18 / 480 false accepts,
+  strongest impostor 0.896 (right thumb against right index); the vendor
+  matcher on the same frames 2 / 60 and 0 / 480. Enrolled on one session,
+  probed with the other: 9 / 240 and 15 / 240 false accepts. sam-dant's
+  unit (2026-09-25): 2 / 60 and 2 / 480, strongest impostor 0.845;
 - a second unit (T. Stepanovich, Yoga 7 16IRL8, his own captures, 29
   genuine / 88 impostor decisions, held-out cross-fold): 6.9 % FRR at 1.1 %
   FAR — his populations overlap (weakest genuine 0.60, strongest impostor
-  0.815), so the threshold is unit-dependent and this is the number to quote,
-  not the 0 / 0 above;
-- a session five days later on the reference unit: 0.83–0.94 on fingers
+  0.815), so ~~the threshold is unit-dependent and~~ this is the number to
+  quote, not the 0 / 0 above *[2026-09-26: the populations overlap on the
+  reference unit's second session too; no threshold separates them on any
+  dataset but the tuning session]*;
+- ~~a session five days later on the reference unit: 0.83–0.94 on fingers
   whose presses covered the enrolled skin, which is what the enrolment
-  steering (refusing a press that lands where one already is) is for;
+  steering (refusing a press that lands where one already is) is for;~~
+  *[2026-09-26: the two fingers that failed across sessions had come back
+  rotated by about 50–60° and 30°, outside the ±10° search; "uncovered skin"
+  was partly rotation, which steering does not address]*
 - live through fprintd: genuine presses 0.86–0.95, another finger 0.55.
 
 Two measured attacks on the *driver* are closed: the sensor was seen
@@ -112,16 +153,20 @@ raw bytes.
 A third one is **not** closed, and the driver should not be read as claiming
 otherwise: a fabricated ridge-textured artefact. A masked texture correlation
 on 5.5×4.5 mm matches any patch of locally parallel ridges at the right period
-and angle. A ridge-period consistency check rejects generated textures whose
-period is constant (sine 0.87 → 0.70, arc 0.91 → 0.70 against real templates),
-but a period-modulated grating, a loop pattern or filtered ridge noise go
-through it at 0.80–0.90, and against an attacker who can read the score it is
-worth 0.002 NCC. What it rejects it rejects as a non-match, which costs the
-presenter an attempt — the engine keeps "nothing to score" (which the driver
-answers with a retry) for frames it genuinely could not judge. This sensor offers no liveness signal, so presentation-attack
-detection is not available at all; the barrier is physical access plus making
-the artefact, as it is for every matcher without liveness detection. The
-numbers and the widened-grid measurement are in the out-of-tree
+and angle *[2026-09-26: including another real finger's — that is the cause of
+the false accepts measured above, and the ridge-period check cannot stop it
+when the two fingers' periods agree]*. A ridge-period consistency check
+rejects generated textures whose period is constant (sine 0.87 → 0.70, arc
+0.91 → 0.70 against real templates), but a period-modulated grating, a loop
+pattern or filtered ridge noise go through it at 0.80–0.90, and against an
+attacker who can read the score it is worth 0.002 NCC. What it rejects it
+rejects as a non-match, which costs the presenter an attempt — the engine
+keeps "nothing to score" (which the driver answers with a retry) for frames it
+genuinely could not judge. This sensor offers no liveness signal, so
+presentation-attack detection is not available at all; the barrier is
+physical access plus making the artefact, as it is for every matcher without
+liveness detection. The numbers and the widened-grid measurement are in the
+out-of-tree
 docs/matcher-comparison.md.
 
 **Templates are frames.** A correlation matcher has nothing else to match
@@ -130,7 +175,8 @@ bytes for a print, in fprintd's root-only store like every other driver's
 template. Reviewers should weigh that; the alternative was no driver.
 
 Physical artefacts were not tried. Same-person impostors only. The threshold
-is calibrated on one unit; the second unit's held-out optimum was 0.81.
+is calibrated on one ~~unit~~ *[2026-09-26: session of one unit]*; the second
+unit's held-out optimum was 0.81.
 
 ### How this was written
 

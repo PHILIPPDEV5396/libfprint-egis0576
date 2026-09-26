@@ -55,10 +55,17 @@ $(HERE)score-cleanroom: $(OBJ)/score.o $(CLEAN_OBJ)
 $(HERE)score-gabor: $(OBJ)/score.o $(GABOR_OBJ)
 	$(CC) -o $@ $^ -lm
 
-# Diagnostic, not a scorer: coverage and winning-overlap aggregates for one
-# dataset (pairdiag.c). Built against the Gabor front-end only.
-$(HERE)pairdiag: $(HERE)pairdiag.c $(OBJ)/gabor/egis_match_gabor.o
-	$(CC) $(GABOR_CFLAGS) -o $@ $^ -lm
+# Diagnostic, not a scorer: coverage, winning-overlap, identity and flow
+# aggregates for one dataset (pairdiag.c). Built against the Gabor front-end
+# only, which pairdiag.c #includes (it needs the front-end's static helpers),
+# so it is compiled from source here rather than linked as an object.
+$(HERE)pairdiag: $(HERE)pairdiag.c $(DRV)/gabor/egis_match_gabor.c $(DRV)/gabor/egis_match_check.h \
+                 $(DRV)/gabor/egis_cr_tuning_gabor.h $(DRV)/tsteppy/egis_match.h
+	$(CC) $(GABOR_CFLAGS) -o $@ $< -lm
+# `make pairdiag` (what pairdiag.c tells you to run) names the target by its
+# bare name; without this alias make falls back on its built-in %: %.c rule,
+# which has none of the flags above and fails.
+pairdiag: $(HERE)pairdiag
 
 $(OBJ)/gabor/egis_engine_cleanroom.o: $(DRV)/egis_engine_cleanroom.c $(DRV)/gabor/egis_cr_tuning_gabor.h $(DRV)/gabor/egis_match_check.h
 	@mkdir -p $(dir $@)
@@ -109,4 +116,4 @@ nbis-count: $(HERE)nbis_count.c
 	    -I$(NBIS)/include -I$(NBIS)/libfprint-include -I$(LIBFPRINT_SRC)/libfprint \
 	    $(wildcard $(NBIS)/mindtct/*.c) $$(pkg-config --cflags --libs glib-2.0) -lm
 
-.PHONY: all clean nbis-count
+.PHONY: all clean nbis-count pairdiag

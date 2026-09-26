@@ -22,6 +22,17 @@ average of those three numbers is meaningful, and none of them is this driver's
 false-reject rate; they are three measurements of three people on three units.
 They are all reproduced below.
 
+> **Read the Gabor sections below with the last one in mind (2026-09-26).**
+> The clean 0 % / 0 % the Gabor front-end shows on the reference unit is a
+> property of **one session** (2026-09-13), the one every Gabor constant was
+> tuned on — not of the unit, and not of the matcher. The same unit, person and
+> fingers five days later give 13 / 60 false rejects and 18 / 480 false accepts
+> under the driver's own rule, where the vendor matcher on the same frames
+> rejects 2 and accepts none. The front-end measures ridge flow and period, not
+> identity. Statements in this file that said otherwise are left where they
+> were and marked; the measurement and its consequences are in
+> [the last section](#2026-09-26-what-prevents-a-universal-00).
+
 ## Summary
 
 | | reference unit | sam-dant | irvingpop |
@@ -295,10 +306,12 @@ NCC 0.78 → score 5000 (score = NCC × 5000 / 0.78, so a perfect 1.0 logs as
 6410), because both populations sit higher than with his front-end and his
 0.53 would false-accept 14 % of same-person impostors. The threshold sits on
 the genuine side of this unit's gap on purpose (mid-gap would be 0.75): a
-false reject costs a retry, a false accept costs the login.
+false reject costs a retry, a false accept costs the login. *(2026-09-26:
+"this unit's gap" is this **session's** gap. The same unit's 2026-09-18
+session has no gap to sit in — see the last section.)*
 
 Same captures, same protocol, same kit (`score-gabor`), 2026-09-18 (scores
-on the 0.78 scale):
+on the 0.78 scale; the captures are the 2026-09-13 session's):
 
 | | genuine (n = 60) | impostor (n = 480) |
 |---|---:|---:|
@@ -330,6 +343,13 @@ possible here is the only measurement that matters for the two units where
 his front-end fell to 73 % and 93 % FRR: theirs. `make -C tools/accuracy`
 now builds `score-gabor`, and `evaluate.py` runs it by default.
 
+*(2026-09-26: one measurement that was possible here was not used for this:
+the same unit's second session, captured on 2026-09-18, the day of this run,
+and kept out of the FAR record (see "Across sessions" below). Run through
+this same kit it gives FRR 13 / 60 and FAR 18 / 480 under the driver's rule
+— the 0 % / 0 % above does not survive a second session of the unit it was
+tuned on. See the last section.)*
+
 **Second unit (2026-09-17, Thaddeus Stepanovich, Yoga 7 16IRL8 / Intel):**
 he ran the front-end on his own two capture sets (29 genuine / 88 impostor
 decisions, cross-fold with the strictest zero-false-accept threshold, folds
@@ -351,7 +371,10 @@ makes the threshold portable (his raw-frame folds wanted 0.832 / 0.870, his
 flat-fielded ones 0.815 / 0.813), and it helps this front-end while hurting
 his (51.7 % → 65.5 %). The threshold is still unit-dependent even flat-fielded
 — mid-gap 0.75 here, 0.81 there — which is the open problem a third unit has to
-inform. One caveat on that comparison: his numbers come from his capture path
+inform. *(2026-09-26: it is worse than unit-dependent. "Here" is one session;
+the same unit's next session, sam-dant's unit and irvingpop's have no gap at
+all, so there is no mid-gap to place.)* One caveat on that comparison: his
+numbers come from his capture path
 (gain switching between register 0x12 = 0 and 6, one settled frame per press,
 a 3-frame reference), not this driver's (calibrated exposure at a fixed gain,
 8-frame baseline, every frame scored), so his impostor ceiling is a property
@@ -452,23 +475,57 @@ and is therefore not shipped.
 **Across sessions (2026-09-18, second capture on the reference unit five days
 after the first):** templates from the first session, probes from the second,
 twelve templates per finger as the driver enrols — medians 0.94 / 0.92 / 0.83
-on three fingers, **0.55 and 0.15** on the other two, because those landed on
-skin the first session's twelve presses never covered (the two sessions'
-thumb regions do not overlap at all). The reverse direction, enrolling from
-the second session whose presses were deliberately spread out, lifts the
-cross-session *minimum* on the three overlapping fingers from 0.52–0.59 to
-0.82–0.92. That, and tsteppy's identical finding on his unit, is why the
-clean-room adapter now steers enrolment: from the third stored frame on, a
-press that lands where a stored frame already is (NCC ≥ 0.90 within 6 px) is
-refused with the "adjust your finger" hint instead of spending a stage, at
-most twice in a row. On the first session's twelve first-frames the rule
-would have refused 3–5 presses per finger; on the spread-out session 1–3.
-The second session also measured a same-session **impostor pair at 0.90**
-(right thumb vs right index, 12 of 24 pairings ≥ 0.78) that no other pair on
-either session comes near; cross-session, that "thumb" recording resembles
-the first session's *index* finger (0.72) far more than its thumb (0.15).
-The recorder reports using the correct fingers. Until that is understood the
-second session is used for the coverage question only, not for FAR.
+on three fingers, **0.55 and 0.15** on the other two, ~~because those landed on
+skin the first session's twelve presses never covered (the two sessions' thumb
+regions do not overlap at all)~~ *(withdrawn, see below: they came back
+rotated)*. The reverse direction, enrolling from the second session whose
+presses were deliberately spread out, lifts the cross-session *minimum* on the
+three overlapping fingers from 0.52–0.59 to 0.82–0.92. That, and tsteppy's
+identical finding on his unit, is why the clean-room adapter now steers
+enrolment: from the third stored frame on, a press that lands where a stored
+frame already is (NCC ≥ 0.90 within 6 px) is refused with the "adjust your
+finger" hint instead of spending a stage, at most twice in a row. On the first
+session's twelve first-frames the rule would have refused 3–5 presses per
+finger; on the spread-out session 1–3. The second session also measured a
+same-session **impostor pair at 0.90** (right thumb vs right index, 12 of 24
+pairings ≥ 0.78) that no other pair on either session comes near;
+cross-session, that "thumb" recording resembles the first session's *index*
+finger (0.72) far more than its thumb (0.15). The recorder reports using the
+correct fingers. ~~Until that is understood the second session is used for the
+coverage question only, not for FAR.~~
+
+**Withdrawn, 2026-09-26: both readings in the paragraph above were wrong, and
+the second one was wrong on the evidence it printed itself.**
+
+- *Much of the "uncovered skin" was rotation.* A structure-tensor orientation
+  estimate on each session's own flat-fielded frames puts the thumb of the
+  second session at about 50–60° and R-Mittel (right middle finger) at about
+  30° from where they were in the first — far outside the ±10° rotation search.
+  Widening only the rotation search (a rebuild for the measurement) brings them
+  back: at ±90° the thumb goes from 0 of 24 cross-session presses accepted to
+  21 of 24 (press maximum; 19 of 24 under the driver's rule), at ±30° R-Mittel
+  from 0 of 24 to 21 of 24 under either rule. Placement is part of it — on the
+  spread-out second session 10 of the kit's 12 press-maximum genuine rejects
+  never reach 0.60 against their fold's templates — but the premise the
+  enrolment steering was built on, "skin never covered", was partly rotation,
+  and steering does nothing about rotation. (Widening the search is no fix
+  either; see the last section.)
+- *The 0.90 thumb/index pair was this matcher failing, not a mislabel.* The
+  vendor matcher settles the label: on the identical frames it matches the
+  second session's R-Daumen only to the first session's R-Daumen (9 of 12
+  presses against first-session templates, 12 of 12 the other way) and scores
+  all 960 impostor comparisons of the combined two-session set 0; in-session it
+  accepts none of 480 impostors, R-Daumen against R-Zeige included, and rejects
+  2 of 60 genuine presses. What changed between the sessions is the thumb's
+  angle: its dominant ridge orientation moved from about 31° to about 162°,
+  1.3° from R-Zeige's (on 2026-09-13 it lay 42–48° from both index fingers).
+  Two near-parallel ridge fields at the same angle and period are exactly what
+  the Gabor front-end cannot tell apart. Setting the session aside "for the
+  coverage question only, not for FAR" therefore removed from the FAR record
+  the one measurement in this file that showed the reference unit's 0 / 0 was
+  not a property of the unit — and the 0.90 stood two sentences above the
+  sentence that set it aside. Under the driver's own rule that session gives
+  **18 false accepts of 480**. It is used for FAR from now on.
 
 Cost, for the driver's every-frame scoring loop: `em_frame_compute` 1.6 ms
 (his 0.17 ms), `em_match` 4.0 ms against 0.85 ms at ±6 and 6.4 ms at ±19 —
@@ -505,7 +562,9 @@ were tried in the same session; the best of the variants is the second row.
 An own extractor tuned to the frame size found ~7 per frame, of which only ~50 %
 repeated between adjacent frames of the same press, so a minutiae matcher was
 not viable either; mosaicking several presses was measured useless because
-presses land on the same spot (about 1.2× the frame area in total). What the
+presses land on the same spot (about 1.2× the frame area in total — on the
+2026-09-13 session, whose presses were concentrated; not re-measured on the
+deliberately spread 2026-09-18 one). What the
 sensor's size leaves is correlation on the ridge texture, which is what the
 Gabor front-end does.
 
@@ -557,6 +616,11 @@ The measurements still missing are the same ones as before, now with one added:
 more people, a second session after a reboot on the same unit (the per-boot flat
 field is the thing most likely to move scores), and the same person on two
 different units — the only way to separate the unit from the finger.
+*(2026-09-26: a second session on the reference unit exists now, 2026-09-18.
+The vendor matcher barely moves on it — 2 / 60, 0 / 480 — while the Gabor
+front-end falls from 0 / 0 to 13 / 60 and 18 / 480. What moved the scores
+was where the fingers landed, not the flat-field: the two sessions' baselines
+correlate at 0.997. See the last section.)*
 
 ## Reproducing on your own hardware
 
@@ -577,7 +641,7 @@ measurement can get.
 irvingpop re-ran the kit on his 2026-09-13 captures with the v0.5.1 tree — no
 new presses, the shipped default. On his Yoga 6 13ALC6, at threshold 5000:
 
-| | reference unit | tsteppy's second unit | irvingpop |
+| | reference unit, 2026-09-13 | tsteppy's second unit | irvingpop |
 |---|---:|---:|---:|
 | genuine min (NCC) | 5153 (0.804) | 0.600 | 1958 (0.305) |
 | impostor max (NCC) | 4426 (0.691) | **0.815** | **5788 (0.903)** |
@@ -595,14 +659,20 @@ foreign units score same-person impostor presses *above* the 0.78 accept point
 margin is the exception in the sample, not the rule, and the README said
 otherwise until today.
 
+*(Corrected 2026-09-26: not of this unit either — of **one session** of it.
+The bold sentence above replaced one over-generalisation with another. The same
+unit's 2026-09-18 session scores a same-person impostor at 0.896 under the
+driver's own rule, and it had been in this file since that day, set aside as
+a possible mislabel. See the last section.)*
+
 **And no false-accept figure this project published was the driver's.** The kit
 applied the driver's two-frame rule to genuine presses and the press maximum to
 impostors, and never applied the raw-frame corroboration at all. `kit_version
 3` fixes both sides (`far_confirmed`, and a third column in `score.c`); the
-reference dataset re-measured under the true rule is unchanged at 0 % / 0 %,
-60 of 60 confirmed. What that rule does to a 12.1 % needs his re-run, not a
-guess: an isolated lucky frame is exactly what the two-frame rule exists to
-kill, and 58 of his false accepts are press maxima.
+reference dataset (2026-09-13) re-measured under the true rule is unchanged
+at 0 % / 0 %, 60 of 60 confirmed. What that rule does to a 12.1 % needs his
+re-run, not a guess: an isolated lucky frame is exactly what the two-frame
+rule exists to kill, and 58 of his false accepts are press maxima.
 
 **Tested and rejected: the overlap floor.** The returned NCC is a maximum over
 ~7,600 coarse and 225 fine alignments admitted from 800 px of masked overlap,
@@ -625,6 +695,9 @@ narrows. Here the strongest impostor pairs win at 940–1491 px of overlap, not
 at the floor, so the mechanism is real but the constant is not where this unit
 loses. Whether it is where a *failing* unit loses is exactly what `pairdiag`
 (`tools/accuracy/`) now reports, in scalars a reporter can paste.
+*(2026-09-26: on the reference unit's own failing session, 2026-09-18, it is
+not: the colliding pairs win at 1100–1900 px, and rebuilds at 1200 and
+1600 px still accept 17 and 11 of 480 impostors under the driver's rule.)*
 
 **What is NOT the explanation**, each checked: the flat-field (the kit's
 arithmetic is character-for-character the driver's, on the reporter's own
@@ -662,17 +735,321 @@ above 1200 px. That is the opposite of the reference unit, where the top
 impostor stayed at 0.666 until 1600 px. Filtering winning alignments is not
 the same experiment as rebuilding with a higher floor (a higher floor changes
 which alignment wins); the rebuilt run on his frames has been asked for.
+*(2026-09-26: "the reference unit" here is its 2026-09-13 session. On its
+2026-09-18 session the same `pairdiag` puts the top impostor at 0.873 / 0.865 /
+0.829 at the 800 / 1200 / 1600 px floors, and a rebuild at 1200 px still
+accepts 17 of 480 impostors — so the rebuilt run asked of sam-dant can tell
+whether his tail is small-overlap, but not deliver a universal 0 / 0. And his
+0.741 above 1200 px, as a filter of winners, is a lower bound on what a
+rebuild would find, not its result.)*
 
 **Where the matchers stand, on every dataset where both were measured under
 the same protocol:**
 
 | dataset | vendor FRR / FAR | gabor FRR / FAR (driver's rule unless noted) |
 |---|---:|---:|
-| reference unit | 0 % / 0 % | 0 % / 0 % |
+| reference unit, 2026-09-13 ¹ | 0 % / 0 % | 0 % / 0 % |
+| reference unit, 2026-09-18 ¹ | 3.3 % / 0 % (2 / 60, 0 / 480) | 21.7 % / 3.75 % (13 / 60, 18 / 480) |
+| reference unit, enrol one session → probe the other ¹ ² | 5.0 % / 0 % (6 / 120, 0 / 960; any frame) | 45.0 % / 4.0 % (54 / 120, 38 / 960; any frame) |
 | sam-dant, 2026-09-25 | 0 % / 0 % | 3.3 % / 0.42 % |
 | irvingpop, 2026-09-13 | 61.7 % / 0 % | 63.3 % / 12.1 % (FAR any-frame; driver's-rule FAR not yet measured) |
 
+¹ The first row was the only reference-unit row until 2026-09-26; the other
+two were added with the last section, which says how they were measured.
+² The kit on one dataset holding both sessions, every frame flat-fielded
+against its own session's baseline. Its two folds are then the two sessions:
+each twelve-press template is probed with the other session's presses of the
+same finger, and with every other-finger press of both sessions. Under the
+driver's rule, with twelve-press templates and impostor probes from the other
+session only, Gabor gives 32 / 60 and 9 / 240 (enrolled on 09-13) and 24 / 60
+and 15 / 240 (enrolled on 09-18).
+
 On each of them the vendor matcher rejects no more genuine presses than Gabor
-and accepts no impostor. The Gabor front-end's real gains were measured
-against the *original clean-room* front-end (Stepanovich's unit, 51.7 % → 6.9 %),
-not against vendor.
+and accepts no impostor. *(2026-09-26: that holds under the driver's rule.
+Under the kit's press-maximum rule irvingpop's run is the exception on the
+genuine side — vendor 37, Gabor 36 of 60.)* The Gabor front-end's real
+gains were measured against the *original clean-room* front-end
+(Stepanovich's unit, 51.7 % → 6.9 %), not against vendor.
+
+## 2026-09-26: what prevents a universal 0/0
+
+After sam-dant's run the question was whether the Gabor front-end could be
+brought to zero false accepts under the driver's own rule on every unit —
+which constant, which unit property, which foreign-capture problem stood in
+the way. It was investigated from five directions (how stable the reference
+unit's result is, what the score measures, the anatomy of the foreign tails,
+the alignment search's multiplicity, person versus sensor), every finding was
+re-checked by an independent reviewer, and the key numbers were re-measured
+with the unmodified kit. For the reference unit and sam-dant's, the answer is
+none of those (irvingpop's unit is a separate, unexplained mode, §8). **What
+prevents a universal 0/0 is what the matcher measures**, and it already fails
+on the reference unit.
+
+### How it was measured
+
+So that each number can be redone. The kit and `pairdiag` are in this
+repository; the other harnesses are described here, not committed. The
+frames never left the maintainer's machine; everything below is aggregates.
+
+- **Datasets.** The reference dataset this file was written around
+  (2026-09-13). A second capture on the reference unit five days later
+  (2026-09-18): same person, same five fingers, 12 presses each, placements
+  deliberately spread, its own no-finger baseline — the session "Across
+  sessions" above describes. The `results.json` files sam-dant (2026-09-25)
+  and irvingpop (his 2026-09-13 captures) posted.
+- **The kit, unmodified**, as of 68456ff (`kit_version 3`), default build,
+  no overrides: `evaluate.py <dataset> --flavour gabor` and `--flavour
+  vendor` (the prebuilt `score-vendor`), `pairdiag` for first-frame pair
+  statistics. Which finger pair each impostor score belongs to is
+  reconstructed from `evaluate.py`'s loop order (the fold loop in
+  `evaluate()`).
+- **Across sessions**: the kit on one dataset holding both sessions, each
+  frame flat-fielded against its own session's baseline (its two folds are
+  then the two sessions); and, for the driver's rule with twelve-press
+  templates and impostor probes from the other session only, a scorer that is
+  `score.c` with separate enrolment and probe baselines, linked against the
+  unmodified adapter and front-end. An independent harness that `#include`s
+  the unmodified `egis_match_gabor.c` reproduces all 540 press scores of each
+  session exactly.
+- **Rebuilds** for the constants in the table further down:
+  `-DEG_MIN_OVERLAP`, `-DEG_ROT_MAX`, `-DEG_SRCH`, everything else
+  unmodified. **Enrolment splits**: all 924 six-of-twelve splits per finger,
+  steering emulated.
+- **Orientation**: the coherence-weighted dominant angle of each flat-fielded
+  frame's structure tensor. **Phase singularities**: Larkin–Fletcher phase
+  residues.
+- **Flow-only reconstruction**: a synthetic frame whose ridge phase is
+  integrated, by least squares, from the matcher's own orientation field and
+  period map of a real frame, with that frame's mask imposed — the frame's
+  flow and period with its minutiae removed (0 phase singularities over 120
+  frames). **Gabor residual**: the locally contrast-normalised frame minus
+  its least-squares multiple of the Gabor output, i.e. the fine structure the
+  front-end throws away; compared as a masked NCC at the alignment
+  `em_match_ex` reports.
+
+### 1. The score measures ridge flow and ridge period, not identity
+
+The front-end steers a Gabor filter along the local orientation with one
+ridge period per frame, then maximises a masked NCC over ±19 px and ±10°. In
+the Gabor-filtered image the front-end correlates, a patch with no minutia in
+it is essentially described by its orientation field and its period (the
+finer structure that also identifies skin is what the filter removes, §6), so
+two different fingers that put near-parallel ridges at a similar angle and
+period onto the 70×57 px window score like one finger — what the LIMITS note
+in `egis_match_gabor.c` already said about synthetic gratings, now seen
+between real fingers.
+
+- A **flow-only reconstruction** of a press, with no minutiae, is accepted
+  as its own finger on **34 of 60** presses (2026-09-13) and **31 of 60**
+  (2026-09-18), period check on (kit fold protocol, templates from the other
+  fold). Its own-finger median is 0.824 / 0.856 against the real frame's
+  0.965 / 0.940.
+- Over the 2880 first-frame impostor pairs of each session, agreement of
+  orientation at the winning alignment alone explains R² 0.67 (09-13) and
+  0.53 (09-18) of the impostor NCC; agreement of period explains 0.010 and
+  0.098, because all five of the owner's fingers have periods of 5.1–6.2 px.
+- Impostor pairs whose flow agrees within 4°: **0 of 2880** on 2026-09-13,
+  **19 of 2880** on 2026-09-18 (same person, unit and fingers); 14 of those
+  19 reach 0.78.
+
+How often such coincidences occur depends on how a person's fingers land in
+a session; how often one is accepted is a property of the matcher.
+
+### 2. It fails on the reference unit itself
+
+| reference unit, Gabor, default build | rule | FRR | FAR | impostor max (NCC) |
+|---|---|---:|---:|---:|
+| 2026-09-13 | driver's | 0 / 60 | 0 / 480 | 0.690 |
+| 2026-09-18 | press maximum | 12 / 60 | 21 / 480 | 0.896 |
+| 2026-09-18 | driver's | **13 / 60** | **18 / 480** | **0.896** (score 5745) |
+| enrol 09-13, probe 09-18, twelve-press templates | driver's | 32 / 60 | 9 / 240 | 0.895 |
+| enrol 09-18, probe 09-13, twelve-press templates | driver's | 24 / 60 | 15 / 240 | 0.886 |
+| *vendor, 2026-09-18, same frames* | both | *2 / 60* | *0 / 480* | *every impostor 0* |
+
+20 of the 21 press-maximum accepts on 2026-09-18 are R-Daumen (right thumb)
+against R-Zeige (right index) — 11 thumb templates against index probes, 9
+the other way; the 21st is one L-Zeige press. That finger pair has an impostor median of 0.753 with
+20 of its 48 comparisons at or above 0.78; the next pair's median is 0.58,
+and on 2026-09-13 the same pair's was 0.399. The accepted impostors pass
+every gate the driver has — the period check, the raw-frame corroboration,
+the two-frame rule — and none of them wins at zero shift. The genuine
+minimum on 2026-09-18 is 0.192: the spread placements cost genuine presses
+too (10 of the 12 press-maximum rejects never reach 0.60), which the vendor
+matcher, at 2 of 60, largely survives.
+
+### 3. The 2026-09-18 labels are right
+
+The vendor matcher on the identical frames matches the 2026-09-18 R-Daumen
+only to the 2026-09-13 R-Daumen — 9 of 12 presses against the first
+session's templates, 12 of 12 the other way — and scores all 960 impostor
+comparisons of the combined two-session set 0. What changed between the
+sessions is the thumb's angle on the sensor: its dominant ridge orientation
+moved from about 31° to about 162°, which put it 1.3° from R-Zeige's; on
+2026-09-13 it lay 42–48° from both index fingers, outside the ±10° search.
+The reading earlier in this file that set this session aside for FAR until
+the thumb/index collision was "understood" ("Across sessions", above) is
+withdrawn there: the collision was the matcher's failure mode.
+
+### 4. The 2026-09-13 0 / 0 is one favourable, in-sample session
+
+Every Gabor constant was chosen on that dataset ("What this run does **not**
+show", above), its presses were concentrated, and that day the most
+parallel-ridged finger lay far from both index fingers in angle. Over the 924
+enrolment splits per finger, the probability of zero impostor accepts is
+**1.000** for 09-13 against itself and **0.000** for 09-18 against itself and
+for both cross-session directions. Even inside 09-13 the genuine side is a
+draw: 69.4 % of the splits keep the genuine minimum at or above its published
+0.804. How much of the clean result is tuning and how much placement luck
+the data cannot split; the conclusion does not depend on it.
+
+### 5. No constant measured reaches 0 / 0, even on the reference unit
+
+| what | measured | result | why it cannot work |
+|---|---|---|---|
+| accept threshold | lowest NCC with FAR 0 under the driver's rule | 09-18: 0.885 at **FRR 15 / 60**; enrol 09-13 → 09-18: 0.892 at **42 / 60**; enrol 09-18 → 09-13: 0.853 at **32 / 60** (09-13 alone: any threshold from about 0.69 to 0.80 gives 0 / 0; at 0.885 that session rejects 2 of 60) | the colliding impostors score where genuine presses do |
+| overlap floor (`EG_MIN_OVERLAP`) | rebuilt at 1200 and 1600 px | 09-18: FAR **17 / 480** (max unchanged at 0.896) and **11 / 480** (max 0.868); across sessions at 1600: 7 / 240 and 3 / 240; on 09-13 1600 costs 3 of 60 genuine presses | the colliding pairs win at 1100–1900 px of overlap, not at the floor |
+| search width | rebuilt at ±5° / ±12 px, the shipped ±10° / ±19 px, ±30°, ±90° | 09-18 FRR / FAR: ±5° / ±12 px 17 / 60 and 5 / 480 (max 0.821); shipped 13 / 60 and 18 / 480; ±30° 12 / 60 and 32 / 480; 09-13 at ±30°: FAR 1 / 480 (max 0.798); enrol 09-18 → 09-13 at ±90°: FRR 3 / 60 at FAR 32 / 240 under the driver's rule (press maximum 1 / 60 and 35 / 240), max 0.907; ±27 px: 09-18 FRR 7 / 60 (press maximum), FAR not measured | genuine re-placements need the wider search, and every alignment it admits is another chance for a flow coincidence |
+| number of alignment hypotheses | random nested subsets, from 1/128 of the 13,689 alignments to all of them | **+0.014 NCC per doubling**; removing hypotheses costs genuine presses about four times as much as impostors | the tail is the amplitude of one pair's correlation field, not extreme-value statistics over many hypotheses |
+| image side, simulated on 09-13 | white noise sd up to 15, contrast × 0.3, blur σ up to 1.6 px, no flat-field at all | checked first-frame impostor max at most 0.693 (unmodified 0.666), genuine median 0.87–0.91 throughout | the tail is not an image artefact of this unit: impostor NCC at zero shift is +0.0001 (SE 0.0015, n = 2700), so no fixed pattern survives the flat-field |
+| Gabor front-end (σ, coherence threshold, erosion), period-check constants | **not swept** | — | argued, not measured: the colliding pairs' periods agree, and a flow-only reconstruction scores like the real frame |
+
+Every constant tested moves the operating point along a trade-off between
+false rejects and false accepts; none leaves both at zero outside the
+session it was tuned on. This also answers the rebuild at 1200 px asked of
+sam-dant: it can tell whether his tail is a small-overlap one, but it cannot
+deliver universality, because on the reference unit's own second session it
+leaves 17 of 480.
+
+### 6. The identity is in the frames
+
+- The **vendor matcher** separates the same captures: it scores all 1440
+  impostor comparisons of 2026-09-18 (480) and of the combined two-session
+  set (960) exactly 0, at 2 of 60 and 6 of 120 false rejects (any frame; 9
+  of 120 under the driver's rule).
+- **The fine structure the Gabor filter discards carries it.** Of the 54
+  impostor pairs `em_match` accepts over all four session combinations
+  (first frames), none shares a matched phase singularity and none reaches a
+  Gabor-residual NCC of 0.20 (maximum 0.169); 78.8 % of the 1050 accepted
+  genuine pairs do, with medians 0.60 / 0.54 / 0.48 / 0.44 for 13→13 /
+  18→18 / 13→18 / 18→13. A crude gate on it — accept only at a residual NCC
+  of at least 0.10 — gives **FAR 0 / 480 on both sessions** at FRR 2 / 60
+  (09-13) and **18 / 60** (09-18), scoring one first frame per press on the
+  kit's folds (without the gate that protocol gives 0 / 60, 0 / 480 and
+  12 / 60, 11 / 480). **That is a prototype measurement: in-sample
+  threshold, first frames, one person** — a candidate direction, not a
+  finished gate: on 2026-09-18 its 0 / 480 costs 18 of 60 genuine presses,
+  and there the colliding right thumb reproduces its own residual poorly
+  (its accepted genuine pairs, ordered, first frames: residual median 0.034
+  over 37 pairs, against 0.332 over 93 on 2026-09-13). It is not a matcher,
+  and nothing about it is shipped. It is the same idea as the fine-structure
+  check measured against synthetic artefacts under "The period check closes
+  half of what was claimed" (5–7 % genuine cost there), now measured against
+  real impostors.
+
+Minutiae alone will not carry it: a 70×57 frame holds a median of one
+("Why not minutiae"), so fine structure or several frames per decision have
+to.
+
+### 7. The enrolment steering's premise was partly rotation
+
+Across the two sessions the thumb came back rotated by about 50–60° and
+R-Mittel by about 30°; at ±90° the thumb's cross-session accepts go from
+0 of 24 to 21 of 24 (press maximum; 19 of 24 under the driver's rule), at
+±30° R-Mittel's from 0 of 24 to 21 of 24 under either rule. "Skin never
+covered", the premise the steering in `egis_engine_cleanroom.c` was built
+on, was partly rotation, and steering does nothing about rotation. Corrected
+in "Across sessions" above and in the adapter's comment.
+
+### 8. The foreign units
+
+- **sam-dant** (2026-09-25, `kit_version 3`): Gabor 2 / 60 false rejects and
+  2 / 480 false accepts under the driver's rule, impostor max 0.845. **15 of
+  his 16 impostor comparisons at or above 0.70 are R-thumb against L-index**
+  (that pair's median 0.690, against 0.555 for the same pair on 2026-09-13),
+  and the same pair is his top impostor pair in two capture sessions and
+  under two front-ends — the one-pair signature of the reference unit's
+  2026-09-18 session. Whether his 0.845 is a flow coincidence or a
+  small-overlap win is not settled (his 0.741 above 1200 px is a filter of
+  winners, a lower bound).
+- **irvingpop** (2026-09-13 captures, kit v2) is a **separate, unexplained
+  mode**: his whole distribution is compressed. Gabor impostor median 0.647
+  (2026-09-13 reference: 0.410, sam-dant 0.369), genuine median 0.733
+  (0.968), AUC 0.667 (1.000, 0.9945), own finger ranked first for 22 of 60
+  probes; all ten finger pairs are shifted up alike. The vendor matcher
+  rejects 37 of 60 genuine presses (33 of them exactly 0) at FAR 0 / 480, and
+  29 of 60 presses fail both matchers. None of the image degradations
+  simulated on the reference frames reproduces it. It may be an information
+  limit of his captures rather than a matcher problem; he has never run
+  `pairdiag`.
+- **tsteppy's unit** cannot be classified: only its extremes are known
+  (genuine min 0.600, impostor max 0.815).
+
+### The new target
+
+The maintainer's decision, 2026-09-26: **an own matcher — not vendor code,
+upstreamable — at least as good as vendor:**
+
+- **0 false accepts under the driver's rule on every dataset**: both
+  reference-unit sessions, both cross-session directions, sam-dant's,
+  tsteppy's;
+- **no more false rejects than vendor** on the same data;
+- **tuned on one dataset and certified on the others — never on the same
+  session.**
+
+Tuning the Gabor constants is no longer the path. The upstream merge request
+([`upstream-mr.md`](upstream-mr.md)) is on hold until a matcher meets that
+bar.
+
+What the evidence points at, as direction and not as a result: an accept has
+to require positive identity evidence at the winning alignment that a flow
+coincidence cannot produce (the discarded fine structure, matched
+singularities or minutiae), and an overlap without such evidence should be no
+decision rather than a flow score; alignment should come from rotation-
+tolerant registration over the full angle range, with acceptance decided
+separately, instead of a wider or narrower texture search; templates should
+cover more area (several frames or a mosaic, with coverage measured
+including rotation, and steering rebuilt on that); and every figure should
+be reported per finger pair under the driver's rule, on sessions it was not
+tuned on.
+
+### What remains undecided
+
+- **irvingpop's mechanism.** Candidates: a fixed pattern that survives the
+  flat-field, frames with little detail (blur, contact, gain), placement, or
+  flow coincidences in every finger pair. With one person per unit, unit and
+  person cannot be separated — and whether his dataset can meet any matcher's
+  0 / 0 is open, given that the vendor matcher fails it too.
+- **Population FAR.** Every impostor measured anywhere in this file is the
+  same person's other finger; impostors from other people have never been
+  measured.
+- **Whether the identity evidence of §6 separates foreign frames.** The
+  residual result is one person, first frames, threshold chosen in-sample,
+  and it cost 18 of 60 genuine presses on 2026-09-18, a session on which the
+  colliding thumb reproduces its own residual poorly (§6).
+- **sam-dant's 0.845**: flow coincidence or small overlap.
+- **Constants not measured**: the Gabor front-end (σ, coherence threshold,
+  erosion), the period-check constants, FAR at ±27 px. The mechanism argues
+  against them helping; that is an argument, not a measurement.
+- **How much of 2026-09-13 is tuning and how much luck** (§4).
+
+What would decide the foreign cases, in aggregates a reporter can paste
+without any frame leaving the machine: the Gabor-residual NCC of accepted
+genuine and accepted impostor pairs, the impostor NCC at zero shift, the flow
+agreement of accepted impostors, a per-finger-pair table, and overlap-floor
+maxima from a re-search rather than a filter of winners — which `pairdiag`
+now prints (blocks `identity`, `zero_shift`, `flow`, `by_finger_pair`,
+`impostor_accepted_list`, `research_floor`); neither foreign reporter has
+run that version yet.
+
+**Corrected alongside this section** (each marked where it stood): the
+README's accuracy row and matcher paragraph; "Across sessions", the
+2026-09-23 section and the matcher table in this file; the merge-request
+draft, now on hold ([`upstream-mr.md`](upstream-mr.md)); the upstream gap
+list ([`upstream-gaps.md`](upstream-gaps.md)); the `gabor` sentence in
+[`PROVENANCE.md`](../PROVENANCE.md) (the clean-room paragraph under "Why the
+reverse-engineered matcher"); and the comments in
+`egis_engine_cleanroom.c`, `gabor/egis_cr_tuning_gabor.h`,
+`gabor/egis_match_gabor.c` and `gabor/egis_match_check.h`, which presented
+the 2026-09-13 session as the unit's result, cited a worst live impostor of
+0.71 for 2026-09-18 where the kit measures 0.896, and gave "skin never
+covered" as the steering's premise.

@@ -417,21 +417,150 @@ next question is what the alignment search had to work with, and press-level
 scores cannot answer it. `pairdiag` does, from the same dataset:
 
 ```bash
+make pairdiag
 python3 evaluate.py <dataset> --pair-list      # writes <dataset>/pairdiag.lst
-./pairdiag <dataset>/baseline.npy <dataset>/pairdiag.lst
+./pairdiag <dataset>/baseline.npy <dataset>/pairdiag.lst > pairdiag.json
 ```
 
-It prints one JSON block: frame coverage against the probe and enrolment
-gates, and for genuine and impostor pairs alike the correlation and the masked
-overlap **at the winning alignment**, plus what each population looks like
-above a range of overlap floors. Counts and rates only — safe to paste.
+It compares the first frame of every press with the first frame of every
+other press, through the Gabor matcher's own code, and prints one JSON block
+of counts, rates and per-pair scalars with finger labels; no image data,
+nothing a frame can be rebuilt from — safe to paste. On the kit's 60 presses
+a run takes about 1.5 minutes on the maintainer's laptop (about 140 s when it runs on
+battery), most of it in `research_floor`. One line on stderr says what it is
+doing; another appears if list lines had to be skipped (an unreadable frame,
+a bad label, a malformed line), which `presses_skipped` counts.
 
-Read it like this: coverage well under the 0.70–0.75 of a well-placed frame
-says the presses carry little ridge area (placement, force, a small contact
-patch). An impostor median that sits close to the genuine median says the
-matcher is too permissive on that skin, which is the project's problem and not
-the reporter's. The reference unit reads coverage median 0.713, genuine NCC
-median 0.903, impostor median 0.270, impostor max 0.666.
+The first blocks: frame coverage against the probe and enrolment gates, and
+for genuine and impostor pairs alike the correlation and the masked overlap
+**at the winning alignment** (each unordered pair once, the earlier press as
+the template). `pairs_unscorable` counts the pairs whose default search found
+no alignment with ≥ 800 px of overlap (154 of 1770 on the reference unit's
+2026-09-13 session, 6 on its 2026-09-18); they are left out of every block of
+pairs but `zero_shift` and `research_floor`. Read the first blocks like this:
+coverage well under the 0.70–0.75 of a well-placed frame says the presses
+carry little ridge area (placement, force, a small contact patch). An impostor
+median that sits close to the genuine median says the matcher is too
+permissive on that skin, which is the project's problem and not the
+reporter's. The reference unit's 2026-09-13 session reads coverage median
+0.713, genuine NCC median 0.903, impostor median 0.270, impostor max 0.666;
+its 2026-09-18 session reads 0.725 / 0.631 / 0.260 / 0.873, which is the
+failing case.
+
+`by_overlap_floor` is a **filter**. It drops the pairs whose winning alignment
+lies below each floor and reports what is left. It cannot move a winner to
+another alignment, so its maxima are a lower bound on what the exhaustive
+re-search (`research_floor`, below) finds, and in practice on what a matcher
+rebuilt with that floor scores (on both reference sessions the filter equals
+that rebuild at 1200 and 1600 px), not that matcher's result.
+
+### What a match is made of (2026-09-26)
+
+The Gabor NCC measures ridge flow and ridge period, not identity. Two
+different fingers that put near-parallel ridges of one angle and period on the
+70×57 px window score like one finger. The root-cause investigation of
+2026-09-26 found this on the reference unit itself: on its 2026-09-18 session
+the driver's rule accepts 18 of 480 impostor presses, all of them right thumb
+against right index, where the vendor matcher accepts none. The blocks after
+`impostor` help tell whether *your* unit's failures are that mechanism, a
+capture without fine detail, or a pattern fixed to the sensor.
+
+Unless the table says otherwise, these blocks use **ordered** pairs: every
+press once as the template and once as the probe. The matcher resamples only
+the probe, so the two directions differ. "Accepted" means `em_match` ≥ 0.78,
+the driver's own comparison with the period check applied.
+
+| field | what it is |
+|---|---|
+| `identity` | `resid` is the fine structure the Gabor filter discards: the local-contrast-normalised frame minus its least-squares multiple of the Gabor output (pores, ridge-width modulation, ridge endings), correlated at the alignment the search picked. The same skin usually reproduces it; a flow coincidence has nothing to reproduce. `genuine_accepted` gives its spread over the accepted genuine pairs and the fraction reaching 0.10 and 0.20. `impostor_ge_070` covers the impostor pairs at NCC ≥ 0.70, `impostor_accepted` the ones `em_match` accepts. `auc_resid_ge_070` and `auc_ncc_ge_070` say how well the residual and the NCC itself separate the `genuine_ge_070.n` genuine pairs from the `impostor_ge_070.n` impostor pairs at NCC ≥ 0.70 (0.5 = not at all) |
+| `zero_shift` | the Gabor NCC of different fingers with no shift and no rotation: mean, standard error and median over the unordered impostor pairs (at zero shift both directions give the same number) whose frames overlap by ≥ 800 px in place (a fixed floor, whatever `GABOR_EXTRA` sets, so the field stays comparable across units) |
+| `flow` | `coherence_*` is the per-frame coherence of the structure tensor summed over the mask of the Gabor image (1 = every ridge in the frame parallel), over the `frames` that pass the probe gate. `impostor_orient_rms_lt4_frac` / `_lt6_frac` is the fraction of the `impostor_pairs` whose ridge-angle fields differ by less than 4° / 6° RMS at the winning alignment. `impostor_ge_070_orient_rms_median` is that RMS over impostor pairs at NCC ≥ 0.70, and `genuine_accepted_orient_rms_median` is the unit's own yardstick for it |
+| `by_finger_pair` | per pair of fingers, over its impostor comparisons in both directions: `n`, NCC median and maximum, how many reach 0.70 (`n_ge_070`) and how many `em_match` accepts (`n_accepted`) |
+| `impostor_accepted_list` | every impostor pair `em_match` accepts, highest NCC first, at most 50 (`impostor_accepted_list_omitted` counts the rest). Each entry gives template finger `a`, probe finger `b`, the NCC, the alignment (overlap in px, shift, rotation in °), the orientation RMS, `resid`, and each frame's coherence |
+| `research_floor` | the alignment search **re-run exhaustively** (every rotation, every shift, every pixel) over alignments with ≥ 1200, 1400, 1600 or 2000 px of overlap. It re-searches every i < j pair, the ones `by_overlap_floor` covers plus the `pairs_unscorable` ones (pairs the default search found no alignment ≥ 800 px for). It reports the best impostor NCC, how many impostor pairs reach 0.78 in plain NCC (before the period check, so also an upper bound on `em_match`'s accepts), and the genuine median, where a genuine pair with no alignment above the floor counts as −1, as the rebuilt matcher would return it. `genuine_pairs` / `impostor_pairs` count the pairs that do have one |
+
+`research_floor` is exhaustive, so it is an **upper bound** on what a rebuild
+with `-DEG_MIN_OVERLAP` finds: that rebuild's coarse-to-fine pass visits only
+part of the space. On the reference unit's 2026-09-18 session at 1600 px, it
+finds an impostor pair at 0.844 where the rebuild stops at 0.829. At 2000 px
+the filter, a rebuild and the re-search all differ: 0.411, 0.500 and 0.514 on
+2026-09-13, 0.715, 0.775 and 0.794 on 2026-09-18, where only the re-search
+puts an impostor pair above 0.78. At the default floor the two searches agree
+on every maximum on both sessions. On individual pairs they do not: the
+exhaustive search is higher on 62 % and 57 % of the impostor pairs (1312 and
+1436; median +0.015 and +0.007).
+
+The reference unit, both sessions (same person, fingers and baseline
+procedure, five days apart; 60 presses each, `--pair-list` as written):
+
+| | 2026-09-13 | 2026-09-18 |
+|---|---:|---:|
+| `genuine_accepted` n, `resid_median`, `frac_resid_ge_010`, `frac_resid_ge_020` | 399, 0.605, 0.895, 0.862 | 239, 0.559, 0.812, 0.749 |
+| `impostor_ge_070` n, `resid_max` | 0, – | 82, 0.204 |
+| `impostor_accepted` n, `n_resid_ge_020`, `resid_max` | 0 of 2619, 0, – | 18 of 2872, 0, 0.089 |
+| `auc_resid_ge_070`, `auc_ncc_ge_070` | –, – | 0.831, 0.889 |
+| `zero_shift` mean (SE), n | +0.0015 (0.0020), 1297 | −0.0011 (0.0021), 1403 |
+| `coherence_median`, `impostor_orient_rms_lt6_frac` | 0.682, 0.005 | 0.772, 0.034 |
+| `genuine_accepted_orient_rms_median`, `impostor_ge_070_orient_rms_median` | 2.3°, – | 2.2°, 5.2° |
+| `research_floor` `impostor_max` at 1200, 1400, 1600, 2000 px | 0.666, 0.666, 0.577, 0.514 | 0.865, 0.865, 0.844, 0.794 |
+| … and `by_overlap_floor` (the filter) at the same floors | 0.666, 0.666, 0.577, 0.411 | 0.865, 0.865, 0.829, 0.715 |
+| `research_floor` `impostor_n_ge_078` at the same floors | 0, 0, 0, 0 | 15, 13, 8, 1 |
+| `research_floor` `genuine_pairs` at the same floors | 298, 289, 287, 268 | 317, 301, 289, 276 |
+| `research_floor` `genuine_median` at the same floors | 0.8835, 0.8690, 0.8446, 0.4161 | 0.5974, 0.5699, 0.5232, 0.3095 |
+
+All 18 impostor pairs `identity.impostor_accepted` counts on 2026-09-18
+(first frames, ordered, of 2872 scored impostor pairs, the sum of
+`by_finger_pair`'s `n`) are right thumb against right index
+(`by_finger_pair`). That 18 is a pair count; that it equals the 18 of 480
+presses the driver's rule accepts is a coincidence.
+
+**How to read your run.** Each of the four outcomes below points at a
+different cause:
+
+- **(a) The same mechanism as the reference unit's 2026-09-18.** Your accepted
+  impostors have `resid` near 0 (`impostor_accepted.n_resid_ge_020` = 0) while
+  `genuine_accepted.resid_median` stays far above it. On the owner's frames no
+  accepted impostor reached 0.20 in any of four session combinations,
+  cross-session included (54 pairs, maximum 0.169), while 78.8 % of 1050
+  accepted genuine pairs did. Then your failures are flow coincidences, and
+  fine structure that separates them is in most of your frames. A matcher
+  that demands it at the winning alignment is a candidate on your unit too,
+  not a finished one: on the reference unit's 2026-09-18 session the crude
+  residual check (accept only at a residual of at least 0.10) reached 0 of 480
+  false accepts at 18 of 60 false rejects, against 11 of 480 and 12 of 60
+  without it (one first frame per press on the kit's folds), and the colliding
+  right thumb reproduces its own residual poorly (median 0.03 over 37 accepted
+  genuine pairs, against 0.21–0.66 for the other fingers). `by_finger_pair` and
+  `impostor_accepted_list` show which fingers collide; a low `orient_rms_deg`
+  on frames of high coherence is the signature.
+- **(b) Frames without fine structure.** Your genuine residual is about as low
+  as your impostor residual, both near 0: `genuine_accepted.resid_median` and
+  `frac_resid_ge_010` far below the reference unit's 0.56–0.60 and 0.81–0.90,
+  and `auc_resid_ge_070` near 0.5. Then this residual finds no detail beyond
+  ridge flow in your captures, at the alignments the Gabor search picks. That
+  points at the capture rather than the matcher, but does not prove it: fine
+  structure decorrelates under small misregistration and skin distortion, and
+  on the reference unit's 2026-09-18 session the right thumb's own accepted
+  genuine pairs have a residual median of 0.03 (37 pairs, 35 % reach 0.10)
+  while the vendor matcher matches that thumb. Run the vendor flavour on the
+  same dataset before concluding the capture is the limit.
+- **(c) A fixed pattern.** `zero_shift.impostor_ncc_mean` lies clearly above 0,
+  several standard errors, where the reference unit reads 0.00 ± 0.002. Then
+  something fixed to your sensor survives the flat-field and makes different
+  fingers correlate in place. That is a baseline problem of that unit.
+- **(d) Small overlap, or not.** If `impostor.ncc_max` reaches 0.78, look at
+  `research_floor` `impostor_max` at 1200 px. Below 0.78, your impostor tail
+  lives in small overlaps, and a higher floor removes it, at the genuine cost
+  `research_floor`'s `genuine_pairs` and `genuine_median` show. At 0.78 or
+  above, impostors still reach the accept level (plain NCC, before the period
+  check) over a large overlap. Then the floor is not the cause, and (a)–(c)
+  say which is; on the reference unit's 2026-09-18 it was (a) (0.865). The
+  filter value in `by_overlap_floor` can only be lower.
+
+These readings rest on one person per unit, so on any one unit person and
+sensor cannot be told apart. The residual check behind (a) was measured on
+the owner's frames only: in-sample, first frames, one person. It is a
+diagnostic prototype, not a matcher.
 
 To measure a proposed constant on your own captures without editing anything:
 
