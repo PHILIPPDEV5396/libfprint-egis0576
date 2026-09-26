@@ -169,6 +169,21 @@ int main(int argc, char **argv)
   while (fgets(line, sizeof line, pl)) {
     chomp(line);
     if (!*line) continue;
+    if (strcmp(line, "--") == 0) {
+      /* A press boundary. The driver loads the gallery from the stored
+       * template at the start of every verify/identify action
+       * (driver/egis0576.c, load_thread) and never writes back what an engine
+       * learns while matching, so each press must start from the template
+       * as enrolled. An engine that adapts during verify (the vendor one
+       * does: a press it rejects on its own is accepted after three genuine
+       * presses of the same finger have been scored against the same loaded
+       * gallery) would otherwise be measured with a memory the driver does
+       * not give it. The separator keeps its line index so that evaluate.py's
+       * probe list and this output stay aligned. */
+      if (egis_gallery_load(eng, blobs, sizes, 1) != 0) { fprintf(stderr, "gallery_load failed\n"); return 4; }
+      idx++;
+      continue;
+    }
     if (rd(line, raw)) {
       printf("%d unreadable\n", idx);
     } else {

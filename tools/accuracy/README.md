@@ -567,3 +567,19 @@ To measure a proposed constant on your own captures without editing anything:
 ```bash
 make clean && make GABOR_EXTRA=-DEG_MIN_OVERLAP=1400 && python3 evaluate.py <dataset> --flavour gabor
 ```
+
+## `kit_version 4` (2026-09-26): every press starts from the enrolled template
+
+The driver loads the gallery from the stored template at the start of every
+verify or identify action and never writes back what the engine learns while
+matching. The kit used to load it once and score every probe press against the
+same loaded gallery — and the vendor engine **adapts during verify**: on the
+reference unit's 2026-09-18 session, a right-index press it scores 0 on every
+frame when scored on its own is accepted (up to 8449) after three genuine
+presses of the same finger have been scored before it. So every vendor
+false-reject rate the kit printed up to `kit_version 3` was measured with a
+memory the driver does not give the engine, and is too low: on that session
+4 / 60 under the driver's rule, not 2 / 60. `evaluate.py` now puts a `--`
+before every probe press and `score.c` reloads the gallery there, exactly as
+the driver does. The shipped Gabor engine does not adapt; its numbers are
+unchanged (checked on both reference sessions).

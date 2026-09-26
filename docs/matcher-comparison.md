@@ -1053,3 +1053,25 @@ reverse-engineered matcher"); and the comments in
 the 2026-09-13 session as the unit's result, cited a worst live impostor of
 0.71 for 2026-09-18 where the kit measures 0.896, and gave "skin never
 covered" as the steering's premise.
+
+### 2026-09-26: the vendor numbers were measured with a memory the driver does not have
+
+The vendor engine adapts while it verifies: scored against one loaded
+gallery, a press it rejects on its own (all twelve frames 0) is accepted
+(up to 8449) once three genuine presses of the same finger have been scored
+before it. Reloading the gallery before the press — which is what the driver
+does at the start of every action — removes the effect entirely. The kit
+loaded the gallery once per fold up to `kit_version 3`, so **every vendor
+false-reject rate in this file and in the reports on issue #5 is optimistic**.
+Re-measured with `kit_version 4` (gallery reloaded before every press) on the
+reference unit, driver's rule:
+
+| session | vendor FRR, kit ≤ 3 | vendor FRR, kit 4 | vendor FAR | Gabor (unchanged) |
+|---|---:|---:|---:|---:|
+| 2026-09-13 | 0 / 60 | 0 / 60 | 0 / 480 | 0 / 60, 0 / 480 |
+| 2026-09-18 | 2 / 60 | **4 / 60** | 0 / 480 | 13 / 60, 18 / 480 |
+
+The foreign vendor figures (sam-dant 0 / 60, irvingpop 37 / 60) need a
+`kit_version 4` re-run before they can be compared with anything; the true
+numbers can only be the same or worse. The bar "no more false rejects than
+vendor on the same data" is read against `kit_version 4` from here on.

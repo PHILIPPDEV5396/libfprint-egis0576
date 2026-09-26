@@ -42,7 +42,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 THRESHOLD = 5000                          # EGIS_THRESHOLD in egis_engine.h
 FLAVOURS = ["vendor", "cleanroom", "gabor"]
 SETTLE_FRAMES = 8   # driver/egis0576.c EGIS0576_ENROLL_SETTLE_FRAMES: frames of one press tried before a quality refusal counts
-KIT_VERSION = 3   # 3: far_confirmed + raw corroboration (the driver's own rule on BOTH populations)
+KIT_VERSION = 4   # 3: far_confirmed + raw corroboration (the driver's own rule on BOTH populations)
+                  # 4: the gallery is reloaded before every probe press, as in the driver
 
 # Scorer exit codes (score.c) and the only failure texts results.json may carry.
 EXIT_REASONS = {
@@ -215,7 +216,11 @@ def evaluate(flavour, binary, fingers, presses, base, thr, best_frame, var, ddir
                     for p in E:
                         enroll += p[:SETTLE_FRAMES] + ["--"]
                 others = [(g, p) for g in fingers if g != f for p in presses[g]]
-                probes = [x for p in T for x in p] + [x for _, p in others for x in p]
+                # One "--" before every press: score.c reloads the gallery
+                # there, as the driver does at the start of every action, so
+                # no press is scored by an engine that has adapted to the
+                # presses before it (kit_version 4; see score.c).
+                probes = [x for p in T for x in ["--"] + p] + [x for _, p in others for x in ["--"] + p]
                 scores, rawok, diag, err = sc.run(enroll, probes)
                 if scores is None:
                     fails.append({"finger": f, "fold": fold, **err})
