@@ -2,6 +2,7 @@
 # No libfprint build tree, no meson, no glib: a C compiler and libm only.
 #
 #   make            -> score-vendor score-cleanroom score-gabor pairdiag (next to this Makefile)
+#                      and the cross-session scorers score_xs-vendor score_xs-cleanroom score_xs-gabor
 #   make clean
 #
 # The vendor objects are Egis' matcher machine-translated from the Windows
@@ -57,7 +58,9 @@ CLEAN_OBJ  := $(addprefix $(OBJ)/cleanroom/,$(notdir $(CLEAN_SRC:.c=.o)))
 GABOR_OBJ  := $(OBJ)/gabor/egis_engine_cleanroom.o $(OBJ)/gabor/egis_match_gabor.o \
               $(OBJ)/gabor/egis_match_evidence.o
 
-all: $(HERE)score-vendor $(HERE)score-cleanroom $(HERE)score-gabor $(HERE)pairdiag
+XS_BIN := $(HERE)score_xs-vendor $(HERE)score_xs-cleanroom $(HERE)score_xs-gabor
+
+all: $(HERE)score-vendor $(HERE)score-cleanroom $(HERE)score-gabor $(HERE)pairdiag $(XS_BIN)
 
 $(HERE)score-vendor: $(OBJ)/score.o $(VENDOR_OBJ)
 	$(CC) -o $@ $^ -lm
@@ -67,6 +70,25 @@ $(HERE)score-cleanroom: $(OBJ)/score.o $(CLEAN_OBJ)
 
 $(HERE)score-gabor: $(OBJ)/score.o $(GABOR_OBJ)
 	$(CC) -o $@ $^ -lm
+
+# Cross-session scorers (score_xs.c, driven by cross.py): score.c with a second
+# flat-field baseline for the probe session, linked against exactly the engine
+# objects of the matching score-<flavour> above -- same flags, same objects, so
+# a cross-session number is the same engine the in-session one measures.
+# score_xs.c #includes score.c (one copy of the frame reader and flat field).
+$(HERE)score_xs-vendor: $(OBJ)/score_xs.o $(VENDOR_OBJ)
+	$(CC) -o $@ $^ -lm
+
+$(HERE)score_xs-cleanroom: $(OBJ)/score_xs.o $(CLEAN_OBJ)
+	$(CC) -o $@ $^ -lm
+
+$(HERE)score_xs-gabor: $(OBJ)/score_xs.o $(GABOR_OBJ)
+	$(CC) -o $@ $^ -lm
+
+# the bare names (`make score_xs-gabor`), as for pairdiag below
+score_xs-vendor: $(HERE)score_xs-vendor
+score_xs-cleanroom: $(HERE)score_xs-cleanroom
+score_xs-gabor: $(HERE)score_xs-gabor
 
 # Diagnostic, not a scorer: coverage, winning-overlap, identity and flow
 # aggregates for one dataset (pairdiag.c). Built against the Gabor front-end
@@ -99,6 +121,10 @@ $(OBJ)/score.o: $(HERE)score.c $(DRV)/egis_engine.h
 	@mkdir -p $(dir $@)
 	$(CC) $(SCORE_CFLAGS) -c -o $@ $<
 
+$(OBJ)/score_xs.o: $(HERE)score_xs.c $(HERE)score.c $(DRV)/egis_engine.h
+	@mkdir -p $(dir $@)
+	$(CC) $(SCORE_CFLAGS) -c -o $@ $<
+
 $(OBJ)/vendor/%.o: $(DRV)/%.c
 	@mkdir -p $(dir $@)
 	$(CC) $(VENDOR_CFLAGS) -c -o $@ $<
@@ -120,7 +146,8 @@ $(OBJ)/cleanroom/egis_match.o: $(DRV)/tsteppy/egis_match.c
 	$(CC) $(CLEAN_CFLAGS) -c -o $@ $<
 
 clean:
-	rm -rf $(OBJ) $(HERE)score-vendor $(HERE)score-cleanroom $(HERE)score-gabor $(HERE)pairdiag $(HERE)nbis-count
+	rm -rf $(OBJ) $(HERE)score-vendor $(HERE)score-cleanroom $(HERE)score-gabor $(HERE)pairdiag $(HERE)nbis-count \
+	       $(XS_BIN)
 
 # How many minutiae NBIS mindtct finds per frame (the "why not an image
 # driver" number, docs/matcher-comparison.md). Needs a libfprint source tree
@@ -136,4 +163,4 @@ nbis-count: $(HERE)nbis_count.c
 	    -I$(NBIS)/include -I$(NBIS)/libfprint-include -I$(LIBFPRINT_SRC)/libfprint \
 	    $(wildcard $(NBIS)/mindtct/*.c) $$(pkg-config --cflags --libs glib-2.0) -lm
 
-.PHONY: all clean nbis-count pairdiag
+.PHONY: all clean nbis-count pairdiag score_xs-vendor score_xs-cleanroom score_xs-gabor

@@ -10,8 +10,12 @@ tools/accuracy/
   capture.py     acquire a dataset from the sensor (pyusb + numpy)
   egis_eh576.py  the plaintext EGIS/SIGE transport capture.py uses (pyusb only)
   score.c        offline scorer, built once per matcher from driver/egis0576
-  Makefile       -> score-vendor, score-cleanroom, score-gabor (C compiler + libm, nothing else)
+  score_xs.c     the same scorer across two sessions (each with its own baseline)
+  Makefile       -> score-vendor, score-cleanroom, score-gabor (C compiler + libm, nothing else),
+                    score_xs-vendor, score_xs-cleanroom, score_xs-gabor
   evaluate.py    two-fold FAR/FRR for all three flavours -> table + results.json
+  cross.py       enrol on one session, verify with another -> table + results-cross.json;
+                 per-press distance from the driver's decision (see "Across sessions")
 ```
 
 ## PRIVACY — read this first
@@ -23,7 +27,8 @@ scorer on your machine, and they are **not to be posted, attached, uploaded or
 sent to anyone — including the maintainers of this driver.** Nobody working on
 this driver will ever ask you for them; if someone does, refuse.
 
-The only thing to share is `results.json` from `evaluate.py`. It contains:
+The only thing to share is `results.json` from `evaluate.py` (or
+`results-cross.json` from `cross.py`, which follows the same rules). It contains:
 
 - scores, counts, thresholds and error rates;
 - your finger *labels* (the `--fingers` names; keep them generic), press and
@@ -95,7 +100,10 @@ produces `tools/accuracy/score-vendor`, `tools/accuracy/score-cleanroom` and
 `tools/accuracy/score-gabor`, compiled straight from `driver/egis0576/`. The
 vendor sources need the relaxed flag set the libfprint build also uses for
 them (`-w -fno-stack-protector -fpermissive -fwrapv ...`); the other two are
-plain C99. `make -C tools/accuracy clean` removes everything again.
+plain C99. `make -C tools/accuracy clean` removes everything again. The same
+`make` also builds the cross-session scorers `score_xs-<flavour>`, linked
+against exactly the engine objects of `score-<flavour>` (see "Across
+sessions" at the end); `score-<flavour>` itself does not change.
 `score-gabor` is compiled exactly as the driver compiles the engine, so the
 kit's accept decisions are the driver's (see `kit_version 5` below).
 
@@ -623,3 +631,102 @@ cuts scores that are already over the accept point, so its decisions are the
 driver's either way. Results of `kit_version 4` and earlier for the Gabor
 flavour should be re-run; the frames need not be recaptured.
 
+
+## Across sessions: `cross.py` (2026-09-27)
+
+`evaluate.py` measures one capture session against itself: both halves of a
+finger share one boot, one flat-field baseline and one day's skin. A user
+enrols once and is verified on every later boot, and that is a different
+measurement -- the one this project certifies a matcher on. `cross.py` makes
+it from two datasets written by `capture.py`:
+
+```
+make -C tools/accuracy
+python3 tools/accuracy/cross.py <enrol-dataset> <probe-dataset> --flavour gabor --flavour vendor
+```
+
+The protocol is `evaluate.py`'s in every rule but the split into sessions:
+
+- **templates**: per finger, *all* presses of that finger from the enrolment
+  session, enrolled exactly as `evaluate.py` enrols (the first finger-on frame
+  of each press, the next frames of the same press tried when the engine
+  refuses one for quality -- `SETTLE_FRAMES`, `score.c`'s enrolment loop);
+- **each frame is flat-fielded with its own session's baseline**: enrolment
+  frames with the enrolment dataset's `baseline.npy`, probe frames with the
+  probe dataset's. That is what `score_xs.c` adds to `score.c` -- nothing
+  else: it `#include`s `score.c` for the frame reader and the flat field, and
+  its enrolment and probe loops are `score.c`'s. Given the same baseline twice
+  it prints byte for byte what `score-<flavour>` prints
+  (`cross.py --self-test <dataset>` checks it);
+- **genuine trials**: every press of the same finger from the probe session;
+  **impostor trials**: every press of every *other* finger from the probe
+  session. Presses of the enrolment session are never probes. Five fingers of
+  twelve presses give 60 genuine and 5 × 48 = 240 impostor trials per set;
+- the gallery is reloaded before every probe press (`kit_version 4`);
+- the accept decision is **the driver's rule**, `evaluate.py`'s
+  `driver_accepts()` unchanged: only frames with raw variance ≥ the probe
+  session's finger-on gate (`manifest.json` `on`, 250) count, two consecutive
+  such frames must score ≥ the threshold, and the second must be corroborated
+  on the un-flat-fielded bytes (`egis_verify_raw_ok`, the scorer's third
+  column). The lenient press-maximum pair (`frr` / `far`) is reported next to
+  it, as in `evaluate.py`; quote `frr_confirmed` / `far_confirmed`.
+
+**How close each press came: the level.** For every press, genuine and
+impostor, `cross.py` also reports the highest threshold at which the driver's
+rule accepts it (`level`, in score units, and `level_x`, as a multiple of the
+threshold). So a margin can be quoted in one unit on both sides: "the
+strongest impostor press reached 0.30× the threshold", "the weakest accepted
+genuine press cleared it 1.02×". A level of 0 means no positive threshold
+accepts the press -- typically because its best frames do not corroborate on
+the raw bytes. The rule is not monotonic in the threshold (an uncorroborated
+confirming frame discards the candidate before it, and which frames are
+candidates depends on the threshold), so the level is found by trying every
+score the press produced, top down. With the Gabor flavour a score over the
+engine's own accept point is the first one to clear it, a lower bound
+(`kit_version 5`), so levels above 1 are lower bounds too; levels below 1 are
+exact.
+
+`results-cross.json` (in the probe dataset by default, `--out` elsewhere)
+follows `results.json`'s privacy rules: scores, counts, rates, levels, finger
+labels, press indices (0-based, within the probe session) and the capture
+dates -- no frames, no file names, no paths. Per flavour it holds the rates,
+`genuine_rejected` and `impostor_accepted` (finger, press, level),
+`weakest_accepted_genuine`, `strongest_impostor`, and every press's level
+(`genuine_levels`, `impostor_levels`). `--jobs N` runs one scorer per template
+in parallel (N at a time).
+
+`cross.py --in-session <dataset>` runs `evaluate.py`'s two-fold in-session
+protocol with the kit scorer (`score-<flavour>`) and reports the same fields,
+so in-session sets get their levels too; its driver's-rule counts are
+`evaluate.py`'s `frr_confirmed` / `far_confirmed`, and `evaluate.py` stays the
+tool of record for in-session rates.
+
+**Reference.** The reference unit's nine development sets (three sessions,
+2026-09-13 = S1, 2026-09-18 = S2, 2026-09-26 = S3; in session with
+`evaluate.py` / `cross.py --in-session`, the six directions with `cross.py`),
+driver's rule, Gabor flavour as of the identity-gate v3 freeze and the vendor
+matcher; FAR 0 on every set for both (480 impostor trials in session, 240
+across), levels as multiples of the threshold:
+
+| set | Gabor FRR | vendor FRR | Gabor strongest impostor | Gabor weakest accepted genuine | vendor weakest accepted genuine |
+|---|---:|---:|---:|---:|---:|
+| S1 in session | 0 / 60 | 0 / 60 | 0.056 | 2.394 | 1.209 |
+| S2 in session | 3 / 60 | 4 / 60 | 0.438 | 1.465 | 1.157 |
+| S3 in session | 1 / 60 | 1 / 60 | 0.272 | 1.431 | 1.444 |
+| S1 → S2 | 6 / 60 | 7 / 60 | 0.271 | 1.218 | 1.024 |
+| S2 → S1 | 0 / 60 | 0 / 60 | 0.409 | 1.391 | 1.025 |
+| S1 → S3 | 5 / 60 | 3 / 60 | 0.000 | 1.246 | 1.059 |
+| S3 → S1 | 0 / 60 | 0 / 60 | 0.301 | 1.424 | 1.027 |
+| S2 → S3 | 0 / 60 | 2 / 60 | 0.000 | 1.055 | 1.169 |
+| S3 → S2 | 2 / 60 | 3 / 60 | 0.387 | 1.021 | 1.032 |
+
+The vendor matcher's strongest impostor is 0.000 on every set (every vendor
+impostor frame scores 0). The per-press lists behind a row look like this, for
+S1 → S3 (the reference datasets' labels: Zeige = index, Mittel = middle): the
+Gabor flavour rejects L-Mittel presses 1 and 8, R-Mittel 3 and R-Zeige 10 and
+11 (levels 0.997, 0, 0.871, 0, 0), the vendor matcher L-Mittel 1 and 8 and
+R-Zeige 11. These are the numbers the cross-session harness of
+the v3 validation produced before it was lost with a wiped `/tmp`; this tool,
+rebuilt into the kit, reproduces every one of them exactly, and
+`score-gabor` built from this tree is byte-identical to the one built from
+`743b796`.
