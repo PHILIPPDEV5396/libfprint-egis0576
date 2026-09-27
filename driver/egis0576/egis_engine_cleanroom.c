@@ -26,8 +26,8 @@
  * Stepanovich designed for his LGPL correlation matcher (egis_match.h, his
  * file, unchanged); the implementation compiled here is the Gabor front-end
  * in egis_match_gabor.c, with its operating-point constants in
- * egis_cr_tuning.h and the alignment report of egis_match_check.h that the
- * enrolment steering below uses. Since 2026-09-26 the front-end's
+ * egis_cr_tuning_gabor.h and the alignment report of egis_match_check.h
+ * that the enrolment steering below uses. Since 2026-09-26 the front-end's
  * correlation no longer decides verify and identify: the decision is the
  * IDENTITY EVIDENCE of egis_match_evidence.c -- whether the fine structure
  * the Gabor filter discards reproduces over a contiguous area -- and the
@@ -43,17 +43,16 @@
  *
  * MEASURED, THE IDENTITY EVIDENCE (this build; tools/accuracy kit_version 4
  * of the out-of-tree repository, driver's rule, one person, impostors = the
- * same person's other fingers):
+ * same person's other fingers; the table and what the rejects are in
+ * egis_match_evidence.c, MEASURED):
  *
- *   reference unit, session 2026-09-18 -- the session every constant of the
- *     evidence stage was set on, so IN-SAMPLE: 3 / 60 rejects, 0 / 480
- *     accepts, strongest impostor 0.45 x the accept point; the vendor
- *     matcher on the same frames 4 / 60 and 0 / 480. Of the three rejects
- *     two have no block evidence against any stored frame at any rotation
- *     and shift within +-42 px, the third only at a rotation outside the
- *     +-90 deg search
- *     (egis_match_evidence.c, MEASURED); the vendor matcher rejects all
- *     three too. Not yet measured on data it was not tuned on.
+ *   reference unit, sessions 2026-09-13 and 2026-09-18, in session and
+ *     across the two -- the four sets every constant of the evidence stage
+ *     was set on, so IN-SAMPLE: 3 / 0 / 6 / 0 of 60 rejects (09-18, 09-13,
+ *     13 -> 18, 18 -> 13), 0 / 480 accepts on each, strongest impostor press
+ *     0.44 x the accept point; the vendor matcher on the same frames
+ *     4 / 0 / 7 / 0 and 0 / 480, and it rejects every press this one
+ *     rejects. Not yet measured on data it was not tuned on.
  *
  * MEASURED, THE FRONT-END'S NCC AS THE DECISION (until 2026-09-26; one
  * person per unit, every frame of a press scored, impostors = the same
@@ -103,9 +102,9 @@
  *   in milli-units) is scaled so that its accept point
  *   (EGIS_CR_ACCEPT_EVIDENCE, W 2.0) lands exactly on it: score = lround
  *   (W * 2500). It is unbounded above: on the 2026-09-18 session the
- *   genuine presses' median is 50,909, the highest impostor press 3,108.
- *   (tsteppy's build keeps the NCC: score = lround (ncc * 5000 /
- *   em_match_threshold).)
+ *   genuine presses' median is 52,604, the highest impostor press 3,238.
+ *   (The comparison build on tsteppy's front-end keeps the NCC: score =
+ *   lround (ncc * 5000 / em_match_threshold).)
  *
  *   "Nothing to score" and "compared and rejected" are kept apart, because
  *   the driver answers them differently -- the first asks the user to press
@@ -155,14 +154,15 @@
  *   static. The driver calls egis_enroll_begin / egis_enroll_finish on the
  *   main loop between captures and everything else from one GTask at a
  *   time, so nothing here runs concurrently and no locking is needed.
- *   Gallery frames live on the heap (52,840 bytes each as EvFrames, about
+ *   Gallery frames live on the heap (51,880 bytes each as EvFrames, about
  *   10 MB for 16 prints of 12 frames); the frame computations use < 8 kB of
- *   stack and a malloc'd scratch block, ev_match() about 210 kB of heap
+ *   stack and a malloc'd scratch block, ev_match() about 213 kB of heap
  *   scratch per call, freed before it returns.
  *
  *   The one thing kept between calls besides the gallery is each entry's
  *   last evidence pose (CrEntry.last_pose), which egis_verify_raw_ok checks
- *   the raw frame at; a score never depends on what was scored before it.
+ *   the raw frame at; every verify, identify and gallery load invalidates it
+ *   first, and a score never depends on what was scored before it.
  */
 
 #include <math.h>
@@ -256,13 +256,13 @@
 #ifndef EGIS_CR_STEER_MAX_RETRY
 #define EGIS_CR_STEER_MAX_RETRY 2
 #endif
+#ifndef EGIS_CR_HAVE_EVIDENCE
 /* Raw-frame corroboration (egis_verify_raw_ok) in tsteppy's build: the
  * un-flat-fielded confirming frame must reach this NCC against the accepted
  * gallery entry, else the accept is dropped; 0 disables the check. His
  * front-end has not been measured on raw-vs-flat-fielded pairs, so it ships
  * disabled. The Gabor build corroborates on the identity evidence instead
- * (EGIS_CR_RAW_EVIDENCE, egis_cr_tuning_gabor.h). */
-#ifndef EGIS_CR_HAVE_EVIDENCE
+ * (EGIS_CR_RAW_EVIDENCE, gabor/egis_cr_tuning_gabor.h). */
 #ifndef EGIS_CR_RAW_CORROBORATE_NCC
 #define EGIS_CR_RAW_CORROBORATE_NCC 0.0
 #endif
@@ -309,10 +309,13 @@ typedef struct
    * raw frame at. Valid only for the frame just scored: the driver calls
    * egis_verify_raw_ok right after the verify or identify whose accept it
    * corroborates, on the same thread (driver/egis0576.c, match_thread).
-   * Nothing else reads it, so a frame's score never depends on what was
-   * scored before it. */
-  EvPose   last_pose;
-  int      last_frame;
+   * Every verify and identify invalidates all entries' poses before it
+   * scores anything -- also when it then returns -1 for a probe under the
+   * coverage gate -- and so does a gallery reload (poses_invalidate), so a
+   * stale pose cannot be corroborated. Nothing else reads it, so a frame's
+   * score never depends on what was scored before it. */
+  EvPose last_pose;
+  int    last_frame;
 #endif
 } CrEntry;
 
@@ -339,6 +342,22 @@ struct EgisEngine
 /* ---- helpers -------------------------------------------------------------- */
 
 static void
+poses_invalidate (EgisEngine *e)
+{
+  /* nothing egis_verify_raw_ok could corroborate survives a new verify or
+   * identify, a failed one, or a gallery reload */
+#ifdef EGIS_CR_HAVE_EVIDENCE
+  for (int i = 0; i < EGIS_CR_MAX_GALLERY; i++)
+    {
+      e->gallery[i].last_pose.valid = 0;
+      e->gallery[i].last_frame = -1;
+    }
+#else
+  (void) e;
+#endif
+}
+
+static void
 gallery_free (EgisEngine *e)
 {
   for (int i = 0; i < EGIS_CR_MAX_GALLERY; i++)
@@ -348,6 +367,7 @@ gallery_free (EgisEngine *e)
       e->gallery[i].nframes = 0;
     }
   e->gallery_n = 0;
+  poses_invalidate (e);
 }
 
 #ifdef EGIS_CR_HAVE_EVIDENCE
@@ -445,7 +465,7 @@ blob_nframes (const uint8_t *blob, int size)
 EgisEngine *
 egis_engine_new (void)
 {
-  EgisEngine *e = calloc (1, sizeof (*e));         /* ~630 kB, once per device */
+  EgisEngine *e = calloc (1, sizeof (*e));         /* ~600 kB, once per device */
 
   return e;
 }
@@ -595,7 +615,10 @@ egis_gallery_load (EgisEngine *e, const uint8_t *const *blobs, const int *sizes,
 int
 egis_verify (EgisEngine *e, const uint8_t *raw, int idx)
 {
-  if (!e || !raw || idx < 0 || idx >= e->gallery_n || !e->gallery[idx].frames)
+  if (!e)
+    return -1;
+  poses_invalidate (e);
+  if (!raw || idx < 0 || idx >= e->gallery_n || !e->gallery[idx].frames)
     return -1;
   probe_compute (raw, &e->probe);
   if (CR_PROBE_FRAME (&e->probe)->coverage < EGIS_CR_MIN_COVERAGE)
@@ -661,7 +684,10 @@ egis_identify (EgisEngine *e, const uint8_t *raw, int *out_idx)
 {
   if (out_idx)
     *out_idx = -1;
-  if (!e || !raw || e->gallery_n <= 0)
+  if (!e)
+    return -1;
+  poses_invalidate (e);
+  if (!raw || e->gallery_n <= 0)
     return -1;
   probe_compute (raw, &e->probe);
   if (CR_PROBE_FRAME (&e->probe)->coverage < EGIS_CR_MIN_COVERAGE)

@@ -51,8 +51,9 @@
 #endif
 /* Translation half-range, px: about the largest shift that still leaves
  * EV_MIN_OVERLAP (a 70 x 15 px strip at the masks' typical 0.7 x 0.7
- * coverage). 2026-09-18: 30 -> 42 recovers two genuine presses whose poses
- * sit at 38-41 px; at 38 one of them is lost again, at 46 nothing changes. */
+ * coverage). 2026-09-18: 30 -> 42 recovers three genuine presses (left
+ * index 1, 7, 8) whose poses sit at 35-41 px; at 38 one of them (left index
+ * 1) is lost again, at 46 nothing changes. */
 #ifndef EV_SRCH
 #define EV_SRCH 42
 #endif
@@ -61,12 +62,28 @@
 #ifndef EV_CSTEP
 #define EV_CSTEP 3
 #endif
-/* Distinct envelope peaks refined and scored. 2026-09-18: at the wider
- * search and without the orientation-field proposals, 4 lose one genuine
- * press (more candidates compete for the slots); with them 4-7 give the same
- * press decisions. 6 keeps that margin either way. */
+/* Distinct envelope peaks refined and scored, in order of envelope.
+ * 2026-09-18 (first identity-gate build): at the wider search, 4 lost one
+ * genuine press without the orientation-field proposals that build had
+ * (more candidates compete for the slots), and 4-7 gave the same press
+ * decisions with them; 6 kept that margin either way. Unchanged since;
+ * the significance proposals (EV_NSIG) come on top. */
 #ifndef EV_NHYP
 #define EV_NHYP 6
+#endif
+/* Significance proposals (ev_hyps): how many envelope peaks are added in
+ * order of E sqrt(n) -- the envelope weighted by the square root of the
+ * overlap it was computed over -- beyond the EV_NHYP taken in order of E.
+ * 2 = the two orientation-field proposals of the first identity-gate build,
+ * which they replace, so the hypothesis count stays at 8; not tuned.
+ * Measured on the four development sets (egis_match_evidence.c, MEASURED;
+ * an integer, so +-1 for +-10 %): 1 and 3 give results identical to 2 on
+ * all four -- the same decisions, strongest impostor presses and weakest
+ * genuine presses; 0 gives the same decisions, but 18 -> 13's weakest
+ * genuine press falls from 2.89 x to 1.69 x the accept point and no
+ * impostor press's level changes. */
+#ifndef EV_NSIG
+#define EV_NSIG 2
 #endif
 /* A coarse envelope below this is not a hypothesis (inactive on 2026-09-18:
  * the top peaks always exceed it). */
@@ -103,23 +120,6 @@
 #ifndef EV_REF_ROT
 #define EV_REF_ROT 2.5
 #endif
-/* Rotation proposals from the orientation field (ev_of_rots in
- * egis_match_evidence.c): how many of the coarse rotations it proposes, the
- * lattice it is sampled on (px; the field is smooth over a ridge period),
- * and how far apart two proposals must be (deg). 2026-09-18: 1-3 proposals,
- * lattices of 5-7 px give the same press decisions. */
-#ifndef EV_NOF
-#define EV_NOF 2
-#endif
-#ifndef EV_OF_LAT
-#define EV_OF_LAT 6
-#endif
-#ifndef EV_OF_SEP
-#define EV_OF_SEP 20.0
-#endif
-#define EV_OLX ((EM_W + EV_OF_LAT - 1) / EV_OF_LAT)
-#define EV_OLY ((EM_H + EV_OF_LAT - 1) / EV_OF_LAT)
-#define EV_OLN (EV_OLX * EV_OLY)
 
 /* ---- block evidence ---------------------------------------------------------
  * The frame is cut into EV_BS x EV_BS blocks every EV_STEP px; each block
@@ -144,6 +144,31 @@
 #define EV_EPS 1.5
 #endif
 
+/* Re-centring of the block search (ev_hyp_evidence): a best set of at
+ * least EV_RC_N blocks whose mean shift is at least EV_RC_MIN px moves the
+ * pose once by that shift, and the blocks search again; the higher W is
+ * kept. EV_RC_N 0 disables it. Chosen, not tuned: three blocks is the least
+ * set in which W reaches the accept point at a genuine press's block NCC
+ * (the argument of EV_MIN_OVERLAP), and EV_RC_MIN is half of EV_RS, the
+ * shift at which a block's search window has lost half its reach on one
+ * side. Measured on the four development sets (09-18, 09-13, 13 -> 18,
+ * 18 -> 13, the driver's rule): EV_RC_MIN 2.7 and 3.3 (-+10 %) give
+ * results identical to 3.0 on all four; EV_RC_N 4 gives the same decisions,
+ * 13 -> 18's weakest genuine press at 1.01 x instead of 1.08 x, and lower
+ * impostor figures (09-13's strongest press 0.00 x instead of 0.06 x, the
+ * one-frame maxima of 09-13 and 13 -> 18 0.55 x / 0.60 x instead of
+ * 0.60 x / 0.99 x); EV_RC_N 2 loses 09-18's right middle 0 (4 / 60): a
+ * two-block set moves its second frame to a pose where the flat-fielded W
+ * is higher but the raw frame does not corroborate; off, 13 -> 18 rejects
+ * 8 / 60 (left index 9 and right thumb 9 lost). No setting accepts an
+ * impostor press. */
+#ifndef EV_RC_N
+#define EV_RC_N 3
+#endif
+#ifndef EV_RC_MIN
+#define EV_RC_MIN 3.0
+#endif
+
 /* The blocks tile the WHOLE frame: every EV_STEP px from the top-left corner,
  * plus one column / row anchored at the right / bottom border where the step
  * does not end on it. Without that last column and row (70 = 6 x 8 + 16 + 6,
@@ -159,25 +184,21 @@
 #define EV_NB (EV_NBX * EV_NBY)
 
 /* A frame as the evidence stage sees it: the front-end's ridge image and
- * mask, the residual and the orientation-field lattice. 52,840 bytes. */
+ * mask, and the residual. 51,880 bytes. */
 typedef struct
 {
   EmFrame f;
   float   res[EM_N];       /* band-limited Gabor residual, 0 outside mask */
-  float   olr[EV_OLN], oli[EV_OLN];  /* orientation field coh e^{2i theta}
-                                      * on the EV_OF_LAT lattice, 0 off-mask */
 } EvFrame;
 
 /* A probe: an EvFrame plus the quadrature of its ridge image (-grad, scaled
  * to the ridge image's energy over the mask), which the envelope search
  * correlates against so that its landscape does not oscillate with the ridge
- * phase, and its full-resolution orientation field. Only the probe needs
- * them. 116,680 bytes. */
+ * phase. Only the probe needs it. 83,800 bytes. */
 typedef struct
 {
   EvFrame e;
   float   q1[EM_N], q2[EM_N];
-  float   ofr[EM_N], ofi[EM_N];      /* orientation field, full resolution */
 } EvProbe;
 
 /* The pose the evidence was found at: the probe rotated by rot_deg about the
@@ -193,9 +214,7 @@ typedef struct
 void em_frame_residual (const uint8_t *raw,
                         EmFrame       *f,
                         float         *res,
-                        double         sigma,
-                        float         *ofr,
-                        float         *ofi);
+                        double         sigma);
 
 void ev_frame_compute (const uint8_t *raw,
                        EvFrame       *F);
@@ -218,4 +237,3 @@ int ev_match (const EvFrame *t,
 int ev_evidence_at (const EvFrame *t,
                     const EvProbe *p,
                     const EvPose  *pose);
-

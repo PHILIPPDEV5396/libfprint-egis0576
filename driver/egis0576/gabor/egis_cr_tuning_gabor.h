@@ -96,7 +96,10 @@
  * genuine frames that clear the accept point pass, 0.16 % of all impostor
  * frames (the step-3 prototype's raw check, the best ridge-image NCC over the
  * whole hypothesis search, passed 94 %). Set on 2026-09-18, between the
- * impostor frames' p99 (0.36) and the accepted genuine frames' p5 (1.39). */
+ * impostor frames' p99 (0.36) and the accepted genuine frames' p5 (1.39).
+ * With the significance proposals and the re-centring (the pose can now be
+ * a moved one) the same session gives 98.3 % and 0.16 % (p99 0.40, p5
+ * 1.33); not moved. */
 #ifndef EGIS_CR_RAW_EVIDENCE
 #define EGIS_CR_RAW_EVIDENCE 750
 #endif

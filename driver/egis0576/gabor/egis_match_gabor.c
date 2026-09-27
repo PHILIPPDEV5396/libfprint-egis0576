@@ -627,7 +627,7 @@ eg_mask (EgScratch *S, uint8_t *mask)
  * normalised-convolution Gaussian of res_sigma px so the mask edge does not
  * leak into it, and 0 outside the mask. */
 static void
-eg_frame (const uint8_t *raw, EmFrame *f, float *res, double res_sigma, float *ofr, float *ofi)
+eg_frame (const uint8_t *raw, EmFrame *f, float *res, double res_sigma)
 {
   EgScratch *S = malloc (sizeof *S);
   double mean = 0, var = 0, sd;
@@ -639,10 +639,6 @@ eg_frame (const uint8_t *raw, EmFrame *f, float *res, double res_sigma, float *o
       memset (f, 0, sizeof *f);
       if (res)
         memset (res, 0, EM_N * sizeof (float));
-      if (ofr)
-        memset (ofr, 0, EM_N * sizeof (float));
-      if (ofi)
-        memset (ofi, 0, EM_N * sizeof (float));
       return;
     }
   for (int i = 0; i < EM_N; i++)
@@ -728,28 +724,19 @@ eg_frame (const uint8_t *raw, EmFrame *f, float *res, double res_sigma, float *o
             res[i] = (f->mask[i] && S->d[i] > 1e-6) ? (float) (S->c[i] / S->d[i]) : 0.0f;
         }
     }
-  /* the structure tensor's orientation field, coherence-weighted, doubled
-   * angle (so that theta and theta + 180 deg agree), 0 outside the mask */
-  if (ofr && ofi)
-    for (int i = 0; i < EM_N; i++)
-      {
-        ofr[i] = f->mask[i] ? (float) (S->coh[i] * cos (2.0 * S->ridge[i])) : 0.0f;
-        ofi[i] = f->mask[i] ? (float) (S->coh[i] * sin (2.0 * S->ridge[i])) : 0.0f;
-      }
   free (S);
 }
 
 void
 em_frame_compute (const uint8_t *raw, EmFrame *f)
 {
-  eg_frame (raw, f, NULL, 0.0, NULL, NULL);
+  eg_frame (raw, f, NULL, 0.0);
 }
 
 void
-em_frame_residual (const uint8_t *raw, EmFrame *f, float *res, double sigma,
-                   float *ofr, float *ofi)
+em_frame_residual (const uint8_t *raw, EmFrame *f, float *res, double sigma)
 {
-  eg_frame (raw, f, res, sigma, ofr, ofi);
+  eg_frame (raw, f, res, sigma);
 }
 
 /* ---- rotation ------------------------------------------------------------*/
@@ -818,9 +805,11 @@ eg_ncc (const double *ai, const uint8_t *am, const double *bi, const uint8_t *bm
    * this function is bound by. */
   for (int y = ay0; y < ay1; y += step)
     {
-      const double *ra = ai + y * EM_W, *rb = bi + (y - dy) * EM_W - dx;
-      const uint8_t *ma = am + y * EM_W, *mb = bm + (y - dy) * EM_W - dx;
-      for (int x = ax0; x < ax1; x += step)
+      /* row pointers at the first pixel used (column ax0): none points
+       * before its array's start */
+      const double *ra = ai + y * EM_W + ax0, *rb = bi + (y - dy) * EM_W - dx + ax0;
+      const uint8_t *ma = am + y * EM_W + ax0, *mb = bm + (y - dy) * EM_W - dx + ax0;
+      for (int x = 0; x < ax1 - ax0; x += step)
         if (ma[x] & mb[x])
           {
             double a = ra[x], b = rb[x];
@@ -1056,7 +1045,7 @@ int
 em_period_map (const double *img, const uint8_t *mask, double *pmap, double *conf)
 {
   double *gx = malloc (5 * EM_N * sizeof (double));
-  double *gy = gx + EM_N, *sxx = gx + 2 * EM_N, *syy = gx + 3 * EM_N, *sxy = gx + 4 * EM_N;
+  double *gy, *sxx, *syy, *sxy;
   double *tmp = malloc (EM_N * sizeof (double));
   double acc[EM_NB][EM_FQ_NK], e0[EM_NB];
   int cnt[EM_NB];
@@ -1073,6 +1062,10 @@ em_period_map (const double *img, const uint8_t *mask, double *pmap, double *con
         }
       return 0;
     }
+  gy = gx + EM_N;                 /* only now: no offset from a null pointer */
+  sxx = gx + 2 * EM_N;
+  syy = gx + 3 * EM_N;
+  sxy = gx + 4 * EM_N;
   for (int y = 0; y < EM_H; y++)
     {
       const double *r0 = img + eg_refl (y - 1, EM_H) * EM_W;
