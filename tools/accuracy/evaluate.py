@@ -42,8 +42,10 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 THRESHOLD = 5000                          # EGIS_THRESHOLD in egis_engine.h
 FLAVOURS = ["vendor", "cleanroom", "gabor"]
 SETTLE_FRAMES = 8   # driver/egis0576.c EGIS0576_ENROLL_SETTLE_FRAMES: frames of one press tried before a quality refusal counts
-KIT_VERSION = 4   # 3: far_confirmed + raw corroboration (the driver's own rule on BOTH populations)
+KIT_VERSION = 5   # 3: far_confirmed + raw corroboration (the driver's own rule on BOTH populations)
                   # 4: the gallery is reloaded before every probe press, as in the driver
+                  # 5: score-gabor is built as the driver builds the engine (verify's early exit
+                  #    on), so every accept / reject is the driver's (README, kit_version 5)
 
 # Scorer exit codes (score.c) and the only failure texts results.json may carry.
 EXIT_REASONS = {

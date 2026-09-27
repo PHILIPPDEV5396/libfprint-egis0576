@@ -41,18 +41,24 @@
  * there is nothing to match. Correlation on the ridge texture is what the
  * sensor's size leaves.
  *
- * MEASURED, THE IDENTITY EVIDENCE (this build; tools/accuracy kit_version 4
- * of the out-of-tree repository, driver's rule, one person, impostors = the
- * same person's other fingers; the table and what the rejects are in
- * egis_match_evidence.c, MEASURED):
+ * MEASURED, THE IDENTITY EVIDENCE (this build, as the driver builds it;
+ * tools/accuracy kit_version 5 of the out-of-tree repository, driver's
+ * rule, one person, impostors = the same person's other fingers; the table
+ * and what the rejects are in egis_match_evidence.c, MEASURED):
  *
- *   reference unit, sessions 2026-09-13 and 2026-09-18, in session and
- *     across the two -- the four sets every constant of the evidence stage
- *     was set on, so IN-SAMPLE: 3 / 0 / 6 / 0 of 60 rejects (09-18, 09-13,
- *     13 -> 18, 18 -> 13), 0 / 480 accepts on each, strongest impostor press
- *     0.44 x the accept point; the vendor matcher on the same frames
- *     4 / 0 / 7 / 0 and 0 / 480, and it rejects every press this one
- *     rejects. Not yet measured on data it was not tuned on.
+ *   reference unit, sessions 2026-09-13, 2026-09-18 and 2026-09-26, in
+ *     session and across them in all six directions -- nine sets, every
+ *     constant of the evidence stage was set on them or a part of them, so
+ *     IN-SAMPLE: 0 / 3 / 1 of 60 rejects in session, 6 / 0 / 5 / 0 / 0 / 2
+ *     across (13 -> 18, 18 -> 13, 13 -> 26, 26 -> 13, 18 -> 26, 26 -> 18),
+ *     no impostor press accepted (0 / 480 in session, 0 / 240 across),
+ *     strongest impostor press 0.44 x the accept point; the vendor matcher
+ *     on the same frames 0 / 4 / 1 and 7 / 0 / 3 / 0 / 2 / 3, no accepts.
+ *     The previous build (e27b8bc) was certified on the 2026-09-26 session
+ *     before it was development data and FAILED: it rejected 7 / 60
+ *     (13 -> 26) and 1 / 60 (26 -> 13) where the vendor matcher rejects 3
+ *     and 0 (no false accept on any set, strongest impostor 0.39 x). Not
+ *     yet measured on data it was not tuned on.
  *
  * MEASURED, THE FRONT-END'S NCC AS THE DECISION (until 2026-09-26; one
  * person per unit, every frame of a press scored, impostors = the same
@@ -159,10 +165,17 @@
  *   stack and a malloc'd scratch block, ev_match() about 213 kB of heap
  *   scratch per call, freed before it returns.
  *
- *   The one thing kept between calls besides the gallery is each entry's
- *   last evidence pose (CrEntry.last_pose), which egis_verify_raw_ok checks
- *   the raw frame at; every verify, identify and gallery load invalidates it
- *   first, and a score never depends on what was scored before it.
+ *   What is kept between calls besides the gallery is what
+ *   egis_verify_raw_ok needs to corroborate the frame just scored: each
+ *   entry's last evidence pose and template frame (CrEntry.last_pose,
+ *   last_frame), whether verify's early exit cut that search short
+ *   (last_cut), and the flat-fielded probe's features (EgisEngine.probe,
+ *   which the raw frame no longer overwrites: it has its own scratch,
+ *   rawprobe), from which egis_verify_raw_ok looks for the best pose when
+ *   the early-exit pose does not corroborate. Every verify, identify and
+ *   gallery load invalidates the poses first, so nothing of an earlier frame
+ *   can be corroborated, and a score never depends on what was scored before
+ *   it.
  */
 
 #include <math.h>
@@ -268,9 +281,11 @@
 #endif
 #endif
 /* egis_verify() stops scoring template frames at the first one over the
-* accept point (the driver only compares the result with the threshold). The
-* accuracy kit builds with this at 0 so its score distributions show the
-* true best-of-template maximum, not the first frame that cleared it. */
+* accept point (the driver only compares the result with the threshold).
+* The accuracy kit builds the Gabor flavour exactly as the driver does, with
+* no define (since its kit_version 5: the raw corroboration below starts at
+* the pose verify recorded, so a build with this at 0, which the kit used
+* until then, makes other decisions than the driver). */
 #ifndef EGIS_CR_VERIFY_EARLY_EXIT
 #define EGIS_CR_VERIFY_EARLY_EXIT 1
 #endif
@@ -316,6 +331,10 @@ typedef struct
    * score never depends on what was scored before it. */
   EvPose last_pose;
   int    last_frame;
+  /* The search stopped at the accept point (verify's early exit): the pose
+   * above is the FIRST one to clear it, not necessarily the best one, and
+   * egis_verify_raw_ok may look further (see there). */
+  int    last_cut;
 #endif
 } CrEntry;
 
@@ -337,6 +356,11 @@ struct EgisEngine
   CrEntry gallery[EGIS_CR_MAX_GALLERY];
   int     gallery_n;
   CrProbe probe;                                   /* scratch for verify/identify */
+#ifdef EGIS_CR_HAVE_EVIDENCE
+  /* egis_verify_raw_ok's scratch for the raw frame, so that probe still
+   * holds the flat-fielded frame the last verify scored */
+  CrProbe rawprobe;
+#endif
 };
 
 /* ---- helpers -------------------------------------------------------------- */
@@ -351,6 +375,7 @@ poses_invalidate (EgisEngine *e)
     {
       e->gallery[i].last_pose.valid = 0;
       e->gallery[i].last_frame = -1;
+      e->gallery[i].last_cut = 0;
     }
 #else
   (void) e;
@@ -379,24 +404,28 @@ ev_to_score (int ev)
   return (int) lround (ev * ((double) EGIS_THRESHOLD / EGIS_CR_ACCEPT_EVIDENCE));
 }
 
-/* best-of-N over one gallery entry; -1 if nothing could be scored */
+/* Best evidence of probe p over one entry's template frames, milli-W, -1 if
+ * nothing could be scored; *pose and *frame receive where (the first
+ * maximum). With stop_at_accept the search ends at the first template frame,
+ * and inside it at the first pose, that clears the accept point. Reads the
+ * entry only. */
 static int
-score_entry (const CrProbe *p, CrEntry *e, int stop_at_accept)
+entry_best (const CrProbe *p, const CrEntry *e, int stop_at_accept, EvPose *pose, int *frame)
 {
   int best = -1;
 
-  e->last_pose.valid = 0;
-  e->last_frame = -1;
+  pose->valid = 0;
+  *frame = -1;
   for (int i = 0; i < e->nframes; i++)
     {
-      EvPose pose;
+      EvPose ps;
       /* template first, probe second: only the probe is resampled */
-      int s = ev_match (&e->frames[i], p, stop_at_accept ? EGIS_CR_ACCEPT_EVIDENCE : 0, &pose);
+      int s = ev_match (&e->frames[i], p, stop_at_accept ? EGIS_CR_ACCEPT_EVIDENCE : 0, &ps);
       if (s > best)
         {
           best = s;
-          e->last_pose = pose;
-          e->last_frame = i;
+          *pose = ps;
+          *frame = i;
         }
       /* verify only needs "over the threshold or not", so it stops at the
        * first template frame (and inside it, the first pose) that clears it.
@@ -404,6 +433,17 @@ score_entry (const CrProbe *p, CrEntry *e, int stop_at_accept)
       if (stop_at_accept && best >= EGIS_CR_ACCEPT_EVIDENCE)
         break;
     }
+  return best;
+}
+
+/* best-of-N over one gallery entry, recording where for egis_verify_raw_ok;
+ * -1 if nothing could be scored */
+static int
+score_entry (const CrProbe *p, CrEntry *e, int stop_at_accept)
+{
+  int best = entry_best (p, e, stop_at_accept, &e->last_pose, &e->last_frame);
+
+  e->last_cut = stop_at_accept && best >= EGIS_CR_ACCEPT_EVIDENCE;
   return ev_to_score (best);
 }
 #else
@@ -465,7 +505,7 @@ blob_nframes (const uint8_t *blob, int size)
 EgisEngine *
 egis_engine_new (void)
 {
-  EgisEngine *e = calloc (1, sizeof (*e));         /* ~600 kB, once per device */
+  EgisEngine *e = calloc (1, sizeof (*e));         /* ~680 kB, once per device */
 
   return e;
 }
@@ -647,20 +687,53 @@ egis_verify_raw_ok (EgisEngine *e, const uint8_t *raw_unfielded, int idx)
   /* The raw frame still carries the sensor's fixed pattern (that is the
    * point: nothing has been subtracted from it, so nothing can have been
    * painted into it). */
-  probe_compute (raw_unfielded, &e->probe);
 #ifdef EGIS_CR_HAVE_EVIDENCE
-  /* The accept being corroborated is the pose and template frame the last
-   * egis_verify / egis_identify found for this entry; the raw frame has to
-   * reproduce the fine structure there too (EGIS_CR_RAW_EVIDENCE, with its
-   * measurement, in egis_cr_tuning_gabor.h). No pose -- nothing was
-   * compared, or this is not right after a verify of idx -- means nothing
-   * to corroborate. */
+  probe_compute (raw_unfielded, &e->rawprobe);
+#else
+  probe_compute (raw_unfielded, &e->probe);
+#endif
+#ifdef EGIS_CR_HAVE_EVIDENCE
+  /* The accept being corroborated is, first, the pose and template frame
+   * the last egis_verify / egis_identify recorded for this entry; the raw
+   * frame has to reproduce the fine structure there too
+   * (EGIS_CR_RAW_EVIDENCE, with its measurement, in
+   * egis_cr_tuning_gabor.h). No pose -- nothing was compared, or this is
+   * not right after a verify of idx -- means nothing to corroborate. */
   {
     const CrEntry *en = &e->gallery[idx];
+    EvPose pose;
+    int fr;
     if (!en->last_pose.valid || en->last_frame < 0 || en->last_frame >= en->nframes)
       return 0;
-    return ev_evidence_at (&en->frames[en->last_frame], &e->probe, &en->last_pose) >=
-           EGIS_CR_RAW_EVIDENCE;
+    if (ev_evidence_at (&en->frames[en->last_frame], &e->rawprobe, &en->last_pose) >=
+        EGIS_CR_RAW_EVIDENCE)
+      return 1;
+    /* verify's early exit recorded the first pose that cleared the accept
+     * point, which is often the weakest one that does. Before the accept is
+     * discarded, the raw frame gets the pose identify (and a verify without
+     * the early exit) would have recorded: the best one over the whole
+     * template, looked for again on the flat-fielded frame the verify scored
+     * (still in e->probe). At most two poses are ever asked, both chosen on
+     * the flat-fielded frame alone, never on the raw one.
+     * Measured on the reference unit's nine development sets of 2026-09-27
+     * (egis_match_evidence.c, MEASURED): of the finger-on genuine frames
+     * over the accept point, 92.7 % corroborated at the early-exit pose
+     * alone and 98.7 % with the second pose (egis_cr_tuning_gabor.h,
+     * EGIS_CR_RAW_EVIDENCE), and four genuine presses the early-exit pose
+     * alone rejected are accepted. The case the check exists for stays
+     * closed: behind each of the 6,067 genuine frames over the accept point
+     * (finger-on or not), a featureless raw frame (the session's no-finger
+     * baseline) and the raw frame of another finger corroborated 0 times,
+     * both poses asked (before: 0 of 6,028 each, one pose). The second
+     * pose costs a verify without the early exit, about 170 ms for a
+     * ten-frame template at -O2, on the frames that need it (2 of 120
+     * genuine accepts in the cost bench); no impostor frame of the nine
+     * sets needed it. */
+    if (!en->last_cut)
+      return 0;
+    if (entry_best (&e->probe, en, 0, &pose, &fr) < 0 || fr < 0 || !pose.valid)
+      return 0;
+    return ev_evidence_at (&en->frames[fr], &e->rawprobe, &pose) >= EGIS_CR_RAW_EVIDENCE;
   }
 #else
   /* Genuine raw probes against flat-fielded templates measured NCC >= 0.79

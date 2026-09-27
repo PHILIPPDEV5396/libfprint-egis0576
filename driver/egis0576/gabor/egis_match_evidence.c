@@ -36,12 +36,16 @@
  *      smoothly varying displacement form connected sets. When the best
  *      set's blocks agree on a mean shift of EV_RC_MIN px or more, the pose
  *      is moved by that shift once and the blocks search again around it
- *      (RE-CENTRING, ev_hyp_evidence).
+ *      (RE-CENTRING, ev_hyp_evidence); when the best set's shifts then say
+ *      the probe is still turned against the template (a set of EV_RR_N
+ *      blocks or more, EV_RR_MIN..EV_RR_MAX deg), the probe is turned by that
+ *      much more and the blocks search once more (ROTATION RE-CENTRING).
  *   3. The evidence W of a set is the sum of its blocks' Fisher-z excess over
  *      EV_TAU; the result is the best W over sets and hypotheses, in
  *      milli-W. The adapter accepts at W >= 2 (egis_engine_cleanroom.c) and
  *      corroborates an accept by the evidence of the un-flat-fielded frame
- *      at the same pose (ev_evidence_at).
+ *      at the pose the accept was found at (ev_evidence_at; which pose, when
+ *      verify stops early, is the adapter's egis_verify_raw_ok).
  *
  * Why the blocks shift independently: on near-parallel ridges the ridge
  * image is nearly blind to a shift along the ridges, so its best alignment
@@ -141,6 +145,31 @@
  * 2026-09-13 templates against a 2026-09-18 probe, from 0.66 to 1.98 (the
  * 0.99 x above).
  *
+ * Why the rotation re-centring: the refinement turns the probe in EV_REF_ROT
+ * steps within half a coarse step of the envelope's rotation and keeps the
+ * turn with the best RIDGE-IMAGE NCC -- which, like the shift, the ridge
+ * image resolves poorly on near-parallel ridges. At a pose a few degrees
+ * off, the blocks still find the fine structure, each at its own shift, but
+ * the shifts form a rotation field -- they drift by 2-3 px across the frame
+ * -- and the set breaks where neighbours disagree by more than EV_EPS. The
+ * field says how far to turn: the shifts are fitted as a common shift plus
+ * a small turn about the set (least squares over the set's blocks), and the
+ * evidence is looked for again with the probe turned by that much and the
+ * set's centroid kept where it was. Measured on the nine development sets
+ * of 2026-09-27 (the reference unit's three sessions, in session and across
+ * them in all six directions): the reference unit's session of 2026-09-26,
+ * right index 1 against its 2026-09-13 templates, refined at +20 deg with
+ * W 2.2-2.9 on five frames, 12-17 blocks whose shifts run from (-3, +2) px
+ * at the top left to (-1, -1) px at the bottom right; the raw frame, whose
+ * block NCCs sit about 0.1 lower, broke that set into pieces and did not
+ * corroborate it (raw W 0.41-0.69 against 0.75). An exhaustive scan over
+ * every rotation (2.5 deg) and shift (2 px) puts the fine structure at
+ * +27.5 deg (W 5.1 on the first frame); one rotation step takes the pose to
+ * about +25 deg, the raw frame corroborates, and the press is accepted. The
+ * step is selective: over the nine sets it raises the evidence of 22,780 of
+ * 53,028 genuine frame pairs and of 14 of 258,930 impostor pairs, none of
+ * those by more than W 0.5 (EV_RR_N has the numbers).
+ *
  * Why a block needs half its pixels, at full weight: weighting each block's
  * atanh(r) by sqrt(n / 256) and letting blocks of >= 48 px count --
  * per-pixel significance -- was measured on 2026-09-18 and not adopted: at
@@ -150,41 +179,67 @@
  * the same), and counting such partial blocks at full weight accepted 3 of
  * 480 impostor presses.
  *
- * MEASURED (tools/accuracy of the out-of-tree repository, kit_version 4,
- * the driver's two-frame + raw rule; the reference unit's sessions
- * 2026-09-13 and 2026-09-18, one person, impostors = the same person's
- * other fingers). In session: the kit's two folds of six-press templates.
- * Across sessions: twelve-press templates of one session, genuine probes of
- * the other, impostor probes of both. IN-SAMPLE: every constant here and in
- * the adapter was set on these four sets (on 2026-09-18 alone until the
- * significance proposals and the re-centring came).
+ * MEASURED (tools/accuracy of the out-of-tree repository, kit_version 5:
+ * the engine built as the driver builds it, verify's early exit on; the
+ * driver's two-frame + raw rule; the gallery reloaded before every press;
+ * the reference unit's sessions S1 = 2026-09-13, S2 = 2026-09-18 and
+ * S3 = 2026-09-26, one person, impostors = the same person's other
+ * fingers). In session: the kit's two folds of six-press templates, 480
+ * impostor presses. Across sessions: twelve-press templates of one
+ * session, genuine and impostor probes of the other (240 impostor presses).
+ * IN-SAMPLE: every constant here and in the adapter was set on these nine
+ * sets or a part of them. S3 was the certification session of commit
+ * e27b8bc (which failed it on S1 -> S3 and S3 -> S1, see below) and is
+ * development data since.
  *
  *     set        rejects  accepts  strongest impostor   weakest    vendor
  *                                  press    one frame   genuine    rejects
- *     09-18      3 / 60   0 / 480  0.44 x   0.65 x      1.41 x     4 / 60
- *     09-13      0 / 60   0 / 480  0.06 x   0.60 x      3.86 x     0 / 60
- *     13 -> 18   6 / 60   0 / 480  0.27 x   0.99 x      1.08 x     7 / 60
- *     18 -> 13   0 / 60   0 / 480  0.44 x   0.65 x      2.89 x     0 / 60
+ *     S1         0 / 60   0 / 480  0.06 x   0.60 x      2.39 x     0 / 60
+ *     S2         3 / 60   0 / 480  0.44 x   0.65 x      1.47 x     4 / 60
+ *     S3         1 / 60   0 / 480  0.27 x   0.55 x      1.43 x     1 / 60
+ *     S1 -> S2   6 / 60   0 / 240  0.27 x   0.99 x      1.22 x     7 / 60
+ *     S2 -> S1   0 / 60   0 / 240  0.41 x   0.44 x      1.39 x     0 / 60
+ *     S1 -> S3   5 / 60   0 / 240  0.00 x   0.41 x      1.25 x     3 / 60
+ *     S3 -> S1   0 / 60   0 / 240  0.30 x   0.50 x      1.42 x     0 / 60
+ *     S2 -> S3   0 / 60   0 / 240  0.00 x   0.73 x      1.06 x     2 / 60
+ *     S3 -> S2   2 / 60   0 / 240  0.39 x   1.12 x      1.02 x     3 / 60
  *
  *     ("press" = the highest threshold at which the driver's rule would
- *     accept an impostor press, as a multiple of the accept point.) The
- *     first identity-gate build (commit 5eb1590) rejected 9 / 60 of 13 -> 18
- *     and accepted the weakest genuine press of 18 -> 13 at 1.11 x. Every
- *     press rejected here is rejected by the vendor matcher too. Of the
- *     three 09-18 rejects, two (left index 0, right thumb 2) show no block
- *     evidence against any stored frame at any rotation and any shift
- *     within +-42 px (W <= 0.83), and the third (right index 9) reaches W
- *     2.1-2.2 only at a rotation of 110-115 deg, outside the +-90 deg
- *     search.
+ *     accept an impostor press, as a multiple of the accept point; a
+ *     genuine level over the accept point is a lower bound, since verify
+ *     stops at the first template frame that clears it.) Commit e27b8bc,
+ *     measured the same way: 0 / 3 / 1 / 7 / 0 / 7 / 1 / 1 / 2 rejects in
+ *     the same order, 0 accepts. Of the difference, four presses (S1 -> S2
+ *     left middle 7, S1 -> S3 right thumb 6, S3 -> S1 right middle 9,
+ *     S2 -> S3 left index 11) were lost to the raw corroboration being
+ *     asked only at verify's early-exit pose (the adapter's
+ *     egis_verify_raw_ok), and one (S1 -> S3 right index 1) to a rotation
+ *     the refinement missed (the rotation re-centring above). Two of the
+ *     five S1 -> S3 rejects are not the vendor matcher's: right middle 3
+ *     and right index 10. Neither carries evidence the driver's rule could
+ *     use: right middle 3 lies 25-28 px off every stored press, 626-666 px
+ *     of overlap, five eligible blocks, all five in the set, W 1.26-1.76 on
+ *     every frame (an exhaustive scan over every rotation, 2.5 deg, and
+ *     shift, 2 px: at most 2.06, on one frame); right index 10 reaches
+ *     W 1.7-2.2 at two stored presses, never on two frames in a row and
+ *     where its raw frame does not reproduce the structure (raw W <= 0.19),
+ *     and at most W 1.7 at the third, the only one whose raw frame
+ *     corroborates (on its first two frames). Of the S2
+ *     rejects, two (left index 0, right thumb 2) show no block evidence
+ *     against any stored frame at any rotation and any shift within +-42 px
+ *     (W <= 0.83), and the third (right index 9) reaches W 2.1-2.2 only at
+ *     a rotation of 110-115 deg, outside the +-90 deg search.
  *
- * COST (egis_verify, impostor probes, early exit on, 09-18 frames, gcc,
- * 10-frame templates, one core): 10.05 ms per template frame at -O2 and
- * 11.3 ms at -O3 against the front-end's 3.71 / 4.12 ms (2.71 x / 2.74 x;
- * the first identity-gate build 9.5 / 10.9 ms). A whole impostor verify
- * takes 101 ms on average at -O2 (p95 135, max 148) against 37 ms. Of an
- * impostor pair's 9.9 ms (-O2), 4.1 go to the envelope search, 3.3 to the
- * refinement of 7.9 hypotheses, 2.5 to the block evidence (4.1 evaluations,
- * re-centring included).
+ * COST (egis_verify, impostor probes, early exit on, S2 frames, gcc 16,
+ * 10-frame templates, one core, median of three runs): 9.4 ms per template
+ * frame at -O2 (p95 11.9) and 10.5 ms at -O3 (p95 13.1), against the
+ * front-end's 3.8 / 4.4 and 4.2 / 4.7 ms: 2.5 x the mean and 2.7-2.8 x the
+ * p95 (commit e27b8bc 2.7 x and 3.0 x; the refinement now resamples the
+ * probe once per distinct rotation). A whole impostor verify takes 94 ms
+ * on average at -O2 (p95 126). Of an impostor pair's 9.3 ms (-O2), 4.1 go
+ * to the envelope search, 2.6 to the refinement of 7.9 hypotheses, 2.5 to
+ * the block evidence (4.0 evaluations, both re-centrings included; the
+ * rotation step is taken on 26 of 1.05 million impostor hypotheses).
  *
  * Plain C99, libm only, deterministic, no global or static state: every
  * call's scratch is malloc'd and freed before it returns.
@@ -660,46 +715,112 @@ ev_hyps (const EvFrame *A, const EvProbe *B, EvHyp *H, EvWork *W)
 #endif
   /* refine at full resolution: +-EV_REF px at the coarse rotation, then the
    * rotations EV_REF_ROT deg apart within half a coarse step either side, at
-   * +-1 px around that shift */
+   * +-1 px around that shift. The probe is resampled once per distinct
+   * rotation for every hypothesis that needs it -- hypotheses share coarse
+   * rotations, and neighbouring ones share fine rotations: on impostor pairs
+   * about 15 of the 40 resamplings per pair were repeats, a fifth of the
+   * pair's time -- and each hypothesis takes its candidates in the order it
+   * always did (strict '>', the coarse rotation's shifts, then the fine
+   * rotations -1, +1, -2, +2 steps), so the result is the same to the bit. */
   ev_full_template (A, W);
-  for (int k = 0; k < nh; k++)
+  if (nh > 0)
     {
-      EvHyp b = H[k];
-      int cx0, cy0;
-      b.s = -2;
-      ev_full_probe (B, H[k].rot * EV_PI / 180.0, W);
-      for (int dy = H[k].dy - EV_REF; dy <= H[k].dy + EV_REF; dy++)
-        for (int dx = H[k].dx - EV_REF; dx <= H[k].dx + EV_REF; dx++)
+      int nfs = 0, nsl;
+      EvHyp *fine;                               /* per hypothesis and fine rotation: its best */
+      int *cx0 = malloc ((size_t) nh * sizeof *cx0), *cy0 = malloc ((size_t) nh * sizeof *cy0);
+      while ((nfs + 1) * EV_REF_ROT <= EV_ROT_COARSE / 2.0 + 1e-6)
+        nfs++;
+      nsl = 2 * nfs;
+      fine = malloc ((size_t) (nh * (nsl > 0 ? nsl : 1)) * sizeof *fine);
+      if (!cx0 || !cy0 || !fine)
+        {
+          free (cx0);
+          free (cy0);
+          free (fine);
+          return -1;
+        }
+      /* the coarse rotations, each resampled once */
+      for (int k = 0; k < nh; k++)
+        {
+          int seen = 0;
+          for (int j = 0; j < k && !seen; j++)
+            seen = H[j].rot == H[k].rot;
+          if (seen)
+            continue;
+          ev_full_probe (B, H[k].rot * EV_PI / 180.0, W);
+          for (int kk = k; kk < nh; kk++)
+            {
+              EvHyp b = H[kk];
+              if (H[kk].rot != H[k].rot)
+                continue;
+              b.s = -2;
+              for (int dy = H[kk].dy - EV_REF; dy <= H[kk].dy + EV_REF; dy++)
+                for (int dx = H[kk].dx - EV_REF; dx <= H[kk].dx + EV_REF; dx++)
+                  {
+                    double v = ev_full_ncc (W, dx, dy);
+                    if (v > b.s)
+                      {
+                        b.s = v;
+                        b.dx = dx;
+                        b.dy = dy;
+                      }
+                  }
+              cx0[kk] = b.dx;
+              cy0[kk] = b.dy;
+              H[kk].s = b.s;
+              H[kk].dx = b.dx;
+              H[kk].dy = b.dy;
+            }
+        }
+      /* the fine rotations, each resampled once; slot j = 2 (st - 1) + (sg > 0)
+       * holds hypothesis k's best over its 3 x 3 shifts at that rotation */
+      for (int k = 0; k < nh; k++)
+        for (int j = 0; j < nsl; j++)
           {
-            double v = ev_full_ncc (W, dx, dy);
-            if (v > b.s)
-              {
-                b.s = v;
-                b.dx = dx;
-                b.dy = dy;
-              }
-          }
-      cx0 = b.dx;
-      cy0 = b.dy;
-      for (int st = 1; st * EV_REF_ROT <= EV_ROT_COARSE / 2.0 + 1e-6; st++)
-        for (int sg = -1; sg <= 1; sg += 2)
-          {
-            double rot = H[k].rot + sg * st * EV_REF_ROT;
+            double rot = (H[k].rot + (j & 1 ? 1 : -1) * (j / 2 + 1) * EV_REF_ROT);
+            int seen = 0;
+            for (int k2 = 0; k2 <= k && !seen; k2++)
+              for (int j2 = 0; j2 < (k2 < k ? nsl : j) && !seen; j2++)
+                seen = (H[k2].rot + (j2 & 1 ? 1 : -1) * (j2 / 2 + 1) * EV_REF_ROT) == rot;
+            if (seen)
+              continue;
             ev_full_probe (B, rot * EV_PI / 180.0, W);
-            for (int dy = cy0 - 1; dy <= cy0 + 1; dy++)
-              for (int dx = cx0 - 1; dx <= cx0 + 1; dx++)
+            for (int kk = k; kk < nh; kk++)
+              for (int jj = (kk == k ? j : 0); jj < nsl; jj++)
                 {
-                  double v = ev_full_ncc (W, dx, dy);
-                  if (v > b.s)
-                    {
-                      b.s = v;
-                      b.rot = rot;
-                      b.dx = dx;
-                      b.dy = dy;
-                    }
+                  EvHyp c;
+                  if ((H[kk].rot + (jj & 1 ? 1 : -1) * (jj / 2 + 1) * EV_REF_ROT) != rot)
+                    continue;
+                  c = H[kk];
+                  c.s = -HUGE_VAL;
+                  c.rot = rot;
+                  for (int dy = cy0[kk] - 1; dy <= cy0[kk] + 1; dy++)
+                    for (int dx = cx0[kk] - 1; dx <= cx0[kk] + 1; dx++)
+                      {
+                        double v = ev_full_ncc (W, dx, dy);
+                        if (v > c.s)
+                          {
+                            c.s = v;
+                            c.dx = dx;
+                            c.dy = dy;
+                          }
+                      }
+                  fine[kk * nsl + jj] = c;
                 }
           }
-      H[k] = b;
+      /* each hypothesis: its coarse-rotation best, then the fine rotations
+       * in the original order */
+      for (int k = 0; k < nh; k++)
+        {
+          EvHyp b = H[k];
+          for (int j = 0; j < nsl; j++)
+            if (fine[k * nsl + j].s > b.s)
+              b = fine[k * nsl + j];
+          H[k] = b;
+        }
+      free (cx0);
+      free (cy0);
+      free (fine);
     }
   /* sort by refined NCC, drop exact duplicates */
   for (int i = 1; i < nh; i++)
@@ -839,6 +960,10 @@ typedef struct
 {
   double mx, my;     /* mean block shift of the best set, px */
   int    n;          /* its blocks */
+  double cx, cy;     /* centroid of its blocks' centres, template px */
+  double rot;        /* the rotation, deg, that best explains its blocks'
+                      * shifts (least squares, ev_hyp_evidence); 0 when the
+                      * blocks do not span an area */
 } EvSet;
 
 static double
@@ -848,7 +973,7 @@ ev_evidence (const EvEvWork *E, int dx, int dy, EvSet *set)
   int ax[EV_NB], ay[EV_NB], ok[EV_NB], lab[EV_NB], stack[EV_NB];
   int need = (EV_BS * EV_BS) / 2;
   double wbest = 0;
-  EvSet bs = { 0.0, 0.0, 0 };
+  EvSet bs = { 0.0, 0.0, 0, 0.0, 0.0, 0.0 };
 
   for (int j = 0; j < EV_NBY; j++)
     for (int i = 0; i < EV_NBX; i++)
@@ -881,7 +1006,7 @@ ev_evidence (const EvEvWork *E, int dx, int dy, EvSet *set)
   for (int k0 = 0; k0 < EV_NB; k0++)
     {
       int sp = 0, cnt = 0, sx = 0, sy = 0;
-      double w = 0;
+      double w = 0, su = 0, sv = 0, suu = 0, sxv = 0, syu = 0;
       if (!ok[k0] || best[k0] < EV_TAU || lab[k0] >= 0)
         continue;
       lab[k0] = k0;
@@ -889,10 +1014,18 @@ ev_evidence (const EvEvWork *E, int dx, int dy, EvSet *set)
       while (sp)
         {
           int k = stack[--sp], y = k / EV_NBX, x = k % EV_NBX;
+          /* the block's centre, template px */
+          double u = (x * EV_STEP < EM_W - EV_BS ? x * EV_STEP : EM_W - EV_BS) + (EV_BS - 1) / 2.0;
+          double v = (y * EV_STEP < EM_H - EV_BS ? y * EV_STEP : EM_H - EV_BS) + (EV_BS - 1) / 2.0;
           w += atanh (best[k] < 0.999 ? best[k] : 0.999) - atanh (EV_TAU);
           cnt++;
           sx += ax[k];
           sy += ay[k];
+          su += u;
+          sv += v;
+          suu += u * u + v * v;
+          sxv += ax[k] * v;
+          syu += ay[k] * u;
           for (int dj = -1; dj <= 1; dj++)
             for (int di = -1; di <= 1; di++)
               {
@@ -911,10 +1044,17 @@ ev_evidence (const EvEvWork *E, int dx, int dy, EvSet *set)
         }
       if (w > wbest)
         {
+          /* a small rotation r of the probe about the pose moves the block
+           * at (u, v) by about r (v, -u) on top of a common shift; its least
+           * squares estimate from the set's shifts */
+          double spread = suu - (su * su + sv * sv) / cnt;
           wbest = w;
           bs.n = cnt;
           bs.mx = (double) sx / cnt;
           bs.my = (double) sy / cnt;
+          bs.cx = su / cnt;
+          bs.cy = sv / cnt;
+          bs.rot = spread > 1e-9 ? ((sxv - sx * sv / cnt) - (syu - sy * su / cnt)) / spread * 180.0 / EV_PI : 0.0;
         }
     }
   if (set)
@@ -922,29 +1062,62 @@ ev_evidence (const EvEvWork *E, int dx, int dy, EvSet *set)
   return wbest;
 }
 
-/* The evidence at a hypothesis pose, re-centred once: when the best set's
- * blocks agree on a mean shift of EV_RC_MIN px or more (and it has at least
- * EV_RC_N blocks), the evidence is looked for again with the pose moved by
- * that shift, and the higher of the two is kept. *odx, *ody receive the pose
- * it was found at. */
+/* The evidence at a hypothesis pose, re-centred once in translation and
+ * once in rotation (the probe residual is already rotated by rot into E).
+ * Translation: when the best set's blocks agree on a mean shift of
+ * EV_RC_MIN px or more (and it has at least EV_RC_N blocks), the evidence is
+ * looked for again with the pose moved by that shift. Rotation: when the
+ * best set of the pose kept so far has at least EV_RR_N blocks and its
+ * shifts say the probe is turned by EV_RR_MIN..EV_RR_MAX deg against it,
+ * the probe residual is rotated by that much more, the pose moved so that
+ * the set's centroid keeps its place in the probe, and the evidence looked
+ * for again. Each time the higher W is kept. *orot, *odx, *ody receive the
+ * pose it was found at. */
 static double
-ev_hyp_evidence (const EvEvWork *E, int dx, int dy, int *odx, int *ody)
+ev_hyp_evidence (EvEvWork *E, const EvProbe *p, double rot, int dx, int dy,
+                 double *orot, int *odx, int *ody)
 {
   EvSet st;
   double w = ev_evidence (E, dx, dy, &st);
 
+  *orot = rot;
   *odx = dx;
   *ody = dy;
 #if EV_RC_N > 0
   if (st.n >= EV_RC_N && hypot (st.mx, st.my) >= EV_RC_MIN)
     {
       int rx = dx + (int) lround (st.mx), ry = dy + (int) lround (st.my);
-      double w2 = ev_evidence (E, rx, ry, NULL);
+      EvSet s2;
+      double w2 = ev_evidence (E, rx, ry, &s2);
       if (w2 > w)
         {
           w = w2;
+          st = s2;
           *odx = rx;
           *ody = ry;
+        }
+    }
+#endif
+#if EV_RR_N > 0
+  if (st.n >= EV_RR_N && fabs (st.rot) >= EV_RR_MIN && fabs (st.rot) <= EV_RR_MAX)
+    {
+      /* template point q (centred) <-> rotated probe q - d - a; with the
+       * probe turned by r more, the pose d' that keeps the centroid's probe
+       * point is d' = q - R(-r) (q - d - a) */
+      double r = st.rot * EV_PI / 180.0, cr = cos (r), sr = sin (r);
+      double qx = st.cx - (EM_W - 1) / 2.0, qy = st.cy - (EM_H - 1) / 2.0;
+      double px = qx - *odx - st.mx, py = qy - *ody - st.my;
+      int nx = (int) lround (qx - (cr * px + sr * py));
+      int ny = (int) lround (qy - (-sr * px + cr * py));
+      double w3;
+      ev_rotate_res (p, (rot + st.rot) * EV_PI / 180.0, E);
+      w3 = ev_evidence (E, nx, ny, NULL);
+      if (w3 > w)
+        {
+          w = w3;
+          *orot = rot + st.rot;
+          *odx = nx;
+          *ody = ny;
         }
     }
 #endif
@@ -978,11 +1151,12 @@ ev_match (const EvFrame *t, const EvProbe *p, int stop_at, EvPose *pose)
       for (int k = 0; k < nh; k++)
         {
           int ev, odx, ody;
+          double orot;
           if (H[k].s < EV_GFLOOR)
             break;                               /* sorted: the rest are lower */
           ev_rotate_res (p, H[k].rot * EV_PI / 180.0, E);
           {
-            double w = ev_hyp_evidence (E, H[k].dx, H[k].dy, &odx, &ody);
+            double w = ev_hyp_evidence (E, p, H[k].rot, H[k].dx, H[k].dy, &orot, &odx, &ody);
             if (w > wmax)
               wmax = w;
           }
@@ -991,7 +1165,7 @@ ev_match (const EvFrame *t, const EvProbe *p, int stop_at, EvPose *pose)
             {
               if (ev > best)
                 best = ev;
-              bp.rot_deg = H[k].rot;
+              bp.rot_deg = orot;
               bp.dx = odx;
               bp.dy = ody;
               bp.valid = 1;

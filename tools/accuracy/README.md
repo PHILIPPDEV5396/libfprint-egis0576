@@ -96,6 +96,8 @@ produces `tools/accuracy/score-vendor`, `tools/accuracy/score-cleanroom` and
 vendor sources need the relaxed flag set the libfprint build also uses for
 them (`-w -fno-stack-protector -fpermissive -fwrapv ...`); the other two are
 plain C99. `make -C tools/accuracy clean` removes everything again.
+`score-gabor` is compiled exactly as the driver compiles the engine, so the
+kit's accept decisions are the driver's (see `kit_version 5` below).
 
 **The Gabor flavour** (`score-gabor`) is the clean-room adapter on a different
 front-end: `driver/egis0576/gabor/egis_match_gabor.c` replaces the isotropic
@@ -583,3 +585,41 @@ memory the driver does not give the engine, and is too low: on that session
 before every probe press and `score.c` reloads the gallery there, exactly as
 the driver does. The shipped Gabor engine does not adapt; its numbers are
 unchanged (checked on both reference sessions).
+
+## `kit_version 5` (2026-09-27): the Gabor scorer is the driver's engine
+
+The clean-room adapter has a switch the driver never sets:
+`EGIS_CR_VERIFY_EARLY_EXIT`. In the driver (no define, so 1) `egis_verify`
+stops at the first stored frame, and inside it at the first pose, whose
+evidence clears the accept point. Until this version the Makefile built
+`score-gabor` with it at 0, to print the best-of-template score. For the
+NCC matcher that was harmless. For the identity evidence it is not: the
+driver corroborates an accept on the un-flat-fielded frame
+(`egis_verify_raw_ok`) at the pose `egis_verify` recorded, and the two builds
+record different poses. On the reference unit the early-exit-off build
+accepted genuine presses the driver rejects (and one the other way round),
+so up to `kit_version 4` the kit's Gabor numbers were not the driver's.
+
+**Which of the two ways the kit does it: it builds `score-gabor` with the
+driver's setting.** The Makefile passes no `EGIS_CR_VERIFY_EARLY_EXIT` for the
+Gabor flavour, the same objects the driver links. `score.c` calls
+`egis_verify` and then `egis_verify_raw_ok` on the same frame, as the
+driver's match thread does, and `evaluate.py` applies the driver's rule, so
+every frame's score and corroboration, and every press's accept or reject,
+are the driver's. Two things follow for reading `results.json`:
+
+- a Gabor score **over** the accept point is the first one to clear it, a
+  lower bound of the best one; under it, it is the best over the template.
+  FRR and FAR are unaffected; score quantiles and `eer` above the threshold
+  are lower bounds;
+- the raw corroboration asks the early-exit pose first and, only when that
+  fails, the best pose over the whole template (the adapter's comment at
+  `egis_verify_raw_ok`); a frame under the accept point is checked at its
+  best pose, as before.
+
+The tsteppy comparison build (`score-cleanroom`) keeps its best-of-template
+score: its raw corroboration is disabled (always 1) and its early exit only
+cuts scores that are already over the accept point, so its decisions are the
+driver's either way. Results of `kit_version 4` and earlier for the Gabor
+flavour should be re-run; the frames need not be recaptured.
+

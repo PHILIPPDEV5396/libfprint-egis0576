@@ -99,7 +99,24 @@
  * impostor frames' p99 (0.36) and the accepted genuine frames' p5 (1.39).
  * With the significance proposals and the re-centring (the pose can now be
  * a moved one) the same session gives 98.3 % and 0.16 % (p99 0.40, p5
- * 1.33); not moved. */
+ * 1.33); not moved.
+ * WHICH pose (2026-09-27): those figures were taken at the best pose over
+ * the template; the driver's verify stops at the FIRST pose that clears the
+ * accept point, often the weakest that does, and until then the raw frame
+ * was checked there only. On the nine development sets of that day (the
+ * reference unit's three sessions, in session and across them, the
+ * driver's setting) that passed 5,568 of 6,009 genuine frames over the
+ * accept point (92.7 %) and cost four genuine presses. Since then
+ * egis_verify_raw_ok asks the early-exit pose and, only if that fails, the
+ * best pose over the template (both found on the flat-fielded frame):
+ * 5,970 of 6,046 (98.7 %), with the rotation re-centring. The impostor side
+ * is unchanged there: 1 of the nine sets' 34,176 on-gate impostor frames
+ * reaches the accept point (2026-09-26 templates, 2026-09-18 probe, W 2.24,
+ * raw corroborated at its early-exit pose already, the next frame at 0.39 x)
+ * and the second pose is never asked for an impostor frame. Where it would
+ * matter -- the raw frame of another finger or a featureless raw frame
+ * behind an accepted flat-fielded one -- see the adapter's
+ * egis_verify_raw_ok. */
 #ifndef EGIS_CR_RAW_EVIDENCE
 #define EGIS_CR_RAW_EVIDENCE 750
 #endif

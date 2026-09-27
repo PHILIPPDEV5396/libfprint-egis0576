@@ -169,6 +169,48 @@
 #define EV_RC_MIN 3.0
 #endif
 
+/* Rotation re-centring (ev_hyp_evidence), after the translation one: the
+ * best set's block shifts, fitted by least squares as a small turn about
+ * the set plus a common shift, say by how much the probe is still turned
+ * against the template; when the set has at least EV_RR_N blocks and the
+ * turn is EV_RR_MIN..EV_RR_MAX deg, the probe is rotated by that much more
+ * (the set's centroid kept in place) and the blocks search again; the higher
+ * W is kept. EV_RR_N 0 disables it. Chosen on the nine development sets of
+ * 2026-09-27 (the three sessions of the reference unit in session and in all
+ * six directions across them, the driver's rule and setting):
+ *   EV_RR_N 6    a turn needs a set that spans an area, two rows of three.
+ *                Over the nine sets' 1,352,411 scored hypotheses the step is
+ *                taken on 50,226 genuine and 26 impostor ones, and raises
+ *                the evidence of 22,780 of 53,028 genuine frame pairs (14,816
+ *                by more than W 0.5) and of 14 of 258,930 impostor pairs (by
+ *                at most 0.5, to at most W 0.86). At 3 (= EV_RC_N) and 4
+ *                the decisions are the same, but the step is taken on 2,024
+ *                and 690 impostor hypotheses and lifts impostors: at 3 the
+ *                strongest impostor press in session on 2026-09-13 goes from
+ *                0.06 to 0.32 x and on 2026-09-26 from 0.27 to 0.41 x; at 4
+ *                the strongest single impostor frames rise (2026-09-18 in
+ *                session 0.65 -> 0.74 x). 5 and 7 (+-10 %, the integer
+ *                neighbours): the same decisions on all nine sets and no
+ *                impostor figure higher (at 5 the strongest impostor press
+ *                of 2026-09-26 -> 2026-09-18 falls from 0.39 x to 0.14 x).
+ *   EV_RR_MIN 1.25 deg, half of EV_REF_ROT: a smaller turn is within the
+ *                refinement's own step. 1.125 and 1.375: the same
+ *                decisions and impostor figures on all nine sets.
+ *   EV_RR_MAX 10 deg, EV_ROT_COARSE: a larger turn is not a residual of the
+ *                refinement but another coarse hypothesis. 9 and 11: the
+ *                same decisions and impostor figures on all nine sets.
+ * What it does there is in egis_match_evidence.c, "Why the rotation
+ * re-centring". */
+#ifndef EV_RR_N
+#define EV_RR_N 6
+#endif
+#ifndef EV_RR_MIN
+#define EV_RR_MIN 1.25
+#endif
+#ifndef EV_RR_MAX
+#define EV_RR_MAX 10.0
+#endif
+
 /* The blocks tile the WHOLE frame: every EV_STEP px from the top-left corner,
  * plus one column / row anchored at the right / bottom border where the step
  * does not end on it. Without that last column and row (70 = 6 x 8 + 16 + 6,

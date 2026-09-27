@@ -20,11 +20,13 @@ COMMON := -std=gnu99 -O3 -fno-strict-aliasing -D_GNU_SOURCE -I$(DRV)
 VENDOR_CFLAGS := $(COMMON) -w -fno-stack-protector -fpermissive -fwrapv \
                  -Wno-int-conversion -Wno-incompatible-pointer-types \
                  -Wno-implicit-function-declaration
-# The kit wants the true best-of-template score, not the driver's
-# first-frame-over-threshold shortcut (egis_engine_cleanroom.c).
 # The clean-room adapter is built against one of two front-ends: the shipped
 # Gabor one (no flag) or, for the comparison, tsteppy's original
 # (-DEGIS_CR_FRONTEND_TSTEPPY); see egis_engine_cleanroom.c.
+# The tsteppy comparison build keeps the true best-of-template score
+# (EGIS_CR_VERIFY_EARLY_EXIT=0): its raw corroboration is disabled (returns 1)
+# and its early exit only cuts scores that are already over the accept point,
+# so every frame's accept / reject is the driver's either way.
 CLEAN_CFLAGS  := $(COMMON) -Wall -I$(DRV)/tsteppy -DEGIS_CR_VERIFY_EARLY_EXIT=0 \
                  -DEGIS_CR_FRONTEND_TSTEPPY
 # GABOR_EXTRA passes constants to the shipped front-end without editing it, so
@@ -32,9 +34,19 @@ CLEAN_CFLAGS  := $(COMMON) -Wall -I$(DRV)/tsteppy -DEGIS_CR_VERIFY_EARLY_EXIT=0 
 #   make clean && make GABOR_EXTRA=-DEG_MIN_OVERLAP=1400
 # (the alignment search's overlap floor, egis_match_gabor.c; every #define in
 # gabor/*.h is guarded by #ifndef for exactly this.)
+# The Gabor build is compiled exactly as the driver compiles it: no
+# EGIS_CR_VERIFY_EARLY_EXIT define, so verify stops at the first template
+# frame (and pose) over the accept point, as it does in the driver. That is
+# not a detail here: the raw corroboration (egis_verify_raw_ok) is asked at
+# the pose verify recorded, so a build without the early exit makes other
+# decisions than the driver (until 2026-09-27 this Makefile built it with
+# =0, and the kit measured a matcher the driver does not run). Scores over
+# the accept point are therefore the first ones to clear it, a lower bound
+# of the best-of-template score; below it they are the best-of-template
+# score. See README.md, "kit_version 5".
 GABOR_EXTRA   ?=
 GABOR_CFLAGS  := $(COMMON) -Wall -std=c99 -I$(DRV)/tsteppy -I$(DRV)/gabor \
-                 -DEGIS_CR_VERIFY_EARLY_EXIT=0 $(GABOR_EXTRA)
+                 $(GABOR_EXTRA)
 SCORE_CFLAGS  := $(COMMON) -Wall
 
 VENDOR_SRC := egis_funcs.c egis_rt.c egis_engine.c egis_preprocess.c egis_coherence_map.c
