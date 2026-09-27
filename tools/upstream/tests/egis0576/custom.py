@@ -19,6 +19,18 @@
 # is not a finger. What it cannot pin is the successful-match report; that
 # path is covered by the hardware runs recorded in the out-of-tree
 # repository's docs/matcher-comparison.md.
+#
+# OUT OF DATE, RE-ESTABLISH BEFORE RECORDING: the paragraph above was
+# measured when the ridge-period check was part of the decision. Since
+# 2026-09-26 verify and identify decide on the identity evidence
+# (egis_match_evidence.c) and the period check takes no part in it, so the
+# premise of the "must NOT match" assertions below -- the object is refused --
+# is unproven: an object whose own fine texture reproduces between presses
+# may be accepted now. Check the candidate with tools/upstream/objprobe.py
+# (it prints the evidence decision) before making the recording, and turn
+# the assertions round if it matches. The recording is not available on the
+# development machine, so this script has not been run against the evidence
+# decision.
 
 import traceback
 import sys

@@ -18,26 +18,37 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  *
  * Reads two files of concatenated flat-fielded 3990-byte frames (one press
- * each) and reports what the driver would do with them. Two numbers matter
- * and they are not the same:
+ * each) and reports what the driver would do with them, press 1 taken as the
+ * enrolment and press 2 as the probe. Three things are printed:
  *
- *   the RAW correlation (em_match_ex), which says whether the two presses
- *   look alike at all, and
- *   the DECISION (em_match), which is what the driver actually sees -- the
- *   correlation, or -1 when the ridge-period consistency check rejects the
- *   pair as synthetic-looking.
+ *   the ridge-image correlation (em_match_ex), which says whether the two
+ *   presses look alike at all;
+ *   the front-end's old decision (em_match): that correlation, or
+ *   EM_FQ_REJECT when the ridge-period consistency check rejects the pair.
+ *   Since 2026-09-26 NEITHER decides verify or identify any more -- the
+ *   period check takes no part in the driver's decision -- and both are
+ *   printed only to say how an object looks to the front-end;
+ *   the DECISION: the identity evidence (egis_match_evidence.c), which is
+ *   what egis_verify / egis_identify score, mapped as the adapter maps it
+ *   (score = W * EGIS_THRESHOLD / EGIS_CR_ACCEPT_EVIDENCE), best over the
+ *   press-1 frames for each press-2 frame, and whether two consecutive
+ *   press-2 frames clear the threshold (the driver's rule, less its raw-frame
+ *   corroboration, which needs the un-flat-fielded frames this tool does not
+ *   get).
  *
- * A pair the check rejects scores EM_FQ_REJECT, well below the threshold, so
- * a tool that only looks at em_match cannot tell "these presses do not
- * match" from "these presses match and the check threw it away", and its
- * maximum lands just under the check's gate (0.70). Both are printed.
+ * Build (tools/upstream/objprobe.py does it): the front-end, the evidence
+ * stage and this file, with -I driver/egis0576 -I .../gabor -I .../tsteppy.
  */
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include "egis_engine.h"
 #include "egis_match.h"
 #include "egis_match_check.h"
+#include "egis_match_evidence.h"
+#include "egis_cr_tuning_gabor.h"
 
 #define N 3990
 
@@ -122,6 +133,7 @@ main (int argc, char **argv)
   int n_nblk = 0, n_flat = 0, n_other = 0;
   static EmFrame A[64], B[64];
   double raw_best = -2, dec_best = -2, cov_a = 0, cov_b = 0;
+  int ev_score[64], ev_best = -1, ev_two = 0;
 
   if (argc < 3) { fprintf (stderr, "usage: %s press1.raw press2.raw\n", argv[0]); return 2; }
   na = rd (argv[1], &a); nb = rd (argv[2], &b);
@@ -165,6 +177,41 @@ main (int argc, char **argv)
           }
       }
 
+  /* the decision: identity evidence, press 1 as the template (EvFrame),
+   * each press-2 frame as a probe (EvProbe), as egis_verify scores it */
+  {
+    EvFrame *T = malloc ((size_t) na * sizeof *T);
+    EvProbe *P = malloc (sizeof *P);
+    int prev = 0;
+
+    if (!T || !P) { fprintf (stderr, "out of memory\n"); return 2; }
+    for (i = 0; i < na; i++)
+      ev_frame_compute (a + i * N, &T[i]);
+    for (j = 0; j < nb; j++)
+      {
+        int best = -1;
+        ev_probe_compute (b + j * N, P);
+        if (P->e.f.coverage >= em_min_coverage)
+          for (i = 0; i < na; i++)
+            {
+              int w = ev_match (&T[i], P, 0, NULL);
+              if (w > best) best = w;
+            }
+        ev_score[j] = best < 0 ? -1
+                      : (int) lround (best * ((double) EGIS_THRESHOLD / EGIS_CR_ACCEPT_EVIDENCE));
+        if (ev_score[j] > ev_best) ev_best = ev_score[j];
+        if (ev_score[j] >= EGIS_THRESHOLD)
+          {
+            if (prev) ev_two = 1;
+            prev = 1;
+          }
+        else
+          prev = 0;
+      }
+    free (T);
+    free (P);
+  }
+
   {
     int ba = 0, bb = 0;
     for (int i = 1; i < na; i++) if (A[i].coverage > A[ba].coverage) ba = i;
@@ -174,29 +221,39 @@ main (int argc, char **argv)
   }
   printf ("best coverage      %.2f / %.2f   (probe gate %.2f, enrolment gate 0.60)\n",
           cov_a, cov_b, em_min_coverage);
-  printf ("best correlation   %.3f          (how alike the two presses are)\n", raw_best);
-  printf ("best decision      %.3f          (what the driver sees; accept at %.2f)\n",
-          dec_best, em_match_threshold);
+  printf ("best correlation   %.3f          (how alike the two presses' ridge images are)\n", raw_best);
+  printf ("old NCC decision   %.3f          (front-end NCC with the period check; decides nothing\n"
+          "                                  since 2026-09-26, shown for comparison)\n", dec_best);
+  printf ("evidence per frame");
+  for (j = 0; j < nb; j++)
+    printf (" %d", ev_score[j]);
+  printf ("\nbest evidence      %d (%.2f x the threshold %d)   <- THE DECISION\n",
+          ev_best, ev_best / (double) EGIS_THRESHOLD, EGIS_THRESHOLD);
+  printf ("driver's rule      %s (two consecutive press-2 frames >= %d; raw-frame\n"
+          "                   corroboration not checked here)\n",
+          ev_two ? "ACCEPT" : "reject", EGIS_THRESHOLD);
   if (blank_a + blank_b > 0)
     printf ("blank frames       %d of %d / %d of %d  (no ridge evidence: too light a press)\n",
             blank_a, na, blank_b, nb);
   if (n_nblk + n_flat + n_other > 0)
-    printf ("rejected by the period check: %d pairs (%d too few period blocks, %d flat map, %d other)\n",
+    printf ("old period check would reject: %d pairs (%d too few period blocks, %d flat map, %d other)\n",
             n_nblk + n_flat + n_other, n_nblk, n_flat, n_other);
 
-  if (cov_a >= 0.60 && cov_b >= 0.60 && dec_best >= em_match_threshold)
-    printf ("VERDICT: yes -- enrol and verify with this object\n");
-  else if (raw_best >= em_match_threshold && dec_best < em_match_threshold)
-    printf ("VERDICT: no -- the presses DO reproduce each other (%.3f), but the driver's\n"
-            "         ridge-period check rejects them, so a verify can never succeed with\n"
-            "         this object. The period lines above say why: a texture the\n"
-            "         estimator cannot measure (wrong groove size) leaves it no blocks\n"
-            "         to compare, and a regular grating fails the variation test.\n",
-            raw_best);
+  if (cov_a >= 0.60 && cov_b >= 0.60 && ev_two)
+    printf ("VERDICT: yes -- the identity evidence accepts press 2 against press 1: this\n"
+            "         object MATCHES its own enrolment (a recording made with it pins the\n"
+            "         successful-match path, not a refusal)\n");
+  else if (cov_a >= 0.60 && cov_b >= 0.60 && raw_best >= em_match_threshold)
+    printf ("VERDICT: no match -- the ridge images reproduce (%.3f), but the object's fine\n"
+            "         structure does not reproduce over enough of the overlap for the\n"
+            "         identity evidence (best %.2f x the threshold): the driver refuses it.\n",
+            raw_best, ev_best / (double) EGIS_THRESHOLD);
   else if (cov_a >= 0.60 && cov_b >= 0.60)
-    printf ("VERDICT: not yet -- the structure is there, the presses do not reproduce each\n"
-            "         other (%.3f < %.2f). Same spot, same rotation, same force, try again.\n",
-            raw_best, em_match_threshold);
+    printf ("VERDICT: no match yet -- the structure is there, but neither the fine structure\n"
+            "         (evidence %.2f x the threshold) nor the ridge images (correlation %.3f)\n"
+            "         reproduce between the presses. Same spot, same rotation, same force,\n"
+            "         try again.\n",
+            ev_best / (double) EGIS_THRESHOLD, raw_best);
   else if (cov_a >= 0.55 || cov_b >= 0.55)
     printf ("VERDICT: not yet -- this object DOES have ridge-like structure (best coverage\n"
             "         %.2f), but %s press was too light to show it. Press harder (aim for a\n"

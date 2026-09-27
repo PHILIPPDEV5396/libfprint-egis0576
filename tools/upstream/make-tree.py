@@ -80,6 +80,15 @@ def resolve(s, macro):
     return ''.join(out)
 
 
+def flat_names(s):
+    """The out-of-tree file names comments cite, as they are called in the flat
+    upstream directory."""
+    s = s.replace('gabor/egis_cr_tuning_gabor.h', 'egis_cr_tuning.h')
+    s = s.replace('egis_cr_tuning_gabor.h', 'egis_cr_tuning.h')
+    s = s.replace('egis_engine_cleanroom.c', 'egis_engine.c')
+    return s
+
+
 def adapter(src):
     """egis_engine_cleanroom.c -> egis_engine.c: one front-end, flat includes."""
     s = read(src)
@@ -110,20 +119,36 @@ def adapter(src):
     i = s.index('#ifdef EGIS_CR_HAVE_MATCH_EX\n')
     j = s.index('#endif\n', i)
     s = s[:i] + s[i + len('#ifdef EGIS_CR_HAVE_MATCH_EX\n'):j] + s[j + len('#endif\n'):]
-    s = s.replace('egis_engine_cleanroom.c', 'egis_engine.c')
-    return s
+    # the comparison build's score mapping, a remark in the SCORE MAPPING
+    # section
+    s = must_replace(s,
+                     ' *   (The comparison build on tsteppy\'s front-end keeps the NCC: score =\n'
+                     ' *   lround (ncc * 5000 / em_match_threshold).)\n', '',
+                     'the comparison build\'s remark under SCORE MAPPING')
+    return flat_names(s)
+
+
+MESON_SOURCES = ('drivers/egis0576.c',
+                 'drivers/egis0576/egis0576_proto.c',
+                 'drivers/egis0576/egis_engine.c',
+                 'drivers/egis0576/egis_match_gabor.c',
+                 'drivers/egis0576/egis_match_evidence.c')
 
 
 def meson_libfprint(s):
+    """The driver's entry in driver_sources: added after egis0570's, or, when
+    the checkout already carries one (an earlier submission), its file list
+    rewritten -- a stale list compiles but does not link once a source file
+    is added."""
     entry = ("    'egis0576' : files(\n"
-             "        'drivers/egis0576.c',\n"
-             "        'drivers/egis0576/egis0576_proto.c',\n"
-             "        'drivers/egis0576/egis_engine.c',\n"
-             "        'drivers/egis0576/egis_match_gabor.c',\n"
-             "        'drivers/egis0576/egis_match_evidence.c',\n"
-             "    ),\n")
-    if "'egis0576' : files(" in s:
-        return s
+             + ''.join(f"        '{x}',\n" for x in MESON_SOURCES)
+             + "    ),\n")
+    old = re.compile(r"^[ \t]*'egis0576'[ \t]*:[ \t]*files\([^)]*\),[ \t]*\n", re.M)
+    found = old.findall(s)
+    if len(found) > 1:
+        sys.exit('make-tree: more than one egis0576 entry in libfprint/meson.build')
+    if found:
+        return old.sub(lambda m: entry, s, count=1)
     return must_replace(s, "    'egis0570' : files('drivers/egis0570.c'),\n",
                         "    'egis0570' : files('drivers/egis0570.c'),\n" + entry,
                         "the egis0570 entry of libfprint/meson.build")
@@ -189,7 +214,8 @@ def main():
     }
     for rel, src in copies.items():
         s = read(src)
-        s = s.replace('egis_cr_tuning_gabor.h', 'egis_cr_tuning.h')
+        if rel != 'egis0576/egis_match.h':          # tsteppy's header, byte for byte
+            s = flat_names(s)
         write(os.path.join(out, rel), s)
     write(os.path.join(out, 'egis0576', 'egis_engine.c'),
           adapter(os.path.join(d, 'egis0576', 'egis_engine_cleanroom.c')))
@@ -210,7 +236,8 @@ def main():
 
     # nothing submitted may still name the flavours or the other front-end's files
     bad = re.compile(r'EGIS_CR_FRONTEND_TSTEPPY|EGIS_CR_HAVE_MATCH_EX|EGIS_CR_HAVE_EVIDENCE|gabor/|'
-                     r'tsteppy/egis_match\.c|egis0576_matcher')
+                     r'tsteppy/egis_match\.c|egis0576_matcher|egis_cr_tuning_gabor|'
+                     r'egis_engine_cleanroom|tsteppy\'s build|comparison build')
     for rel in list(copies) + ['egis0576/egis_engine.c']:
         for n, line in enumerate(read(os.path.join(out, rel)).splitlines(), 1):
             if bad.search(line):

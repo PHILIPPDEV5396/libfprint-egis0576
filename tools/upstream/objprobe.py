@@ -8,10 +8,12 @@ is the fast test -- two presses, about twenty seconds, no enrolment.
 
 It brings the sensor up exactly as the driver does (reset, init replay,
 exposure calibration, 8-frame flat-field baseline), captures one press, then
-a second one, and prints the matcher's coverage per frame plus the best NCC
-between the two presses -- the number the accept threshold is compared
-against. An object is usable when both presses reach the enrolment coverage
-gate and reproduce each other above the threshold.
+a second one, and prints the matcher's coverage per frame, the best NCC
+between the two presses, and the identity evidence of the second press
+against the first -- the number the accept threshold is compared against
+since 2026-09-26 (objcheck.c). An object matches its own enrolment when both
+presses reach the enrolment coverage gate and two consecutive frames of the
+second clear the threshold on the evidence.
 
 Frames are written flat-fielded to --out (0600, default a private directory
 under $XDG_RUNTIME_DIR or /var/tmp) and nothing else; they are the object's
@@ -44,11 +46,15 @@ def build_checker(out):
     """Compile objcheck.c against the shipped matcher, once per --out."""
     exe = os.path.join(out, "objcheck")
     src = os.path.join(HERE, "objcheck.c")
-    if os.path.exists(exe) and os.path.getmtime(exe) > os.path.getmtime(src):
+    deps = [src] + [os.path.join(DRV, "gabor", x) for x in
+                    ("egis_match_gabor.c", "egis_match_evidence.c", "egis_match_evidence.h",
+                     "egis_cr_tuning_gabor.h", "egis_match_check.h")]
+    if os.path.exists(exe) and os.path.getmtime(exe) > max(os.path.getmtime(x) for x in deps):
         return exe
     cmd = [os.environ.get("CC", "cc"), "-O2", "-o", exe, src,
            os.path.join(DRV, "gabor", "egis_match_gabor.c"),
-           "-I" + os.path.join(DRV, "gabor"), "-I" + os.path.join(DRV, "tsteppy"), "-lm"]
+           os.path.join(DRV, "gabor", "egis_match_evidence.c"),
+           "-I" + DRV, "-I" + os.path.join(DRV, "gabor"), "-I" + os.path.join(DRV, "tsteppy"), "-lm"]
     subprocess.run(cmd, check=True)
     return exe
 
