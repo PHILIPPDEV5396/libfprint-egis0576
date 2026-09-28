@@ -46,19 +46,19 @@
  * rule, one person, impostors = the same person's other fingers; the table
  * and what the rejects are in egis_match_evidence.c, MEASURED):
  *
- *   reference unit, sessions 2026-09-13, 2026-09-18 and 2026-09-26, in
- *     session and across them in all six directions -- nine sets, every
- *     constant of the evidence stage was set on them or a part of them, so
- *     IN-SAMPLE: 0 / 3 / 1 of 60 rejects in session, 6 / 0 / 5 / 0 / 0 / 2
- *     across (13 -> 18, 18 -> 13, 13 -> 26, 26 -> 13, 18 -> 26, 26 -> 18),
- *     no impostor press accepted (0 / 480 in session, 0 / 240 across),
- *     strongest impostor press 0.44 x the accept point; the vendor matcher
- *     on the same frames 0 / 4 / 1 and 7 / 0 / 3 / 0 / 2 / 3, no accepts.
- *     The previous build (e27b8bc) was certified on the 2026-09-26 session
- *     before it was development data and FAILED: it rejected 7 / 60
- *     (13 -> 26) and 1 / 60 (26 -> 13) where the vendor matcher rejects 3
- *     and 0 (no false accept on any set, strongest impostor 0.39 x). Not
- *     yet measured on data it was not tuned on.
+ *   reference unit, sessions 2026-09-13, 2026-09-18, 2026-09-26 and
+ *     2026-09-27, in session and across them in all twelve directions --
+ *     16 sets, every constant of the evidence stage was set on them or a
+ *     part of them, so IN-SAMPLE (v4, 2026-09-28): 46 / 960 genuine presses
+ *     rejected, the vendor matcher on the same frames 42 / 960; 0 / 4800
+ *     impostor presses accepted, and no impostor press reaches any level
+ *     above 0 (the highest single impostor frame 0.72 x the accept point).
+ *     This misses the owner's bar (pooled false rejects no more than the
+ *     vendor matcher's) by four presses; it is not certified and not yet
+ *     measured on data it was not tuned on. Its predecessors were certified
+ *     and FAILED: e27b8bc (v2) on 2026-09-26 (more false rejects than the
+ *     vendor matcher on two sets), 743b796 (v3) on 2026-09-27 (one false
+ *     accept at 1.083 x, more false rejects on three sets).
  *
  * MEASURED, THE FRONT-END'S NCC AS THE DECISION (until 2026-09-26; one
  * person per unit, every frame of a press scored, impostors = the same
@@ -163,7 +163,8 @@
  *   Gallery frames live on the heap (51,880 bytes each as EvFrames, about
  *   10 MB for 16 prints of 12 frames); the frame computations use < 8 kB of
  *   stack and a malloc'd scratch block, ev_match() about 213 kB of heap
- *   scratch per call, freed before it returns.
+ *   scratch per call, freed before it returns, and about 16 kB of stack
+ *   (the block search's per-shift cell sums, since v4).
  *
  *   What is kept between calls besides the gallery is what
  *   egis_verify_raw_ok needs to corroborate the frame just scored: each
@@ -281,11 +282,11 @@
 #endif
 #endif
 /* egis_verify() stops scoring template frames at the first one over the
-* accept point (the driver only compares the result with the threshold).
-* The accuracy kit builds the Gabor flavour exactly as the driver does, with
-* no define (since its kit_version 5: the raw corroboration below starts at
-* the pose verify recorded, so a build with this at 0, which the kit used
-* until then, makes other decisions than the driver). */
+ * accept point (the driver only compares the result with the threshold).
+ * The accuracy kit builds the Gabor flavour exactly as the driver does, with
+ * no define (since its kit_version 5: the raw corroboration below starts at
+ * the pose verify recorded, so a build with this at 0, which the kit used
+ * until then, makes other decisions than the driver). */
 #ifndef EGIS_CR_VERIFY_EARLY_EXIT
 #define EGIS_CR_VERIFY_EARLY_EXIT 1
 #endif
@@ -334,7 +335,7 @@ typedef struct
   /* The search stopped at the accept point (verify's early exit): the pose
    * above is the FIRST one to clear it, not necessarily the best one, and
    * egis_verify_raw_ok may look further (see there). */
-  int    last_cut;
+  int last_cut;
 #endif
 } CrEntry;
 
@@ -710,30 +711,38 @@ egis_verify_raw_ok (EgisEngine *e, const uint8_t *raw_unfielded, int idx)
       return 1;
     /* verify's early exit recorded the first pose that cleared the accept
      * point, which is often the weakest one that does. Before the accept is
-     * discarded, the raw frame gets the pose identify (and a verify without
-     * the early exit) would have recorded: the best one over the whole
-     * template, looked for again on the flat-fielded frame the verify scored
-     * (still in e->probe). At most two poses are ever asked, both chosen on
-     * the flat-fielded frame alone, never on the raw one.
+     * discarded, the raw frame gets the other poses the flat-fielded frame
+     * the verify scored (still in e->probe) clears the accept point at: every
+     * template frame's, at the pose its evidence was found at (v3 asked only
+     * the best one over the template, EGIS_CR_RAW_ANY_POSE 0). Every pose
+     * asked is chosen on the flat-fielded frame alone, never on the raw one.
      * Measured on the reference unit's nine development sets of 2026-09-27
-     * (egis_match_evidence.c, MEASURED): of the finger-on genuine frames
-     * over the accept point, 92.7 % corroborated at the early-exit pose
-     * alone and 98.7 % with the second pose (egis_cr_tuning_gabor.h,
-     * EGIS_CR_RAW_EVIDENCE), and four genuine presses the early-exit pose
-     * alone rejected are accepted. The case the check exists for stays
-     * closed: behind each of the 6,067 genuine frames over the accept point
-     * (finger-on or not), a featureless raw frame (the session's no-finger
-     * baseline) and the raw frame of another finger corroborated 0 times,
-     * both poses asked (before: 0 of 6,028 each, one pose). The second
-     * pose costs a verify without the early exit, about 170 ms for a
-     * ten-frame template at -O2, on the frames that need it (2 of 120
-     * genuine accepts in the cost bench); no impostor frame of the nine
-     * sets needed it. */
+     * (v3): of the finger-on genuine frames over the accept point, 92.7 %
+     * corroborated at the early-exit pose alone and 98.7 % with the best
+     * one, and four genuine presses the early-exit pose alone rejected were
+     * accepted. v4, on the 16 development sets: 98.0 % of the genuine frames
+     * over the accept point (97.5 % with v3's two poses), and two genuine
+     * presses more than with the two poses; the attacks the check exists for
+     * -- a featureless raw frame, another finger's raw frame, a blurred-out
+     * contact -- corroborated 0 times behind each of those 10,603 frames
+     * (EGIS_CR_RAW_ANY_POSE, egis_cr_tuning_gabor.h). The extra poses cost a
+     * verify without the early exit on the frames that need them; no
+     * impostor frame of the 16 sets clears the accept point, so none of
+     * them ever needed them. */
     if (!en->last_cut)
       return 0;
+#if EGIS_CR_RAW_ANY_POSE
+    for (int i = 0; i < en->nframes; i++)
+      if (ev_match (&en->frames[i], &e->probe, 0, &pose) >= EGIS_CR_ACCEPT_EVIDENCE && pose.valid &&
+          ev_evidence_at (&en->frames[i], &e->rawprobe, &pose) >= EGIS_CR_RAW_EVIDENCE)
+        return 1;
+    (void) fr;
+    return 0;
+#else
     if (entry_best (&e->probe, en, 0, &pose, &fr) < 0 || fr < 0 || !pose.valid)
       return 0;
     return ev_evidence_at (&en->frames[fr], &e->rawprobe, &pose) >= EGIS_CR_RAW_EVIDENCE;
+#endif
   }
 #else
   /* Genuine raw probes against flat-fielded templates measured NCC >= 0.79

@@ -40,11 +40,21 @@
  *      the probe is still turned against the template (a set of EV_RR_N
  *      blocks or more, EV_RR_MIN..EV_RR_MAX deg), the probe is turned by that
  *      much more and the blocks search once more (ROTATION RE-CENTRING).
+ *      When no hypothesis clears the accept point, the EV_AR_H best ones are
+ *      scored once more, moved by EV_AR_STEP px either way ALONG THE RIDGES of
+ *      their overlap; there only a set of EV_AR_N independent blocks or more
+ *      counts (ALONG-RIDGE HYPOTHESES).
  *   3. The evidence W of a set is the sum of its blocks' Fisher-z excess over
- *      EV_TAU; the result is the best W over sets and hypotheses, in
- *      milli-W. The adapter accepts at W >= 2 (egis_engine_cleanroom.c) and
- *      corroborates an accept by the evidence of the un-flat-fielded frame
- *      at the pose the accept was found at (ev_evidence_at; which pose, when
+ *      EV_TAU, each block weighted by the area it adds to the tiling, so
+ *      that W counts INDEPENDENT AREA (ev_grid_weight); a set counts only
+ *      when the area it actually scored -- its blocks' masked overlaps at
+ *      their own shifts -- reaches EV_MIN_SCORED px, and below EV_AREA
+ *      independent blocks its W is scaled down in proportion (THE AREA
+ *      RULE: the accept point rises as the area shrinks). The result is the
+ *      best over sets and hypotheses, in milli-W. The adapter accepts at
+ *      W >= 2 (egis_engine_cleanroom.c) and corroborates an accept by the
+ *      evidence of the un-flat-fielded frame, with the same statistic, at
+ *      the pose the accept was found at (ev_evidence_at; which poses, when
  *      verify stops early, is the adapter's egis_verify_raw_ok).
  *
  * Why the blocks shift independently: on near-parallel ridges the ridge
@@ -96,13 +106,15 @@
  * 35-41 px shift with 510-700 px of masked overlap, where the ridge image
  * matched at NCC 0.97-0.98 and 6-9 blocks reproduced the residual (W up to
  * 5.9) -- and the step-3 prototype's search (+-30 px, 800 px floor, blocks
- * missing the frame's last 6 columns and last row) never scored them. W
- * needs no overlap floor of its own: a smaller overlap holds fewer blocks,
- * so a chance W shrinks with it. The floor only keeps the pose ranking
- * meaningful, at about the least area in which W can reach the accept point
- * at a genuine press's block NCC: three blocks at the 8 px step, 16 x 32 px.
- * The translation range is about the largest shift that still leaves that
- * much (a 70 x 15 px strip at the masks' typical 0.7 x 0.7 coverage).
+ * missing the frame's last 6 columns and last row) never scored them. Until
+ * v4 this said that W needs no overlap floor of its own, because a smaller
+ * overlap holds fewer blocks and a chance W shrinks with it, and that the
+ * floor only keeps the pose ranking meaningful, at about the least area in
+ * which W can reach the accept point at a genuine press's block NCC (three
+ * blocks at the 8 px step, 16 x 32 px). The 2026-09-27 session showed that
+ * wrong: see "Why independent area" and after. The translation range is
+ * about the largest shift that still leaves that much (a 70 x 15 px strip
+ * at the masks' typical 0.7 x 0.7 coverage), and it stays.
  *
  * Why the significance proposals: an NCC over a small overlap reaches a
  * high value by chance far more easily than one over a large overlap, and
@@ -179,67 +191,207 @@
  * the same), and counting such partial blocks at full weight accepted 3 of
  * 480 impostor presses.
  *
+ * v4 (2026-09-28). v3 (commit 743b796) was certified on the reference
+ * unit's session of 2026-09-27 (S4) and FAILED: one false accept -- S4's
+ * right thumb press 0 taken for the left index's fold-1 template, at
+ * 1.083 x the accept point -- and more false rejects than the vendor
+ * matcher on three sets. The false accept had been there since the edge
+ * reach (commit f144f69); every version since accepted it bit for bit. It
+ * was a 6-block set in a 527 px bottom-left corner overlap, and every
+ * impostor near miss over 0.44 x was the same kind of thing: an edge or
+ * corner strip of 483-1012 px, 2-7 blocks. v4 changes what W counts, not
+ * the search, except for one addition (the along-ridge hypotheses). S4 is
+ * development data now, like S1-S3.
+ *
+ * Why independent area: W summed Fisher-z over blocks as if they were
+ * independent. The row of blocks anchored at the bottom border (y0 = 41)
+ * shares 15 of its 16 rows with the regular row above it (y0 = 40), and the
+ * column anchored at the right border (x0 = 54) 10 of its 16 columns with
+ * its neighbour (8 is the grid's own); a set on the border counted those
+ * pixels twice. In the false accept the border row carried W 0.55 of 2.16.
+ * Each block now counts with the share of the tiling it adds beyond its
+ * predecessor, in grid steps (ev_grid_weight): 1 for every block of the
+ * regular grid -- whose 50 % overlap is the unit the accept point was set in
+ * -- 0.75 for the right border column and 0.125 for the bottom border row;
+ * a set's INDEPENDENT AREA is the sum of its blocks' weights. The false
+ * accept's set: W 1.68 over 4.25 independent blocks.
+ *
+ * Why the floor on the area scored: EV_MIN_OVERLAP gated only the
+ * proposals. The re-centring, and the blocks' own +-EV_RS px search, reach
+ * past a proposed pose: the false accept's evidence came from a pose of 527
+ * px of overlap, and from a hypothesis 680 px nominally, whose blocks at the
+ * edge of their search scored 357 template pixels between them. The floor
+ * now also applies where the evidence is computed (EV_MIN_SCORED = the same
+ * 500 px): a set counts only if the union of its blocks' masked overlaps,
+ * at their own shifts, is that large.
+ *
+ * Why the area rule: a small set reaches W 2 by chance far more easily
+ * than a large one -- a few blocks, each the best of 169 shifts, over 8
+ * hypotheses and up to 12 template frames -- and on the 16 development sets
+ * no impostor pair ever formed a set of more than 7 blocks (EV_AREA). So
+ * the evidence a set must carry per independent block rises as the set
+ * shrinks: from EV_AREA (8) independent blocks on the accept point is W 2,
+ * below that W is scaled by a / 8, i.e. a set of 6 needs W 2.67 (a block
+ * NCC of about 0.81 on each), of 4 W 4 (about 0.93). The alternative the
+ * diagnosis offered, a MINIMUM area (a set under 8 counts nothing,
+ * EV_AREA_HARD), was measured the same way and not adopted: it throws away
+ * small-overlap evidence however strong -- the reason the search reaches
+ * edge overlaps at all -- and on the 16 sets it rejects 53 of 960 genuine
+ * presses against the rising accept point's 46, for the same impostor
+ * result at press level (no impostor press above 0; the highest single
+ * impostor frame 0 against 0.72 x) (MEASURED).
+ *
+ * What these three cost: the genuine presses whose evidence lay in exactly
+ * that regime. Of the presses v3 accepted on the 16 development sets, v4
+ * rejects five: S2's left index 7 and 8 (two of the three presses the edge
+ * reach was built for; their best sets: 9 blocks of independent area 5.8,
+ * 434 px scored, W 2.3 on one frame and under 1.8 on the next), S2 -> S4's
+ * left middle 2 (4-5 blocks, 357-443 px, W 1.7-2.1 on every frame -- the
+ * false accept's regime to the digit), S4 -> S2's right index 9 (5-7
+ * blocks, 312-496 px) and S3 -> S2's right thumb 2 (7-block sets at
+ * W 2.0-2.5, on every other frame). The vendor matcher rejects two of them
+ * (S2 left index 8, S4 -> S2 right index 9) as well. All five carry their
+ * evidence on sets of an impostor's size (4-7 blocks, under 8 independent
+ * blocks), the regime the area rule and the floor exist to discount; by
+ * what this statistic measures they are not distinguishable from the false
+ * accept and the near misses.
+ *
+ * Why along-ridge hypotheses: two genuine presses v3 rejected and the
+ * vendor matcher accepts were pure pose-finding failures (the diagnosis of
+ * 2026-09-27, exhaustive scan): S4 -> S3's left middle 8, whose best
+ * hypothesis (10 deg, (17, 6)) fits the ridge image better (NCC 0.79-0.82)
+ * than the fine structure's own pose does (0.72), 10 px along the ridges
+ * at 12.5 deg, (14, -4), where 21-27 blocks reproduce the residual at
+ * W 3.7-5.0 on every frame; and S1 -> S4's right thumb 3, whose fourth
+ * hypothesis lands 13 px and 5 deg off a 12-16-block set at W up to 5.5. On
+ * near-parallel ridges the ridge image cannot tell where along them the
+ * pose is, and the blocks' +-6 px cannot reach 10-14 px. A wider search
+ * lifts impostors (the exhaustive scan took the false accept from 1.083 to
+ * 1.125 x and another impostor press from 0.56 to 0.97 x) -- but only as
+ * sets of 4-6 blocks. So the extra poses are few and admit only large sets:
+ * the EV_AR_H (4) best hypotheses, moved by EV_AR_STEP (12) px either way
+ * along the ridge direction of their overlap (the structure tensor of the
+ * template's ridge image over it, ev_ridge_dir), after every hypothesis has
+ * been scored and none cleared the accept point, counting only sets of
+ * EV_AR_N (10) independent blocks or more. Both presses are accepted.
+ *
+ * Why cells (ev_block_search): the block search is where the extra poses
+ * cost; summing each cell of the grid once per shift and every block from
+ * its cells makes a pose about a third as expensive as summing every block
+ * on its own, with the same result (see EvCells). That pays for the
+ * along-ridge hypotheses and more (COST).
+ *
  * MEASURED (tools/accuracy of the out-of-tree repository, kit_version 5:
  * the engine built as the driver builds it, verify's early exit on; the
  * driver's two-frame + raw rule; the gallery reloaded before every press;
- * the reference unit's sessions S1 = 2026-09-13, S2 = 2026-09-18 and
- * S3 = 2026-09-26, one person, impostors = the same person's other
- * fingers). In session: the kit's two folds of six-press templates, 480
- * impostor presses. Across sessions: twelve-press templates of one
- * session, genuine and impostor probes of the other (240 impostor presses).
- * IN-SAMPLE: every constant here and in the adapter was set on these nine
- * sets or a part of them. S3 was the certification session of commit
- * e27b8bc (which failed it on S1 -> S3 and S3 -> S1, see below) and is
- * development data since.
+ * the reference unit's sessions S1 = 2026-09-13, S2 = 2026-09-18,
+ * S3 = 2026-09-26 and S4 = 2026-09-27, one person, impostors = the same
+ * person's other fingers). In session: the kit's two folds of six-press
+ * templates, 480 impostor presses. Across sessions: twelve-press templates
+ * of one session, genuine and impostor probes of the other (240 impostor
+ * presses). 960 genuine and 4,800 impostor presses in all. IN-SAMPLE: every
+ * constant here and in the adapter was set on these 16 sets or a part of
+ * them. S3 was the certification session of commit e27b8bc (v2) and S4 of
+ * commit 743b796 (v3); both failed, and both are development data since.
  *
- *     set        rejects  accepts  strongest impostor   weakest    vendor
- *                                  press    one frame   genuine    rejects
- *     S1         0 / 60   0 / 480  0.06 x   0.60 x      2.39 x     0 / 60
- *     S2         3 / 60   0 / 480  0.44 x   0.65 x      1.47 x     4 / 60
- *     S3         1 / 60   0 / 480  0.27 x   0.55 x      1.43 x     1 / 60
- *     S1 -> S2   6 / 60   0 / 240  0.27 x   0.99 x      1.22 x     7 / 60
- *     S2 -> S1   0 / 60   0 / 240  0.41 x   0.44 x      1.39 x     0 / 60
- *     S1 -> S3   5 / 60   0 / 240  0.00 x   0.41 x      1.25 x     3 / 60
- *     S3 -> S1   0 / 60   0 / 240  0.30 x   0.50 x      1.42 x     0 / 60
- *     S2 -> S3   0 / 60   0 / 240  0.00 x   0.73 x      1.06 x     2 / 60
- *     S3 -> S2   2 / 60   0 / 240  0.39 x   1.12 x      1.02 x     3 / 60
+ *     set        rejects  accepts  strongest impostor   weakest   rejects
+ *                                  press    one frame   genuine   v3   vendor
+ *     S1         0 / 60   0 / 480  0.00 x   0.11 x      2.39 x     0     0
+ *     S2         5 / 60   0 / 480  0.00 x   0.32 x      1.86 x     3     4
+ *     S3         1 / 60   0 / 480  0.00 x   0.09 x      1.55 x     1     1
+ *     S4         5 / 60   0 / 480  0.00 x   0.30 x      1.41 x     5     4
+ *     S1 -> S2   6 / 60   0 / 240  0.00 x   0.25 x      1.18 x     6     7
+ *     S2 -> S1   0 / 60   0 / 240  0.00 x   0.00 x      1.62 x     0     0
+ *     S1 -> S3   5 / 60   0 / 240  0.00 x   0.18 x      1.25 x     5     3
+ *     S3 -> S1   0 / 60   0 / 240  0.00 x   0.21 x      1.23 x     0     0
+ *     S2 -> S3   0 / 60   0 / 240  0.00 x   0.46 x      1.06 x     0     2
+ *     S3 -> S2   3 / 60   0 / 240  0.00 x   0.72 x      1.28 x     2     3
+ *     S1 -> S4   6 / 60   0 / 240  0.00 x   0.00 x      1.24 x     7     7
+ *     S4 -> S1   0 / 60   0 / 240  0.00 x   0.06 x      1.28 x     0     0
+ *     S2 -> S4   4 / 60   0 / 240  0.00 x   0.18 x      1.13 x     3     3
+ *     S4 -> S2   6 / 60   0 / 240  0.00 x   0.30 x      1.09 x     5     3
+ *     S3 -> S4   3 / 60   0 / 240  0.00 x   0.21 x      1.39 x     3     4
+ *     S4 -> S3   2 / 60   0 / 240  0.00 x   0.18 x      1.46 x     3     1
+ *     pooled    46 / 960  0 / 4800                                43    42
  *
  *     ("press" = the highest threshold at which the driver's rule would
- *     accept an impostor press, as a multiple of the accept point; a
- *     genuine level over the accept point is a lower bound, since verify
- *     stops at the first template frame that clears it.) Commit e27b8bc,
- *     measured the same way: 0 / 3 / 1 / 7 / 0 / 7 / 1 / 1 / 2 rejects in
- *     the same order, 0 accepts. Of the difference, four presses (S1 -> S2
- *     left middle 7, S1 -> S3 right thumb 6, S3 -> S1 right middle 9,
- *     S2 -> S3 left index 11) were lost to the raw corroboration being
- *     asked only at verify's early-exit pose (the adapter's
- *     egis_verify_raw_ok), and one (S1 -> S3 right index 1) to a rotation
- *     the refinement missed (the rotation re-centring above). Two of the
- *     five S1 -> S3 rejects are not the vendor matcher's: right middle 3
- *     and right index 10. Neither carries evidence the driver's rule could
- *     use: right middle 3 lies 25-28 px off every stored press, 626-666 px
- *     of overlap, five eligible blocks, all five in the set, W 1.26-1.76 on
- *     every frame (an exhaustive scan over every rotation, 2.5 deg, and
- *     shift, 2 px: at most 2.06, on one frame); right index 10 reaches
- *     W 1.7-2.2 at two stored presses, never on two frames in a row and
- *     where its raw frame does not reproduce the structure (raw W <= 0.19),
- *     and at most W 1.7 at the third, the only one whose raw frame
- *     corroborates (on its first two frames). Of the S2
- *     rejects, two (left index 0, right thumb 2) show no block evidence
- *     against any stored frame at any rotation and any shift within +-42 px
- *     (W <= 0.83), and the third (right index 9) reaches W 2.1-2.2 only at
- *     a rotation of 110-115 deg, outside the +-90 deg search.
+ *     accept an impostor press, as a multiple of the accept point; "one
+ *     frame" = the highest single impostor frame score; a genuine level over
+ *     the accept point is a lower bound, since verify stops at the first
+ *     template frame that clears it.) No impostor press of the 4,800 reaches
+ *     any level above 0: none has two consecutive corroborated frames with
+ *     any evidence. Of the 56,960 on-gate impostor frames, 127 score above 0,
+ *     5 reach 0.3 x, one 0.72 x (S3 -> S2, the right index template against
+ *     right middle press 5, a 7-block set). v3 on the same sets: pooled
+ *     43 / 960 rejects, 1 / 4800 accepts (S4, 1.083 x), 8 impostor presses at
+ *     0.5 x or more, 19 impostor frames at 0.67 x or more, 7 at 1.0 x or
+ *     more.
  *
- * COST (egis_verify, impostor probes, early exit on, S2 frames, gcc 16,
- * 10-frame templates, one core, median of three runs): 9.4 ms per template
- * frame at -O2 (p95 11.9) and 10.5 ms at -O3 (p95 13.1), against the
- * front-end's 3.8 / 4.4 and 4.2 / 4.7 ms: 2.5 x the mean and 2.7-2.8 x the
- * p95 (commit e27b8bc 2.7 x and 3.0 x; the refinement now resamples the
- * probe once per distinct rotation). A whole impostor verify takes 94 ms
- * on average at -O2 (p95 126). Of an impostor pair's 9.3 ms (-O2), 4.1 go
- * to the envelope search, 2.6 to the refinement of 7.9 hypotheses, 2.5 to
- * the block evidence (4.0 evaluations, both re-centrings included; the
- * rotation step is taken on 26 of 1.05 million impostor hypotheses).
+ *     The bar the owner set (2026-09-27) is not met on these sets: pooled
+ *     false rejects 46 against the vendor matcher's 42. Disputed presses
+ *     (rejected by one matcher only): 11 by v4 only, 7 by the vendor only,
+ *     35 by both. Of the 11: S2 left index 7, S3 -> S2 right thumb 2 and
+ *     S2 -> S4 left middle 2 are the area accounting's (above); S1 -> S3
+ *     right index 10 and S4 -> S2 right thumb 0 are raw-check-bound (large
+ *     sets, 10-18 blocks, at W 1.7-2.7 on the flat-fielded frames, and no
+ *     set at all on the raw frames at those poses); S4's left middle 2 is
+ *     a 4-5-block corner the ridge image never proposes (ridge NCC about
+ *     0, against EV_GFLOOR 0.50) and would be the false accept's regime if
+ *     it did; S1 -> S3 right middle 3, S4 -> S2 right thumb 8 and right
+ *     index 5 and S4 -> S3 right index 10 stay under the accept point even
+ *     under an exhaustive scan of every rotation and shift (0.44-0.87 x
+ *     with v3's statistic, which this one never exceeds at a given pose);
+ *     S3 -> S2 right thumb 0 shows no evidence at any pose the search finds
+ *     (sets of 2-4 blocks, W <= 0.5).
+ *
+ *     Sensitivity, all 16 sets, each new or changed constant moved by
+ *     +-10 % (integers to their neighbours), everything else as shipped:
+ *
+ *       constant           value  pooled rejects  impostor presses  highest
+ *                                  (46 shipped)    accepted / level  frame
+ *       EV_AREA            7.2        46             0 / 0.00 x      0.80 x
+ *                          8.8        47             0 / 0.00 x      0.66 x
+ *       EV_MIN_SCORED      450        46             0 / 0.00 x      0.72 x
+ *                          550        48             0 / 0.00 x      0.72 x
+ *       EV_AR_N            9          45             0 / 0.00 x      0.72 x
+ *                          11         46             0 / 0.00 x      0.72 x
+ *       EV_AR_STEP         10.8       46             0 / 0.00 x      0.72 x
+ *                          13.2       46             0 / 0.00 x      0.72 x
+ *       EV_AR_H            3          47             0 / 0.00 x      0.72 x
+ *                          5          46             0 / 0.00 x      0.72 x
+ *       EV_AREA_HARD       1          53             0 / 0.00 x      0.00 x
+ *       EGIS_CR_RAW_ANY_POSE 0        48             0 / 0.00 x      0.72 x
+ *
+ *     (8.8: S4 -> S2 +1; 550: S4 +1, S4 -> S2 +1; 9: S3 -> S2 -1; EV_AR_H 3
+ *     loses S1 -> S4's right thumb 3; the minimum area: S2, S4, S2 -> S3,
+ *     S1 -> S4 and S4 -> S2 +1 each, S2 -> S4 +2; two poses for the raw
+ *     check: S1 -> S2 and S3 -> S2 +1 each.) No setting accepts an impostor
+ *     press or gives one a level above 0; the ones that move the pooled
+ *     rejects by two or more are the floor at 550 and the minimum area.
+ *
+ * COST (egis_verify as the driver calls it, early exit on; gcc 16, one
+ * core; four twelve-press templates -- S1 right index and left middle
+ * probed with S2, S3 right thumb with S4, S4 left index with S2 -- against
+ * presses 0, 3, 6, 9 of the template finger and presses 0 and 6 of every
+ * other finger, best of three per frame; 3,757 template-frame calls): per
+ * template frame 10.1 ms mean, 13.8 ms p95 at -O2 (11.4 / 14.8 at -O3),
+ * against the shipped matcher's (v0.5.1, the front-end's NCC through the
+ * same adapter call) 4.1 / 5.4 ms (4.5 / 5.8): 2.47 x the mean and 2.58 x
+ * the p95 (-O3: 2.52 x and 2.58 x). v3 on the same sample: 10.0 / 14.2 ms
+ * (2.45 x, 2.64 x). Genuine and impostor probes alike stay under 3 x
+ * (-O2: impostor 10.0 / 13.7 ms against 4.0 / 5.0, genuine 10.8 / 17.0
+ * against 4.4 / 5.9). A whole impostor verify takes 90 ms on average at
+ * -O2. The block search by cells (ev_block_search) takes a pose's evidence
+ * to about a third of what summing every block on its own cost; that
+ * pays for the along-ridge hypotheses. On the first two templates alone
+ * (shipped matcher 3.75 / 4.87 ms): without them 8.2 / 10.6 ms per
+ * template frame; as shipped (the four best, +-12 px) 9.6 / 13.9 ms
+ * (2.57 x, 2.85 x); on all eight hypotheses at +-6 and +-12 px (the first
+ * design) 11.5 / 21.2 ms (3.1 x, 4.4 x); on the four best at +-6 and
+ * +-12 px 10.6 / 16.0 ms (p95 3.3 x). The raw check asks its extra poses
+ * (a verify without the early exit) on 5 of the 172 genuine frames over
+ * the accept point in this sample: 6.1 ms per accepted frame on average,
+ * at most 108 ms (v3: 6.2 and 103).
  *
  * Plain C99, libm only, deterministic, no global or static state: every
  * call's scratch is malloc'd and freed before it returns.
@@ -892,30 +1044,169 @@ ev_rotate_res (const EvProbe *B, double th, EvEvWork *E)
       }
 }
 
-/* masked NCC of template block [x0,x0+BS)x[y0,y0+BS) against the probe
- * shifted by (sx, sy): template (x,y) <-> probe (x - sx, y - sy); *on = the
- * masked pixel count it was computed over. NAN if under 20 px or flat. */
-static double
-ev_block_ncc (const EvEvWork *E, int x0, int y0, int sx, int sy, int *on)
+/* The evidence W at one pose (the probe residual already rotated into E):
+ * every block that has at least half its pixels in the overlap searches its
+ * own shift; 8-connected sets of blocks at or above EV_TAU whose shifts agree
+ * with a neighbour's within EV_EPS px are formed, and a set scores the sum of
+ * atanh(best) - atanh(EV_TAU) over its blocks, each block weighted by the
+ * area it adds to the tiling (INDEPENDENT AREA, ev_grid_weight). What the
+ * set scores counts only over EV_MIN_SCORED px of area actually scored and
+ * under the area rule (ev_area_rule). */
+typedef struct
 {
-  int xa = x0, xb = x0 + EV_BS, ya = y0, yb = y0 + EV_BS;
-  double n = 0, sa = 0, sb = 0, saa = 0, sbb = 0, sab = 0, cov, va, vb;
+  double mx, my;     /* mean block shift of the set, px */
+  int    n;          /* its blocks */
+  double cx, cy;     /* centroid of its blocks' centres, template px */
+  double rot;        /* the rotation, deg, that best explains its blocks'
+                      * shifts (least squares, ev_hyp_evidence); 0 when the
+                      * blocks do not span an area */
+  double ws;         /* its weighted Fisher-z excess, before the area rule */
+} EvSet;
 
-  if (xa < sx)
-    xa = sx;
-  if (xb > EM_W + sx)
-    xb = EM_W + sx;
-  if (ya < sy)
-    ya = sy;
-  if (yb > EM_H + sy)
-    yb = EM_H + sy;
-  if (xb > EM_W)
-    xb = EM_W;
-  if (yb > EM_H)
-    yb = EM_H;
-  *on = 0;
-  if (xa >= xb || ya >= yb)
-    return NAN;
+/* Top-left corner of block column i (row i) along a side of the given
+ * length: every EV_STEP px, the last one anchored at the border. */
+static int
+ev_block_origin (int i, int extent)
+{
+  return i * EV_STEP < extent - EV_BS ? i * EV_STEP : extent - EV_BS;
+}
+
+/* The share of the tiling block column i (row i) owns: the columns (rows) it
+ * adds beyond its predecessor, in grid steps -- 1 for every block of the
+ * regular grid, (70 - 16 - 48) / 8 = 0.75 for the column anchored at the
+ * right border and (57 - 16 - 40) / 8 = 0.125 for the row anchored at the
+ * bottom one, whose pixels the regular neighbour already covers but for 6
+ * columns and 1 row. */
+static double
+ev_grid_weight (int i, int extent)
+{
+  if (i == 0)
+    return 1.0;
+  return (double) (ev_block_origin (i, extent) - ev_block_origin (i - 1, extent)) / EV_STEP;
+}
+
+/* What a set's evidence counts for, given its weighted Fisher-z excess w
+ * and its independent area a (sum of its blocks' grid weights): the accept
+ * point, W 2, holds from EV_AREA independent blocks on and rises as the area
+ * shrinks below that (w a / EV_AREA); with EV_AREA_HARD a smaller set counts
+ * nothing. */
+static double
+ev_area_rule (double w, double a)
+{
+  if (a >= EV_AREA)
+    return w;
+#if EV_AREA_HARD
+  return 0.0;
+#else
+  return w * a / EV_AREA;
+#endif
+}
+
+/* Template pixels the set labelled k0 actually scored: the union over its
+ * blocks of the pixels where the template's mask and the probe's, at the
+ * block's own shift, overlap. */
+static int
+ev_set_pixels (const EvEvWork *E, const int *lab, int k0, const int *ax, const int *ay, int dx, int dy)
+{
+  uint8_t cov[EM_N];
+  int n = 0;
+
+  memset (cov, 0, sizeof cov);
+  for (int k = 0; k < EV_NB; k++)
+    {
+      int x0, y0, sx, sy;
+      if (lab[k] != k0)
+        continue;
+      x0 = ev_block_origin (k % EV_NBX, EM_W);
+      y0 = ev_block_origin (k / EV_NBX, EM_H);
+      sx = dx + ax[k];
+      sy = dy + ay[k];
+      for (int y = y0; y < y0 + EV_BS; y++)
+        for (int x = x0; x < x0 + EV_BS; x++)
+          {
+            int px = x - sx, py = y - sy, i = y * EM_W + x;
+            if (px < 0 || px >= EM_W || py < 0 || py >= EM_H || cov[i])
+              continue;
+            if (E->tm[i] > 0.5f && E->pm[py * EM_W + px] > 0.5f)
+              {
+                cov[i] = 1;
+                n++;
+              }
+          }
+    }
+  return n;
+}
+
+/* The block search by CELLS: the frame cut at every block edge, so that
+ * every block is a union of whole cells (a regular block four of them).
+ * All blocks search the same shifts around the pose, so a cell's sums at a
+ * shift serve every block that covers it; the search costs about a third of
+ * summing every block on its own (as up to v3), with the same result: over
+ * the 2,817 frames of three development sets (S2, S4 -> S2, S3 -> S2, genuine
+ * and the impostor tail) every frame score and raw verdict is identical. */
+#define EV_MAXCUT (2 * (EV_NBX > EV_NBY ? EV_NBX : EV_NBY))
+#define EV_MAXCELL ((2 * EV_NBX - 1) * (2 * EV_NBY - 1))
+typedef struct
+{
+  int nx, ny;                                    /* cells per axis */
+  int cx[EV_MAXCUT], cy[EV_MAXCUT];              /* cuts, 0 .. EM_W / EM_H */
+  int bx0[EV_NBX], bx1[EV_NBX];                  /* block column i: cells bx0..bx1-1 */
+  int by0[EV_NBY], by1[EV_NBY];
+} EvCells;
+
+static int
+ev_cuts (int nb, int extent, int *cut, int *b0, int *b1)
+{
+  int n = 0;
+
+  for (int i = 0; i < nb; i++)
+    for (int e = 0; e < 2; e++)
+      {
+        int v = ev_block_origin (i, extent) + (e ? EV_BS : 0), k = n;
+        int dup = 0;
+        for (int q = 0; q < n && !dup; q++)
+          dup = cut[q] == v;
+        if (dup)
+          continue;
+        while (k > 0 && cut[k - 1] > v)
+          {
+            cut[k] = cut[k - 1];
+            k--;
+          }
+        cut[k] = v;
+        n++;
+      }
+  for (int i = 0; i < nb; i++)
+    for (int q = 0; q < n; q++)
+      {
+        if (cut[q] == ev_block_origin (i, extent))
+          b0[i] = q;
+        if (cut[q] == ev_block_origin (i, extent) + EV_BS)
+          b1[i] = q;
+      }
+  return n - 1;
+}
+
+static void
+ev_cells (EvCells *C)
+{
+  C->nx = ev_cuts (EV_NBX, EM_W, C->cx, C->bx0, C->bx1);
+  C->ny = ev_cuts (EV_NBY, EM_H, C->cy, C->by0, C->by1);
+}
+
+/* The six masked sums of cell [x0,x1) x [y0,y1) against the probe shifted
+ * by (sx, sy) -- template (x,y) <-> probe (x - sx, y - sy), pixels whose
+ * probe point falls outside the frame left out: the overlap count, the two
+ * masked sums, the two masked sums of squares and the cross sum; row by row
+ * in float, the rows added in double. */
+static void
+ev_cell_sums (const EvEvWork *E, int x0, int x1, int y0, int y1, int sx, int sy, double *o)
+{
+  int xa = x0 > sx ? x0 : sx, xb = x1 < EM_W + sx ? x1 : EM_W + sx;
+  int ya = y0 > sy ? y0 : sy, yb = y1 < EM_H + sy ? y1 : EM_H + sy;
+
+  for (int m = 0; m < 6; m++)
+    o[m] = 0;
   for (int y = ya; y < yb; y++)
     {
       /* row pointers at the first pixel used (column xa), none before its
@@ -933,80 +1224,147 @@ ev_block_ncc (const EvEvWork *E, int x0, int y0, int sx, int sy, int *on)
           rsbb += tm[x] * pa2[x];
           rsab += ta[x] * pa[x];
         }
-      n += rn;
-      sa += rsa;
-      sb += rsb;
-      saa += rsaa;
-      sbb += rsbb;
-      sab += rsab;
+      o[0] += rn;
+      o[1] += rsa;
+      o[2] += rsb;
+      o[3] += rsaa;
+      o[4] += rsbb;
+      o[5] += rsab;
     }
-  *on = (int) (n + 0.5);
-  if (n < 20)
-    return NAN;
-  cov = sab - sa * sb / n;
-  va = saa - sa * sa / n;
-  vb = sbb - sb * sb / n;
-  if (va <= 1e-12 || vb <= 1e-12)
-    return NAN;
-  return cov / sqrt (va * vb);
 }
 
-/* The evidence W at one pose (the probe residual already rotated into E):
- * every block that has at least half its pixels in the overlap searches its
- * own shift; the best 8-connected set of blocks at or above EV_TAU whose
- * shifts agree with a neighbour's within EV_EPS px scores the sum of
- * atanh(best) - atanh(EV_TAU) over its blocks. */
-typedef struct
-{
-  double mx, my;     /* mean block shift of the best set, px */
-  int    n;          /* its blocks */
-  double cx, cy;     /* centroid of its blocks' centres, template px */
-  double rot;        /* the rotation, deg, that best explains its blocks'
-                      * shifts (least squares, ev_hyp_evidence); 0 when the
-                      * blocks do not span an area */
-} EvSet;
-
 static double
-ev_evidence (const EvEvWork *E, int dx, int dy, EvSet *set)
+ev_cell_count (const EvEvWork *E, int x0, int x1, int y0, int y1, int sx, int sy)
 {
-  double best[EV_NB];
-  int ax[EV_NB], ay[EV_NB], ok[EV_NB], lab[EV_NB], stack[EV_NB];
-  int need = (EV_BS * EV_BS) / 2;
-  double wbest = 0;
-  EvSet bs = { 0.0, 0.0, 0, 0.0, 0.0, 0.0 };
+  double o[6];
 
+  ev_cell_sums (E, x0, x1, y0, y1, sx, sy, o);
+  return o[0];
+}
+
+/* Every block with at least half its pixels in the overlap at the pose
+ * searches its own shift (+-EV_RS px) for its best residual NCC: best[],
+ * ax[], ay[], ok[] per block, wgt[] its grid weight. Returns how many blocks
+ * searched; *a_hit receives the independent area of those at or above
+ * EV_TAU. When the eligible blocks' independent area is under amin, nothing
+ * is searched (0 is returned). */
+static int
+ev_block_search (const EvEvWork *E, int dx, int dy, double amin, double *wgt, double *best,
+                 int *ax, int *ay, int *ok, double *a_hit)
+{
+  EvCells C;
+  int need = (EV_BS * EV_BS) / 2, nel = 0, nnc = 0, ncell;
+  int elig[EV_NB], need_cell[EV_MAXCELL], cell_list[EV_MAXCELL];
+  double cn[EV_MAXCELL], a_elig = 0;
+
+  *a_hit = 0;
+  ev_cells (&C);
+  ncell = C.nx * C.ny;
+  /* eligibility at the pose itself, from every cell's overlap count */
+  for (int c = 0; c < ncell; c++)
+    {
+      cn[c] = ev_cell_count (E, C.cx[c % C.nx], C.cx[c % C.nx + 1], C.cy[c / C.nx], C.cy[c / C.nx + 1], dx, dy);
+      need_cell[c] = 0;
+    }
   for (int j = 0; j < EV_NBY; j++)
     for (int i = 0; i < EV_NBX; i++)
       {
-        int k = j * EV_NBX + i, on;
-        int x0 = i * EV_STEP < EM_W - EV_BS ? i * EV_STEP : EM_W - EV_BS;
-        int y0 = j * EV_STEP < EM_H - EV_BS ? j * EV_STEP : EM_H - EV_BS;
+        int k = j * EV_NBX + i;
+        double on = 0;
         ok[k] = 0;
         best[k] = -2;
         ax[k] = ay[k] = 0;
-        ev_block_ncc (E, x0, y0, dx, dy, &on);
-        if (on < need)
+        wgt[k] = ev_grid_weight (i, EM_W) * ev_grid_weight (j, EM_H);
+        for (int cy = C.by0[j]; cy < C.by1[j]; cy++)
+          for (int cx = C.bx0[i]; cx < C.bx1[i]; cx++)
+            on += cn[cy * C.nx + cx];
+        if ((int) (on + 0.5) < need)
           continue;
-        for (int yy = -EV_RS; yy <= EV_RS; yy++)
-          for (int xx = -EV_RS; xx <= EV_RS; xx++)
-            {
-              int on2;
-              double v = ev_block_ncc (E, x0, y0, dx + xx, dy + yy, &on2);
-              if (on2 >= need && v == v && v > best[k])
-                {
-                  best[k] = v;
-                  ax[k] = xx;
-                  ay[k] = yy;
-                }
-            }
-        ok[k] = 1;
+        elig[nel++] = k;
+        a_elig += wgt[k];
+        for (int cy = C.by0[j]; cy < C.by1[j]; cy++)
+          for (int cx = C.bx0[i]; cx < C.bx1[i]; cx++)
+            need_cell[cy * C.nx + cx] = 1;
       }
+  if (a_elig < amin)
+    return 0;
+  for (int c = 0; c < ncell; c++)
+    if (need_cell[c])
+      cell_list[nnc++] = c;
+  /* every shift of the window once for every cell the eligible blocks
+   * cover; a block's sums are its cells' */
+  for (int yy = -EV_RS; yy <= EV_RS; yy++)
+    for (int xx = -EV_RS; xx <= EV_RS; xx++)
+      {
+        double cs[EV_MAXCELL][6];
+        for (int q = 0; q < nnc; q++)
+          {
+            int c = cell_list[q];
+            ev_cell_sums (E, C.cx[c % C.nx], C.cx[c % C.nx + 1], C.cy[c / C.nx], C.cy[c / C.nx + 1],
+                          dx + xx, dy + yy, cs[c]);
+          }
+        for (int e = 0; e < nel; e++)
+          {
+            int k = elig[e], i = k % EV_NBX, j = k / EV_NBX;
+            double t[6] = { 0, 0, 0, 0, 0, 0 }, cov, va, vb, v;
+            for (int cy = C.by0[j]; cy < C.by1[j]; cy++)
+              for (int cx = C.bx0[i]; cx < C.bx1[i]; cx++)
+                for (int m = 0; m < 6; m++)
+                  t[m] += cs[cy * C.nx + cx][m];
+            /* the shifted block must still have half its pixels in the
+             * overlap; under 20 px or flat it has no NCC */
+            if ((int) (t[0] + 0.5) < need || t[0] < 20)
+              continue;
+            cov = t[5] - t[1] * t[2] / t[0];
+            va = t[3] - t[1] * t[1] / t[0];
+            vb = t[4] - t[2] * t[2] / t[0];
+            if (va <= 1e-12 || vb <= 1e-12)
+              continue;
+            v = cov / sqrt (va * vb);
+            if (v > best[k])
+              {
+                best[k] = v;
+                ax[k] = xx;
+                ay[k] = yy;
+              }
+          }
+      }
+  for (int e = 0; e < nel; e++)
+    {
+      ok[elig[e]] = 1;
+      if (best[elig[e]] >= EV_TAU)
+        *a_hit += wgt[elig[e]];
+    }
+  return nel;
+}
+
+/* Returns the best counted evidence over the sets (ev_area_rule; a set of
+ * less than amin independent blocks, or under EV_MIN_SCORED px of scored
+ * area, counts nothing). *set (may be NULL) receives the set that steers the
+ * search -- the one with the highest weighted excess, whatever the area
+ * rule says of it; empty when amin > 0 and no set can reach amin. */
+static double
+ev_evidence (const EvEvWork *E, int dx, int dy, double amin, EvSet *set)
+{
+  double best[EV_NB], wgt[EV_NB];
+  int ax[EV_NB], ay[EV_NB], ok[EV_NB], lab[EV_NB], stack[EV_NB];
+  double wbest = 0, sbest = 0, a_hit = 0;
+  EvSet bs = { 0.0, 0.0, 0, 0.0, 0.0, 0.0, 0.0 };
+
+  /* nothing searched, or (amin > 0) the blocks at or above EV_TAU cannot
+   * make a set of amin independent blocks: nothing counts, nothing steers */
+  if (ev_block_search (E, dx, dy, amin, wgt, best, ax, ay, ok, &a_hit) == 0 || a_hit < amin)
+    {
+      if (set)
+        *set = bs;
+      return 0.0;
+    }
   for (int k = 0; k < EV_NB; k++)
     lab[k] = -1;
   for (int k0 = 0; k0 < EV_NB; k0++)
     {
       int sp = 0, cnt = 0, sx = 0, sy = 0;
-      double w = 0, su = 0, sv = 0, suu = 0, sxv = 0, syu = 0;
+      double w = 0, a = 0, su = 0, sv = 0, suu = 0, sxv = 0, syu = 0, wc;
       if (!ok[k0] || best[k0] < EV_TAU || lab[k0] >= 0)
         continue;
       lab[k0] = k0;
@@ -1015,9 +1373,10 @@ ev_evidence (const EvEvWork *E, int dx, int dy, EvSet *set)
         {
           int k = stack[--sp], y = k / EV_NBX, x = k % EV_NBX;
           /* the block's centre, template px */
-          double u = (x * EV_STEP < EM_W - EV_BS ? x * EV_STEP : EM_W - EV_BS) + (EV_BS - 1) / 2.0;
-          double v = (y * EV_STEP < EM_H - EV_BS ? y * EV_STEP : EM_H - EV_BS) + (EV_BS - 1) / 2.0;
-          w += atanh (best[k] < 0.999 ? best[k] : 0.999) - atanh (EV_TAU);
+          double u = ev_block_origin (x, EM_W) + (EV_BS - 1) / 2.0;
+          double v = ev_block_origin (y, EM_H) + (EV_BS - 1) / 2.0;
+          w += wgt[k] * (atanh (best[k] < 0.999 ? best[k] : 0.999) - atanh (EV_TAU));
+          a += wgt[k];
           cnt++;
           sx += ax[k];
           sy += ay[k];
@@ -1042,13 +1401,14 @@ ev_evidence (const EvEvWork *E, int dx, int dy, EvSet *set)
                   }
               }
         }
-      if (w > wbest)
+      if (w > sbest)
         {
           /* a small rotation r of the probe about the pose moves the block
            * at (u, v) by about r (v, -u) on top of a common shift; its least
            * squares estimate from the set's shifts */
           double spread = suu - (su * su + sv * sv) / cnt;
-          wbest = w;
+          sbest = w;
+          bs.ws = w;
           bs.n = cnt;
           bs.mx = (double) sx / cnt;
           bs.my = (double) sy / cnt;
@@ -1056,6 +1416,9 @@ ev_evidence (const EvEvWork *E, int dx, int dy, EvSet *set)
           bs.cy = sv / cnt;
           bs.rot = spread > 1e-9 ? ((sxv - sx * sv / cnt) - (syu - sy * su / cnt)) / spread * 180.0 / EV_PI : 0.0;
         }
+      wc = a >= amin ? ev_area_rule (w, a) : 0.0;
+      if (wc > wbest && ev_set_pixels (E, lab, k0, ax, ay, dx, dy) >= EV_MIN_SCORED)
+        wbest = wc;
     }
   if (set)
     *set = bs;
@@ -1072,29 +1435,39 @@ ev_evidence (const EvEvWork *E, int dx, int dy, EvSet *set)
  * the probe residual is rotated by that much more, the pose moved so that
  * the set's centroid keeps its place in the probe, and the evidence looked
  * for again. Each time the higher W is kept. *orot, *odx, *ody receive the
- * pose it was found at. */
+ * pose it was found at. The steps follow the set that steers the search
+ * (ev_evidence), not only one that counts. Evidence counts only from amin
+ * independent blocks on (0: the area rule alone). *turned is set when E was
+ * left rotated by more than rot. */
 static double
-ev_hyp_evidence (EvEvWork *E, const EvProbe *p, double rot, int dx, int dy,
-                 double *orot, int *odx, int *ody)
+ev_hyp_evidence (EvEvWork *E, const EvProbe *p, double rot, int dx, int dy, double amin,
+                 double *orot, int *odx, int *ody, int *turned)
 {
   EvSet st;
-  double w = ev_evidence (E, dx, dy, &st);
+  double w = ev_evidence (E, dx, dy, amin, &st);
+  int sdx = dx, sdy = dy;                        /* the pose the search is at */
 
   *orot = rot;
   *odx = dx;
   *ody = dy;
+  *turned = 0;
 #if EV_RC_N > 0
   if (st.n >= EV_RC_N && hypot (st.mx, st.my) >= EV_RC_MIN)
     {
       int rx = dx + (int) lround (st.mx), ry = dy + (int) lround (st.my);
       EvSet s2;
-      double w2 = ev_evidence (E, rx, ry, &s2);
+      double w2 = ev_evidence (E, rx, ry, amin, &s2);
       if (w2 > w)
         {
           w = w2;
-          st = s2;
           *odx = rx;
           *ody = ry;
+        }
+      if (s2.ws > st.ws)
+        {
+          st = s2;
+          sdx = rx;
+          sdy = ry;
         }
     }
 #endif
@@ -1106,12 +1479,13 @@ ev_hyp_evidence (EvEvWork *E, const EvProbe *p, double rot, int dx, int dy,
        * point is d' = q - R(-r) (q - d - a) */
       double r = st.rot * EV_PI / 180.0, cr = cos (r), sr = sin (r);
       double qx = st.cx - (EM_W - 1) / 2.0, qy = st.cy - (EM_H - 1) / 2.0;
-      double px = qx - *odx - st.mx, py = qy - *ody - st.my;
+      double px = qx - sdx - st.mx, py = qy - sdy - st.my;
       int nx = (int) lround (qx - (cr * px + sr * py));
       int ny = (int) lround (qy - (-sr * px + cr * py));
       double w3;
       ev_rotate_res (p, (rot + st.rot) * EV_PI / 180.0, E);
-      w3 = ev_evidence (E, nx, ny, NULL);
+      *turned = 1;
+      w3 = ev_evidence (E, nx, ny, amin, NULL);
       if (w3 > w)
         {
           w = w3;
@@ -1122,6 +1496,63 @@ ev_hyp_evidence (EvEvWork *E, const EvProbe *p, double rot, int dx, int dy,
     }
 #endif
   return w;
+}
+
+#if EV_AR_N > 0
+/* The ridge direction over the overlap at a pose (the probe residual's mask
+ * already rotated into E): the structure tensor of the template's ridge image
+ * over the template pixels the pose overlaps; the ridges run across its
+ * dominant gradient. (*ux, *uy) is that direction, a unit vector in template
+ * px; 0 when the overlap holds no gradient. */
+static int
+ev_ridge_dir (const EvFrame *t, const EvEvWork *E, int dx, int dy, double *ux, double *uy)
+{
+  const double *g = t->f.img;
+  double gxx = 0, gyy = 0, gxy = 0, th;
+
+  for (int y = 1; y < EM_H - 1; y++)
+    for (int x = 1; x < EM_W - 1; x++)
+      {
+        int i = y * EM_W + x, px = x - dx, py = y - dy;
+        double gx, gy;
+        if (px < 0 || px >= EM_W || py < 0 || py >= EM_H)
+          continue;
+        if (!t->f.mask[i] || E->pm[py * EM_W + px] < 0.5f)
+          continue;
+        gx = (g[i + 1] - g[i - 1]) * 0.5;
+        gy = (g[i + EM_W] - g[i - EM_W]) * 0.5;
+        gxx += gx * gx;
+        gyy += gy * gy;
+        gxy += gx * gy;
+      }
+  if (gxx + gyy <= 1e-12)
+    return 0;
+  th = 0.5 * atan2 (2.0 * gxy, gxx - gyy);      /* the dominant gradient */
+  *ux = -sin (th);
+  *uy = cos (th);
+  return 1;
+}
+#endif
+
+/* Keep the running maximum of a frame pair's evidence and where it was found
+ * (the first pose at which the rounded maximum was reached). */
+static void
+ev_note (double w, double orot, int odx, int ody, double *wmax, int *best, EvPose *bp)
+{
+  int ev;
+
+  if (w > *wmax)
+    *wmax = w;
+  ev = (int) lround (*wmax * 1000.0);
+  if (ev > *best || !bp->valid)
+    {
+      if (ev > *best)
+        *best = ev;
+      bp->rot_deg = orot;
+      bp->dx = odx;
+      bp->dy = ody;
+      bp->valid = 1;
+    }
 }
 
 /* ---- public ------------------------------------------------------------------ */
@@ -1146,33 +1577,50 @@ ev_match (const EvFrame *t, const EvProbe *p, int stop_at, EvPose *pose)
   nh = ev_hyps (t, p, H, W);
   if (nh >= 0)
     {
+      int nsc = 0;                                 /* hypotheses scored */
+#if EV_AR_N <= 0
+      (void) nsc;
+#endif
       best = 0;
       ev_template_res (t, E);
       for (int k = 0; k < nh; k++)
         {
-          int ev, odx, ody;
-          double orot;
+          int odx, ody, turned;
+          double orot, w;
           if (H[k].s < EV_GFLOOR)
             break;                               /* sorted: the rest are lower */
+          nsc++;
           ev_rotate_res (p, H[k].rot * EV_PI / 180.0, E);
-          {
-            double w = ev_hyp_evidence (E, p, H[k].rot, H[k].dx, H[k].dy, &orot, &odx, &ody);
-            if (w > wmax)
-              wmax = w;
-          }
-          ev = (int) lround (wmax * 1000.0);
-          if (ev > best || !bp.valid)
-            {
-              if (ev > best)
-                best = ev;
-              bp.rot_deg = orot;
-              bp.dx = odx;
-              bp.dy = ody;
-              bp.valid = 1;
-            }
+          w = ev_hyp_evidence (E, p, H[k].rot, H[k].dx, H[k].dy, 0.0, &orot, &odx, &ody, &turned);
+          ev_note (w, orot, odx, ody, &wmax, &best, &bp);
           if (stop_at > 0 && best >= stop_at)
             break;
         }
+#if EV_AR_N > 0
+      /* ALONG-RIDGE hypotheses, once every hypothesis has been scored and none
+       * cleared stop_at: the EV_AR_H best ones, moved by EV_AR_STEP px and by
+       * twice that both ways along the ridges of their overlap, where the
+       * ridge image cannot tell the pose; what they find counts only from
+       * EV_AR_N independent blocks on */
+      for (int k = 0; k < nsc && k < EV_AR_H && !(stop_at > 0 && best >= stop_at); k++)
+        {
+          double ux, uy;
+          ev_rotate_res (p, H[k].rot * EV_PI / 180.0, E);
+          if (!ev_ridge_dir (t, E, H[k].dx, H[k].dy, &ux, &uy))
+            continue;
+          for (int j = 0; j < 2 && !(stop_at > 0 && best >= stop_at); j++)
+            {
+              double d = j ? -EV_AR_STEP : EV_AR_STEP;
+              int odx, ody, turned;
+              double orot, w;
+              w = ev_hyp_evidence (E, p, H[k].rot, H[k].dx + (int) lround (d * ux),
+                                   H[k].dy + (int) lround (d * uy), EV_AR_N, &orot, &odx, &ody, &turned);
+              ev_note (w, orot, odx, ody, &wmax, &best, &bp);
+              if (turned)
+                ev_rotate_res (p, H[k].rot * EV_PI / 180.0, E);
+            }
+        }
+#endif
     }
   free (W);
   free (E);
@@ -1194,7 +1642,7 @@ ev_evidence_at (const EvFrame *t, const EvProbe *p, const EvPose *pose)
     return -1;
   ev_template_res (t, E);
   ev_rotate_res (p, pose->rot_deg * EV_PI / 180.0, E);
-  w = ev_evidence (E, pose->dx, pose->dy, NULL);
+  w = ev_evidence (E, pose->dx, pose->dy, 0.0, NULL);
   free (E);
   return (int) lround (w * 1000.0);
 }

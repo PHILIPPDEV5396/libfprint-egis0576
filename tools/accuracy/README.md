@@ -728,5 +728,16 @@ Gabor flavour rejects L-Mittel presses 1 and 8, R-Mittel 3 and R-Zeige 10 and
 R-Zeige 11. These are the numbers the cross-session harness of
 the v3 validation produced before it was lost with a wiped `/tmp`; this tool,
 rebuilt into the kit, reproduces every one of them exactly, and
-`score-gabor` built from this tree is byte-identical to the one built from
+`score-gabor` built from `44ea7a3` is byte-identical to the one built from
 `743b796`.
+
+**v4 (2026-09-28).** The table above is v3's. `score-gabor` built from this
+tree is the identity-gate v4 engine (independent-area evidence, the area rule,
+along-ridge hypotheses, the raw frame asked at every accept-level pose). On the
+16 development sets -- the reference unit's four sessions S1-S4 (2026-09-13,
+-18, -26, -27) in session and across them in all twelve directions, 960
+genuine and 4,800 impostor presses -- it rejects 46 genuine presses against the
+vendor matcher's 42 and v3's 43, accepts no impostor press (v3: 1), and no
+impostor press reaches any level above 0 (v3: eight at 0.5x or more). Per set,
+and what the rejects are: `driver/egis0576/gabor/egis_match_evidence.c`,
+MEASURED.

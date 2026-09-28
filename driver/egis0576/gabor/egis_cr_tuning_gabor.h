@@ -120,3 +120,24 @@
 #ifndef EGIS_CR_RAW_EVIDENCE
 #define EGIS_CR_RAW_EVIDENCE 750
 #endif
+/* Which poses the raw frame is asked at (egis_verify_raw_ok), since v4
+ * (2026-09-28): verify's early-exit pose; when that fails, ANY template
+ * frame whose flat-fielded evidence clears the accept point, at the pose
+ * that evidence was found at (until then only the best one over the
+ * template, which is one of them). 0 restores v3's two poses. Measured on
+ * the 16 development sets (egis_match_evidence.c, MEASURED): the new
+ * statistic lowers raw corroboration (genuine frames over the accept point
+ * corroborated: v3 10,507 of 10,644 = 98.7 %, v4 with two poses 10,338 of
+ * 10,603 = 97.5 %, v4 with any pose 10,390 = 98.0 %), and any pose
+ * recovers two genuine presses (S1 -> S2 left index 7, S3 -> S2 right index
+ * 10) that the two poses lose. The attacks the check exists for were
+ * re-measured behind every one of the 10,603 genuine flat-fielded frames
+ * over the accept point, the raw frame substituted by: the probe session's
+ * no-finger baseline (featureless), the raw frame of another finger, and
+ * the genuine raw frame with its ridges blurred away (two 9 x 9 box
+ * filters: a featureless contact of the finger's own shape, what a
+ * poisoned baseline leaves in the raw bytes). Each corroborated 0 times,
+ * as under v3 (0 of 10,644 each) and v4 with two poses (0 of 10,603). */
+#ifndef EGIS_CR_RAW_ANY_POSE
+#define EGIS_CR_RAW_ANY_POSE 1
+#endif

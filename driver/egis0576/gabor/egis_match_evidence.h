@@ -37,7 +37,9 @@
 /* ---- pose hypotheses --------------------------------------------------------
  * Where a constant says "2026-09-18", it was set on the reference unit's
  * session of that day (tools/accuracy of the out-of-tree repository), the
- * only data any constant of this file was tuned on.
+ * only data the constants of this file were tuned on until v2; the
+ * rotation re-centring's were set on the nine development sets of
+ * 2026-09-27 and v4's on the 16 of 2026-09-28, as each says.
  *
  * Rotation half-range and coarse step of the envelope search, deg. +-90 was
  * chosen as the full practical placement range, not measured on 2026-09-18
@@ -101,13 +103,14 @@
 #define EV_GFLOOR 0.50
 #endif
 /* A pose with less masked overlap, px, is not a hypothesis. Not the
- * front-end's 800 (EG_MIN_OVERLAP in egis_match_gabor.c): the evidence
- * needs no floor of its own -- a smaller overlap holds fewer blocks -- and
- * this one only keeps the pose ranking meaningful, at about the least area
- * in which W can reach the accept point at a genuine press's block NCC
+ * front-end's 800 (EG_MIN_OVERLAP in egis_match_gabor.c): about the least
+ * area in which W can reach the accept point at a genuine press's block NCC
  * (three blocks at the 8 px step, 16 x 32 px). 2026-09-18: 800 -> 500
  * recovers three genuine presses at 510-700 px; at 550 one of them is lost
- * again, at 450 nothing changes. */
+ * again, at 450 nothing changes. Until v4 this said the evidence needs no
+ * floor of its own; since v4 the same floor applies to the area a set
+ * actually scores too (EV_MIN_SCORED), and two of those three presses are
+ * rejected again (egis_match_evidence.c, "What these three cost"). */
 #ifndef EV_MIN_OVERLAP
 #define EV_MIN_OVERLAP 500
 #endif
@@ -209,6 +212,70 @@
 #endif
 #ifndef EV_RR_MAX
 #define EV_RR_MAX 10.0
+#endif
+
+/* ---- v4: independent area, the area rule, along-ridge hypotheses ---------
+ * Why each exists: egis_match_evidence.c, "Why independent area", "Why the
+ * floor on the area scored", "Why the area rule", "Why along-ridge
+ * hypotheses". "The 16 development sets" are the reference unit's four
+ * sessions (2026-09-13, -18, -26, -27) in session and across them in all
+ * twelve directions, the driver's rule and setting; every value below was
+ * chosen or checked on them, so every figure is IN-SAMPLE. Sensitivity
+ * (+-10 %, all 16 sets): egis_match_evidence.c, MEASURED.
+ *
+ * EV_AREA: independent blocks (a set's grid weights, ev_grid_weight) from
+ * which on the accept point is W 2 (EGIS_CR_ACCEPT_EVIDENCE). A set of less
+ * independent area a counts w a / EV_AREA, i.e. its accept point rises as
+ * 2 EV_AREA / a. 8 = one block above the largest set any impostor pair
+ * formed on the 16 development sets: 7 blocks, under v3's full search of
+ * all 464,760 impostor frame pairs (W >= 1) and under this search on the 308
+ * impostor presses whose frames reached W 0.6 under v3 (independent area
+ * under 7). So no set of an impostor's size reaches the accept point at the
+ * per-block NCC that suffices from 8 blocks on. Not tuned. EV_AREA_HARD 1
+ * makes it a minimum area instead (a smaller set counts nothing): see "Why
+ * the area rule" for why not. */
+#ifndef EV_AREA
+#define EV_AREA 8.0
+#endif
+#ifndef EV_AREA_HARD
+#define EV_AREA_HARD 0
+#endif
+/* EV_MIN_SCORED: template pixels a set must actually score -- the union
+ * over its blocks of the pixels where the template's mask and the probe's,
+ * at the block's own shift, overlap -- for its evidence to count. It is
+ * EV_MIN_OVERLAP, applied where the evidence is computed instead of at the
+ * proposed pose (the same argument: about the least area of three blocks at
+ * the 8 px step, 16 x 32 px); not tuned. */
+#ifndef EV_MIN_SCORED
+#define EV_MIN_SCORED EV_MIN_OVERLAP
+#endif
+/* Along-ridge hypotheses: once every hypothesis has been scored and none
+ * cleared the accept point, the EV_AR_H best ones (by refined ridge-image
+ * NCC) are moved by +-EV_AR_STEP px along the ridges of their overlap and
+ * scored again; what they find counts only from EV_AR_N independent blocks
+ * on. EV_AR_N 0 disables them.
+ *   EV_AR_N 10     midway between the largest impostor set (7 blocks) and
+ *                  the smallest set of the genuine search failures they are
+ *                  for (12 blocks; 15-27 at the fine structure's pose).
+ *   EV_AR_STEP 12  with the blocks' own +-EV_RS (6) px search, the moved
+ *                  pose covers 6-18 px along the ridges on either side and
+ *                  the hypothesis itself 0-6: the fine structure of the
+ *                  genuine presses this is for sits 10-14 px along the
+ *                  ridges from the hypothesis. +-6 as well (the first
+ *                  design, +-6 and +-12) re-searches half of what the
+ *                  hypothesis already searched and costs twice the time.
+ *   EV_AR_H 4      the fourth-ranked hypothesis is the one that lands 13 px
+ *                  off on the second of those presses (egis_match_evidence.c,
+ *                  "Why along-ridge hypotheses"); what they cost is in
+ *                  COST there. */
+#ifndef EV_AR_N
+#define EV_AR_N 10
+#endif
+#ifndef EV_AR_H
+#define EV_AR_H 4
+#endif
+#ifndef EV_AR_STEP
+#define EV_AR_STEP 12.0
 #endif
 
 /* The blocks tile the WHOLE frame: every EV_STEP px from the top-left corner,
