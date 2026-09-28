@@ -741,3 +741,13 @@ vendor matcher's 42 and v3's 43, accepts no impostor press (v3: 1), and no
 impostor press reaches any level above 0 (v3: eight at 0.5x or more). Per set,
 and what the rejects are: `driver/egis0576/gabor/egis_match_evidence.c`,
 MEASURED.
+
+**v4.1 (2026-09-28).** `score-gabor` built from this tree is v4 with one
+change to what the evidence counts: a border block's independent-area weight
+depends on its set (the area it adds to the union of the set's blocks) instead
+of its grid position. On the same 16 sets it makes the same decision on every
+one of the 5,760 presses as v4 -- 46 genuine presses rejected against the
+vendor matcher's 42, no impostor press accepted or at any level above 0 --
+and the kit's `cross.py` and a per-frame run agree on every press. Why it
+changes nothing there, and the frame-level differences:
+`driver/egis0576/gabor/egis_match_evidence.c`, MEASURED.

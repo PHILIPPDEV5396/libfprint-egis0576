@@ -137,7 +137,13 @@
  * the genuine raw frame with its ridges blurred away (two 9 x 9 box
  * filters: a featureless contact of the finger's own shape, what a
  * poisoned baseline leaves in the raw bytes). Each corroborated 0 times,
- * as under v3 (0 of 10,644 each) and v4 with two poses (0 of 10,603). */
+ * as under v3 (0 of 10,644 each) and v4 with two poses (0 of 10,603).
+ * v4.1: the same 10,603 frames, the same 10,390 corroborated, 0 for each
+ * substitution (and for that blur with the sensor's fixed pattern added
+ * back); the template frames before the one verify stopped at are no
+ * longer searched again (the same verdict on every one of the 11,428
+ * genuine frames), which takes the path where the raw frame fails from 142
+ * to 134 ms on average at -O2, its worst case (206 ms) unchanged. */
 #ifndef EGIS_CR_RAW_ANY_POSE
 #define EGIS_CR_RAW_ANY_POSE 1
 #endif

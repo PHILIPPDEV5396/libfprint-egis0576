@@ -732,7 +732,13 @@ egis_verify_raw_ok (EgisEngine *e, const uint8_t *raw_unfielded, int idx)
     if (!en->last_cut)
       return 0;
 #if EGIS_CR_RAW_ANY_POSE
-    for (int i = 0; i < en->nframes; i++)
+    /* The template frames before last_frame are skipped: verify scored each
+     * of them and none reached the accept point, so ev_match never stopped
+     * early on them and did what the full search here would do -- none of
+     * them clears it here either. The same verdicts, with last_frame fewer
+     * full searches (each costs about what verify spends on a frame without
+     * its early exit) where the raw frame does not corroborate. */
+    for (int i = en->last_frame; i < en->nframes; i++)
       if (ev_match (&en->frames[i], &e->probe, 0, &pose) >= EGIS_CR_ACCEPT_EVIDENCE && pose.valid &&
           ev_evidence_at (&en->frames[i], &e->rawprobe, &pose) >= EGIS_CR_RAW_EVIDENCE)
         return 1;

@@ -45,9 +45,10 @@
  *      their overlap; there only a set of EV_AR_N independent blocks or more
  *      counts (ALONG-RIDGE HYPOTHESES).
  *   3. The evidence W of a set is the sum of its blocks' Fisher-z excess over
- *      EV_TAU, each block weighted by the area it adds to the tiling, so
- *      that W counts INDEPENDENT AREA (ev_grid_weight); a set counts only
- *      when the area it actually scored -- its blocks' masked overlaps at
+ *      EV_TAU, each block weighted by the area it adds to the union of the
+ *      set's blocks, so that W counts INDEPENDENT AREA (ev_block_weight;
+ *      v4.1 weighs set by set what v4 fixed by grid position); a set counts
+ *      only when the area it actually scored -- its blocks' masked overlaps at
  *      their own shifts -- reaches EV_MIN_SCORED px, and below EV_AREA
  *      independent blocks its W is scaled down in proportion (THE AREA
  *      RULE: the accept point rises as the area shrinks). The result is the
@@ -216,6 +217,27 @@
  * a set's INDEPENDENT AREA is the sum of its blocks' weights. The false
  * accept's set: W 1.68 over 4.25 independent blocks.
  *
+ * v4.1 (2026-09-28): those weights were FIXED by grid position -- a border
+ * block counted 0.75 or 0.125 whether or not the regular block whose pixels
+ * it repeats was in the set, so a border block that repeated nothing was
+ * discounted too. Now each block counts the area it adds to the UNION of its
+ * set's blocks (ev_block_weight): along each axis, row by row (column by
+ * column), the columns (rows) it adds beyond the nearest block of the set
+ * before it that covers that row, in grid steps, at most 1. Every block of
+ * the regular grid still counts 1; a border block counts v4's 0.75 or 0.125
+ * where the set holds its regular neighbour, 1 where the set holds nothing
+ * before it, and in between by the share of its rows (columns) the set's
+ * blocks before it cover; with every block in the set it is v4's weight
+ * exactly. The pixels the false accept counted twice are still counted
+ * once: where the neighbour is in the set, nothing changes. What it does on
+ * the 16 development sets is in MEASURED: nothing to a decision. It raises
+ * some genuine frames that are accepted anyway; in the sets that carry the
+ * evidence of the presses v4 rejects, the border blocks come with their
+ * regular neighbours (or there are none), and what holds those presses is
+ * the floor on the area scored with the area rule, the raw check, or
+ * evidence under the accept point even without them -- not the border
+ * weights.
+ *
  * Why the floor on the area scored: EV_MIN_OVERLAP gated only the
  * proposals. The re-centring, and the blocks' own +-EV_RS px search, reach
  * past a proposed pose: the false accept's evidence came from a pose of 527
@@ -327,6 +349,21 @@
  *     0.5 x or more, 19 impostor frames at 0.67 x or more, 7 at 1.0 x or
  *     more.
  *
+ *     v4.1 (the set-dependent weights, ev_block_weight): every figure of the
+ *     table is v4's -- the same decision on all 5,760 presses (the kit's
+ *     cross.py and the per-frame runs agree on every press). Frame by frame:
+ *     638 of the 11,428 genuine frame scores differ from v4's (634 higher; 4
+ *     lower, where verify's first pose over the accept point moved), no raw
+ *     verdict differs; 2 of the 57,140 impostor frames rise (S1 -> S3
+ *     0.177 -> 0.183 x, S4 -> S2 0.125 -> 0.129 x), none falls. The impostor
+ *     tail: every press at level 0; without the raw check (the higher of two
+ *     consecutive on-gate flat-fielded frames' lower score) at most 0.196 x,
+ *     none at 0.3 x; single frames 127 over 0, 5 at 0.3 x, 1 at 0.5 x and at
+ *     0.67 x (0.721 x), none at 1.0 x -- v4's to the frame. v3's false accept
+ *     (S4, left index fold 1 against right thumb 0) scores 0 on every frame,
+ *     and each of the 42 impostor presses that reached 0.5 x under v3 or had
+ *     a v3 or v4 frame at 0.5 x has v4's level and frame maximum.
+ *
  *     The bar the owner set (2026-09-27) is not met on these sets: pooled
  *     false rejects 46 against the vendor matcher's 42. Disputed presses
  *     (rejected by one matcher only): 11 by v4 only, 7 by the vendor only,
@@ -343,6 +380,25 @@
  *     with v3's statistic, which this one never exceeds at a given pose);
  *     S3 -> S2 right thumb 0 shows no evidence at any pose the search finds
  *     (sets of 2-4 blocks, W <= 0.5).
+ *
+ *     v4.1 does not change that. Traced without the floor and the area rule
+ *     (so that the search lands on the strongest evidence there is), the
+ *     best set on every frame of those 11 presses and of the two more v4 and
+ *     the vendor matcher both reject (S2 left index 8, S4 -> S2 right
+ *     index 9) has the same independent area under v4.1 as under v4, to
+ *     within 0.125 blocks: its border blocks come with their regular
+ *     neighbours, or it has none. What holds them, frame by frame: the
+ *     floor on the area scored with the area rule for three (S2 left index
+ *     7 and 8, S2 -> S4 left middle 2: sets of 4-9 blocks, 2.3-5.8
+ *     independent, at W up to 3.2 over 244-443 px); the area rule for S3 ->
+ *     S2 right thumb 2 (over the accept point on frames 0, 3, 5 and 9, never
+ *     two in a row: its 7-block sets in between, W 1.98-2.04, count
+ *     1.73-1.79); the raw check for S4 -> S2 right thumb 0 (frames 0 and 1
+ *     over, a 3-block raw set); S1 -> S3 right index 10 sits just under the
+ *     accept point on sets of 10-14 blocks (0.66-1.08 x, over on frames 7
+ *     and 9 only, so not raw-check-bound as said above); the other seven
+ *     stay under it even without floor and area rule (W <= 1.76). Not the
+ *     border weights.
  *
  *     Sensitivity, all 16 sets, each new or changed constant moved by
  *     +-10 % (integers to their neighbours), everything else as shipped:
@@ -369,6 +425,13 @@
  *     press or gives one a level above 0; the ones that move the pooled
  *     rejects by two or more are the floor at 550 and the minimum area.
  *
+ *     That table is v4's. v4.1 adds and moves no constant; the two stated in
+ *     independent blocks, whose accounting it changes, were measured again
+ *     under it, the same way: EV_AREA 7.2 46 rejects, highest impostor frame
+ *     0.80 x; 8.8 47 (S4 -> S2 +1), 0.66 x; EV_AR_N 9 45 (S3 -> S2 -1),
+ *     0.72 x; 11 46, 0.72 x; each with no impostor press accepted or above
+ *     level 0 -- every figure v4's.
+ *
  * COST (egis_verify as the driver calls it, early exit on; gcc 16, one
  * core; four twelve-press templates -- S1 right index and left middle
  * probed with S2, S3 right thumb with S4, S4 left index with S2 -- against
@@ -392,6 +455,22 @@
  * (a verify without the early exit) on 5 of the 172 genuine frames over
  * the accept point in this sample: 6.1 ms per accepted frame on average,
  * at most 108 ms (v3: 6.2 and 103).
+ *
+ * v4.1, on the v4 verifier's bench (the same egis_verify call; 20 twelve-
+ * press templates, every finger in four cross directions, S1 -> S2, S2 -> S3,
+ * S3 -> S4, S4 -> S1; presses 0, 4, 8 of the template finger and 2, 7 of
+ * every other, their on-gate frames 1-3; one pinned core, best of three
+ * rounds, the builds' order rotated; 658 verifies): per template frame
+ * 10.2 ms mean, 12.7 ms p95 at -O2 (11.4 / 13.8 at -O3) against the shipped
+ * matcher's 4.4 / 5.5 (4.8 / 5.8): 2.32 x and 2.32 x (-O3: 2.37 x, 2.38 x);
+ * impostor frames 2.37 x / 2.62 x. v4 in the same run: 2.32 x / 2.33 x. The
+ * weights per set cost nothing measurable. The raw check where the raw
+ * frame does not corroborate (a featureless raw frame behind each of the
+ * 165 genuine frames over the accept point): 134 ms mean, 183 p95, 206 max
+ * at -O2 (v4 142 / 189 / 210; the shipped matcher 37 / 52 / 53) -- the
+ * adapter now skips the template frames verify already found under the
+ * accept point, which is result-identical but saves only where verify did
+ * not stop at the first template frame (61 of the 165).
  *
  * Plain C99, libm only, deterministic, no global or static state: every
  * call's scratch is malloc'd and freed before it returns.
@@ -1049,9 +1128,9 @@ ev_rotate_res (const EvProbe *B, double th, EvEvWork *E)
  * own shift; 8-connected sets of blocks at or above EV_TAU whose shifts agree
  * with a neighbour's within EV_EPS px are formed, and a set scores the sum of
  * atanh(best) - atanh(EV_TAU) over its blocks, each block weighted by the
- * area it adds to the tiling (INDEPENDENT AREA, ev_grid_weight). What the
- * set scores counts only over EV_MIN_SCORED px of area actually scored and
- * under the area rule (ev_area_rule). */
+ * area it adds to the union of the set's blocks (INDEPENDENT AREA,
+ * ev_block_weight). What the set scores counts only over EV_MIN_SCORED px of
+ * area actually scored and under the area rule (ev_area_rule). */
 typedef struct
 {
   double mx, my;     /* mean block shift of the set, px */
@@ -1076,7 +1155,9 @@ ev_block_origin (int i, int extent)
  * regular grid, (70 - 16 - 48) / 8 = 0.75 for the column anchored at the
  * right border and (57 - 16 - 40) / 8 = 0.125 for the row anchored at the
  * bottom one, whose pixels the regular neighbour already covers but for 6
- * columns and 1 row. */
+ * columns and 1 row. v4's fixed weights; since v4.1 what a border block
+ * counts depends on its set (ev_block_weight), and this is its share where
+ * the set holds its predecessor. */
 static double
 ev_grid_weight (int i, int extent)
 {
@@ -1085,8 +1166,67 @@ ev_grid_weight (int i, int extent)
   return (double) (ev_block_origin (i, extent) - ev_block_origin (i - 1, extent)) / EV_STEP;
 }
 
+/* v4.1: the share block (i, j) adds to the UNION of the blocks marked
+ * in[] == v (its set), along one axis, in grid steps. Along x (vert 0), row
+ * by row: the columns it adds beyond the nearest marked block to its left
+ * that covers that row, over EV_STEP, at most 1; only a predecessor whose
+ * origin lies less than a step before its own shares more than the regular
+ * grid's half (ev_grid_weight < 1), so a row no such marked block covers
+ * keeps its full share. Along y (vert 1) the same, column by column, with
+ * the marked blocks above it. The mean over its rows (columns). */
+static double
+ev_axis_share (const int *in, int v, int i, int j, int vert)
+{
+  int c = vert ? j : i, ext = vert ? EM_H : EM_W;
+  int nq = vert ? EV_NBX : EV_NBY, oext = vert ? EM_W : EM_H;
+  int o0 = ev_block_origin (vert ? i : j, oext);
+  double s = 0;
+
+  if (ev_grid_weight (c, ext) >= 1.0)
+    return 1.0;                                    /* the regular grid */
+  for (int t = o0; t < o0 + EV_BS; t++)
+    {
+      double f = 1.0;
+      for (int m = 1; m <= c; m++)
+        {
+          int d = ev_block_origin (c, ext) - ev_block_origin (c - m, ext), hit = 0;
+          if (d >= EV_STEP)
+            break;
+          for (int q = 0; q < nq && !hit; q++)
+            {
+              int q0 = ev_block_origin (q, oext);
+              hit = t >= q0 && t < q0 + EV_BS &&
+                    in[vert ? (c - m) * EV_NBX + q : q * EV_NBX + c - m] == v;
+            }
+          if (hit)
+            {
+              f = (double) d / EV_STEP;
+              break;
+            }
+        }
+      s += f;
+    }
+  return s / EV_BS;
+}
+
+/* The INDEPENDENT AREA block k adds to its set (the blocks marked in[] == v):
+ * the product of its two axis shares, i.e. the mean over its pixels of what
+ * each adds along x and along y beyond the set's blocks before it. Every
+ * block of the regular grid 1; the column anchored at the right border 0.75
+ * where the set holds its left neighbour and 1 where the set holds nothing
+ * to its left, the row anchored at the bottom border 0.125 and 1 likewise,
+ * and in between by the share of its rows (columns) such a block covers.
+ * With every block marked it is ev_grid_weight's, v4's fixed weight. */
+static double
+ev_block_weight (const int *in, int v, int k)
+{
+  int i = k % EV_NBX, j = k / EV_NBX;
+
+  return ev_axis_share (in, v, i, j, 0) * ev_axis_share (in, v, i, j, 1);
+}
+
 /* What a set's evidence counts for, given its weighted Fisher-z excess w
- * and its independent area a (sum of its blocks' grid weights): the accept
+ * and its independent area a (sum of its blocks' weights): the accept
  * point, W 2, holds from EV_AREA independent blocks on and rises as the area
  * shrinks below that (w a / EV_AREA); with EV_AREA_HARD a smaller set counts
  * nothing. */
@@ -1207,6 +1347,10 @@ ev_cell_sums (const EvEvWork *E, int x0, int x1, int y0, int y1, int sx, int sy,
 
   for (int m = 0; m < 6; m++)
     o[m] = 0;
+  /* an empty overlap forms no row pointer: xa may lie past the row's end,
+   * and a pointer beyond its array's end is undefined (C99 6.5.6) */
+  if (xa >= xb || ya >= yb)
+    return;
   for (int y = ya; y < yb; y++)
     {
       /* row pointers at the first pixel used (column xa), none before its
@@ -1242,20 +1386,43 @@ ev_cell_count (const EvEvWork *E, int x0, int x1, int y0, int y1, int sx, int sy
   return o[0];
 }
 
+/* The independent area of the blocks marked in[] == v taken together as one
+ * set (ev_block_weight). */
+static double
+ev_marked_area (const int *in, int v)
+{
+  double a = 0;
+
+  for (int k = 0; k < EV_NB; k++)
+    if (in[k] == v)
+      a += ev_block_weight (in, v, k);
+  return a;
+}
+
 /* Every block with at least half its pixels in the overlap at the pose
  * searches its own shift (+-EV_RS px) for its best residual NCC: best[],
- * ax[], ay[], ok[] per block, wgt[] its grid weight. Returns how many blocks
- * searched; *a_hit receives the independent area of those at or above
- * EV_TAU. When the eligible blocks' independent area is under amin, nothing
- * is searched (0 is returned). */
+ * ax[], ay[], ok[] per block. Returns how many blocks searched. With amin >
+ * 0: when the eligible blocks' independent area, taken together, is under
+ * amin, nothing is searched (0 is returned), and *a_hit receives that of the
+ * ones at or above EV_TAU (0 otherwise). v4's gate with v4.1's accounting.
+ * Taken together, a border block counts less where its regular neighbour is
+ * among them, so unlike v4's this is not an upper bound for every part of
+ * them: a set that holds border blocks but not their regular neighbour
+ * (which the other blocks then hold as another set) can count a little
+ * more than all of them together. Measured on the 16 development sets
+ * against a gate that counts every block 1 (a strict bound, and more
+ * along-ridge poses searched): the same decision on every press and the
+ * same score on every impostor frame; 24 of the 11,428 genuine frame
+ * scores differ (where the extra poses let an earlier template frame clear
+ * the accept point first), one of them under it either way. */
 static int
-ev_block_search (const EvEvWork *E, int dx, int dy, double amin, double *wgt, double *best,
+ev_block_search (const EvEvWork *E, int dx, int dy, double amin, double *best,
                  int *ax, int *ay, int *ok, double *a_hit)
 {
   EvCells C;
   int need = (EV_BS * EV_BS) / 2, nel = 0, nnc = 0, ncell;
-  int elig[EV_NB], need_cell[EV_MAXCELL], cell_list[EV_MAXCELL];
-  double cn[EV_MAXCELL], a_elig = 0;
+  int elig[EV_NB], need_cell[EV_MAXCELL], cell_list[EV_MAXCELL], mark[EV_NB];
+  double cn[EV_MAXCELL];
 
   *a_hit = 0;
   ev_cells (&C);
@@ -1274,19 +1441,19 @@ ev_block_search (const EvEvWork *E, int dx, int dy, double amin, double *wgt, do
         ok[k] = 0;
         best[k] = -2;
         ax[k] = ay[k] = 0;
-        wgt[k] = ev_grid_weight (i, EM_W) * ev_grid_weight (j, EM_H);
+        mark[k] = 0;
         for (int cy = C.by0[j]; cy < C.by1[j]; cy++)
           for (int cx = C.bx0[i]; cx < C.bx1[i]; cx++)
             on += cn[cy * C.nx + cx];
         if ((int) (on + 0.5) < need)
           continue;
         elig[nel++] = k;
-        a_elig += wgt[k];
+        mark[k] = 1;
         for (int cy = C.by0[j]; cy < C.by1[j]; cy++)
           for (int cx = C.bx0[i]; cx < C.bx1[i]; cx++)
             need_cell[cy * C.nx + cx] = 1;
       }
-  if (a_elig < amin)
+  if (amin > 0 && ev_marked_area (mark, 1) < amin)
     return 0;
   for (int c = 0; c < ncell; c++)
     if (need_cell[c])
@@ -1332,9 +1499,10 @@ ev_block_search (const EvEvWork *E, int dx, int dy, double amin, double *wgt, do
   for (int e = 0; e < nel; e++)
     {
       ok[elig[e]] = 1;
-      if (best[elig[e]] >= EV_TAU)
-        *a_hit += wgt[elig[e]];
+      mark[elig[e]] = best[elig[e]] >= EV_TAU ? 2 : 1;
     }
+  if (amin > 0)
+    *a_hit = ev_marked_area (mark, 2);
   return nel;
 }
 
@@ -1346,14 +1514,15 @@ ev_block_search (const EvEvWork *E, int dx, int dy, double amin, double *wgt, do
 static double
 ev_evidence (const EvEvWork *E, int dx, int dy, double amin, EvSet *set)
 {
-  double best[EV_NB], wgt[EV_NB];
-  int ax[EV_NB], ay[EV_NB], ok[EV_NB], lab[EV_NB], stack[EV_NB];
+  double best[EV_NB];
+  int ax[EV_NB], ay[EV_NB], ok[EV_NB], lab[EV_NB], stack[EV_NB], mem[EV_NB];
   double wbest = 0, sbest = 0, a_hit = 0;
   EvSet bs = { 0.0, 0.0, 0, 0.0, 0.0, 0.0, 0.0 };
 
-  /* nothing searched, or (amin > 0) the blocks at or above EV_TAU cannot
-   * make a set of amin independent blocks: nothing counts, nothing steers */
-  if (ev_block_search (E, dx, dy, amin, wgt, best, ax, ay, ok, &a_hit) == 0 || a_hit < amin)
+  /* nothing searched, or (amin > 0) the blocks at or above EV_TAU, taken
+   * together, hold less than amin independent blocks: nothing counts,
+   * nothing steers */
+  if (ev_block_search (E, dx, dy, amin, best, ax, ay, ok, &a_hit) == 0 || a_hit < amin)
     {
       if (set)
         *set = bs;
@@ -1375,9 +1544,7 @@ ev_evidence (const EvEvWork *E, int dx, int dy, double amin, EvSet *set)
           /* the block's centre, template px */
           double u = ev_block_origin (x, EM_W) + (EV_BS - 1) / 2.0;
           double v = ev_block_origin (y, EM_H) + (EV_BS - 1) / 2.0;
-          w += wgt[k] * (atanh (best[k] < 0.999 ? best[k] : 0.999) - atanh (EV_TAU));
-          a += wgt[k];
-          cnt++;
+          mem[cnt++] = k;
           sx += ax[k];
           sy += ay[k];
           su += u;
@@ -1400,6 +1567,15 @@ ev_evidence (const EvEvWork *E, int dx, int dy, double amin, EvSet *set)
                     stack[sp++] = kk;
                   }
               }
+        }
+      /* the set is complete: each block counts with the area it adds to
+       * the union of the set's blocks (in the order they were reached) */
+      for (int q = 0; q < cnt; q++)
+        {
+          int k = mem[q];
+          double wk = ev_block_weight (lab, k0, k);
+          w += wk * (atanh (best[k] < 0.999 ? best[k] : 0.999) - atanh (EV_TAU));
+          a += wk;
         }
       if (w > sbest)
         {
@@ -1598,10 +1774,10 @@ ev_match (const EvFrame *t, const EvProbe *p, int stop_at, EvPose *pose)
         }
 #if EV_AR_N > 0
       /* ALONG-RIDGE hypotheses, once every hypothesis has been scored and none
-       * cleared stop_at: the EV_AR_H best ones, moved by EV_AR_STEP px and by
-       * twice that both ways along the ridges of their overlap, where the
-       * ridge image cannot tell the pose; what they find counts only from
-       * EV_AR_N independent blocks on */
+       * cleared stop_at: the EV_AR_H best ones, moved by EV_AR_STEP px either
+       * way along the ridges of their overlap, where the ridge image cannot
+       * tell the pose; what they find counts only from EV_AR_N independent
+       * blocks on */
       for (int k = 0; k < nsc && k < EV_AR_H && !(stop_at > 0 && best >= stop_at); k++)
         {
           double ux, uy;

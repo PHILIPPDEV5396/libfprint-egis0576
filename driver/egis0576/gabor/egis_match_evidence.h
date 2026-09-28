@@ -223,17 +223,23 @@
  * chosen or checked on them, so every figure is IN-SAMPLE. Sensitivity
  * (+-10 %, all 16 sets): egis_match_evidence.c, MEASURED.
  *
- * EV_AREA: independent blocks (a set's grid weights, ev_grid_weight) from
- * which on the accept point is W 2 (EGIS_CR_ACCEPT_EVIDENCE). A set of less
- * independent area a counts w a / EV_AREA, i.e. its accept point rises as
- * 2 EV_AREA / a. 8 = one block above the largest set any impostor pair
- * formed on the 16 development sets: 7 blocks, under v3's full search of
- * all 464,760 impostor frame pairs (W >= 1) and under this search on the 308
- * impostor presses whose frames reached W 0.6 under v3 (independent area
- * under 7). So no set of an impostor's size reaches the accept point at the
- * per-block NCC that suffices from 8 blocks on. Not tuned. EV_AREA_HARD 1
- * makes it a minimum area instead (a smaller set counts nothing): see "Why
- * the area rule" for why not. */
+ * EV_AREA: independent blocks (the sum of a set's block weights,
+ * ev_block_weight) from which on the accept point is W 2
+ * (EGIS_CR_ACCEPT_EVIDENCE). A set of less independent area a counts
+ * w a / EV_AREA, i.e. its accept point rises as 2 EV_AREA / a. 8 = one block
+ * above the largest set any impostor pair formed on the 16 development sets:
+ * 7 blocks, under v3's full search of all 464,760 impostor frame pairs
+ * (W >= 1) and under this search on the 308 impostor presses whose frames
+ * reached W 0.6 under v3 (independent area under 7). So no set of an
+ * impostor's size reaches the accept point at the per-block NCC that
+ * suffices from 8 blocks on. Not tuned. v4.1, whose weights count a border
+ * block in full where its set lacks the regular neighbour: on those 308
+ * presses, every probe frame against every template frame at the pose of a
+ * search without the floor and the area rule (the strongest evidence there
+ * is), the 3,710 sets hold at most 8 blocks and at most 6.25 independent
+ * blocks, under v4's weights and v4.1's alike (317 sets count more under
+ * v4.1, none reaches 7). EV_AREA_HARD 1 makes it a minimum area instead (a
+ * smaller set counts nothing): see "Why the area rule" for why not. */
 #ifndef EV_AREA
 #define EV_AREA 8.0
 #endif
