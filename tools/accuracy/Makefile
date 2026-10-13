@@ -61,6 +61,19 @@ GABOR_OBJ  := $(OBJ)/gabor/egis_engine_cleanroom.o $(OBJ)/gabor/egis_match_gabor
 
 XS_BIN := $(HERE)score_xs-vendor $(HERE)score_xs-cleanroom $(HERE)score_xs-gabor
 
+# Every compiled object (and pairdiag) also depends on every header of the
+# driver tree and on this Makefile. The header lists in the rules below are
+# not complete (egis_match_gabor.c includes egis_match_check.h,
+# egis_engine_cleanroom.c includes egis_engine.h, the vendor objects list no
+# header at all), and an object compiled against another version of a header
+# -- another branch, an experiment undone with `git checkout` -- would
+# otherwise be linked again and called up to date by `make -q`, i.e. by
+# evaluate.py's provenance. Erring on the safe side costs a full rebuild
+# (seconds) whenever any driver header or this Makefile changes. The compile
+# recipes use $<, so these prerequisites never reach the compiler and the
+# objects are byte-identical.
+DEPS_ALL := $(wildcard $(DRV)/*.h $(DRV)/gabor/*.h $(DRV)/tsteppy/*.h) $(HERE)Makefile
+
 all: $(HERE)score-vendor $(HERE)score-cleanroom $(HERE)score-gabor $(HERE)pairdiag $(XS_BIN)
 
 # Linking score-<flavour> also writes build-info-<flavour>.txt (write_info,
@@ -107,7 +120,7 @@ score_xs-gabor: $(HERE)score_xs-gabor
 # only, which pairdiag.c #includes (it needs the front-end's static helpers),
 # so it is compiled from source here rather than linked as an object.
 $(HERE)pairdiag: $(HERE)pairdiag.c $(DRV)/gabor/egis_match_gabor.c $(DRV)/gabor/egis_match_check.h \
-                 $(DRV)/gabor/egis_cr_tuning_gabor.h $(DRV)/tsteppy/egis_match.h $(OBJ)/stamp-gabor
+                 $(DRV)/gabor/egis_cr_tuning_gabor.h $(DRV)/tsteppy/egis_match.h $(OBJ)/stamp-gabor $(DEPS_ALL)
 	$(CC) $(GABOR_CFLAGS) -o $@ $< -lm
 # `make pairdiag` (what pairdiag.c tells you to run) names the target by its
 # bare name; without this alias make falls back on its built-in %: %.c rule,
@@ -115,33 +128,33 @@ $(HERE)pairdiag: $(HERE)pairdiag.c $(DRV)/gabor/egis_match_gabor.c $(DRV)/gabor/
 pairdiag: $(HERE)pairdiag
 
 $(OBJ)/gabor/egis_engine_cleanroom.o: $(DRV)/egis_engine_cleanroom.c $(DRV)/gabor/egis_cr_tuning_gabor.h $(DRV)/gabor/egis_match_check.h \
-                                      $(DRV)/gabor/egis_match_evidence.h $(OBJ)/stamp-gabor
+                                      $(DRV)/gabor/egis_match_evidence.h $(OBJ)/stamp-gabor $(DEPS_ALL)
 	@mkdir -p $(dir $@)
 	$(CC) $(GABOR_CFLAGS) -c -o $@ $<
 
 $(OBJ)/gabor/egis_match_gabor.o: $(DRV)/gabor/egis_match_gabor.c $(DRV)/tsteppy/egis_match.h \
-                                 $(DRV)/gabor/egis_match_evidence.h $(OBJ)/stamp-gabor
+                                 $(DRV)/gabor/egis_match_evidence.h $(OBJ)/stamp-gabor $(DEPS_ALL)
 	@mkdir -p $(dir $@)
 	$(CC) $(GABOR_CFLAGS) -c -o $@ $<
 
 $(OBJ)/gabor/egis_match_evidence.o: $(DRV)/gabor/egis_match_evidence.c $(DRV)/gabor/egis_match_evidence.h \
-                                    $(DRV)/tsteppy/egis_match.h $(OBJ)/stamp-gabor
+                                    $(DRV)/tsteppy/egis_match.h $(OBJ)/stamp-gabor $(DEPS_ALL)
 	@mkdir -p $(dir $@)
 	$(CC) $(GABOR_CFLAGS) -c -o $@ $<
 
-$(OBJ)/score.o: $(HERE)score.c $(DRV)/egis_engine.h $(OBJ)/stamp-score
+$(OBJ)/score.o: $(HERE)score.c $(DRV)/egis_engine.h $(OBJ)/stamp-score $(DEPS_ALL)
 	@mkdir -p $(dir $@)
 	$(CC) $(SCORE_CFLAGS) -c -o $@ $<
 
-$(OBJ)/score_xs.o: $(HERE)score_xs.c $(HERE)score.c $(DRV)/egis_engine.h $(OBJ)/stamp-score
+$(OBJ)/score_xs.o: $(HERE)score_xs.c $(HERE)score.c $(DRV)/egis_engine.h $(OBJ)/stamp-score $(DEPS_ALL)
 	@mkdir -p $(dir $@)
 	$(CC) $(SCORE_CFLAGS) -c -o $@ $<
 
-$(OBJ)/vendor/%.o: $(DRV)/%.c $(OBJ)/stamp-vendor
+$(OBJ)/vendor/%.o: $(DRV)/%.c $(OBJ)/stamp-vendor $(DEPS_ALL)
 	@mkdir -p $(dir $@)
 	$(CC) $(VENDOR_CFLAGS) -c -o $@ $<
 
-$(OBJ)/cleanroom/egis_engine_cleanroom.o: $(DRV)/egis_engine_cleanroom.c $(OBJ)/stamp-cleanroom
+$(OBJ)/cleanroom/egis_engine_cleanroom.o: $(DRV)/egis_engine_cleanroom.c $(OBJ)/stamp-cleanroom $(DEPS_ALL)
 	@mkdir -p $(dir $@)
 	$(CC) $(CLEAN_CFLAGS) -c -o $@ $<
 
@@ -153,7 +166,7 @@ $(OBJ)/cleanroom/egis_engine_cleanroom.o: $(DRV)/egis_engine_cleanroom.c $(OBJ)/
 ifneq ($(strip $(EM_SRCH)),)
 CLEAN_CFLAGS += -DEM_SRCH=$(EM_SRCH)
 endif
-$(OBJ)/cleanroom/egis_match.o: $(DRV)/tsteppy/egis_match.c $(OBJ)/stamp-cleanroom
+$(OBJ)/cleanroom/egis_match.o: $(DRV)/tsteppy/egis_match.c $(OBJ)/stamp-cleanroom $(DEPS_ALL)
 	@mkdir -p $(dir $@)
 	$(CC) $(CLEAN_CFLAGS) -c -o $@ $<
 

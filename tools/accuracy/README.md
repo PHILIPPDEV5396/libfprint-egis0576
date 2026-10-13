@@ -115,6 +115,10 @@ Linking `score-<flavour>` also writes `build-info-<flavour>.txt` next to it
 (how it was built; `evaluate.py` copies it into `results.json`, see "Build
 provenance"), and a changed `GABOR_EXTRA` or `EM_SRCH` recompiles that
 flavour by itself: no stale objects from the previous setting are linked.
+Every object also depends on every driver header and on the Makefile, so a
+header that changed (another branch, an experiment undone with
+`git checkout`) recompiles everything instead of leaving an object built
+against its old version.
 
 **The Gabor flavour** (`score-gabor`) is the clean-room adapter on a different
 front-end: `driver/egis0576/gabor/egis_match_gabor.c` replaces the isotropic
@@ -666,9 +670,9 @@ before any scorer runs:
 | `kit_commit` | `git rev-parse HEAD` of the checkout the kit runs from; `null` when it is not a git checkout of this repository (then every other git field is `null` too) |
 | `driver_tree` | `git rev-parse HEAD:driver`: the tree hash of the driver sources at that commit. Two clean checkouts with the same `driver_tree` compile the same matcher sources, whatever else differs |
 | `kit_tree` | `git rev-parse HEAD:tools/accuracy`, the same for the kit |
-| `clean` | `true` when `git status --porcelain -- driver tools/accuracy` is empty: nothing modified, and no untracked file (an untracked header there could change what the compiler includes). A boolean only, never the file names |
+| `clean` | `true` when `git status --porcelain --untracked-files=all -- driver tools/accuracy` is empty: nothing modified, and no untracked file (an untracked header there could change what the compiler includes). A boolean only, never the file names |
 | `scorers.<flavour>.in_kit_dir` | the scorer is the kit's own `score-<flavour>` (`false` with `--bin-dir` elsewhere; the fields below are then `null`) |
-| `scorers.<flavour>.up_to_date` | `make -q score-<flavour>` says nothing would be rebuilt: the binary is newer than every source it is built from, and it was built with the flags a plain `make` (in the same environment) uses now |
+| `scorers.<flavour>.up_to_date` | `make -q score-<flavour>` says nothing would be rebuilt: the binary is newer than every source it is built from (every driver header and the Makefile included), and it was built with the flags a plain `make` (in the same environment) uses now |
 | `scorers.<flavour>.build_info` | `build-info-<flavour>.txt` as the Makefile wrote it when it linked the binary: `flavour`, `extra_defines` (`GABOR_EXTRA`, `-DEM_SRCH=`; empty for the shipped build), `driver_dir`, the compiler's version line `cc`, `cflags` and `score_cflags`, with the driver directory written repo-relative |
 | `scorers.<flavour>.build_info_matches_binary` | the sha256 the Makefile recorded at link time is the binary's: the build info describes the binary that ran (the hash itself is not copied) |
 

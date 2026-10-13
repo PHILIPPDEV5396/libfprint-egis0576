@@ -271,7 +271,9 @@ def git_provenance():
         v = git("rev-parse", "--verify", "--quiet", rev, cwd=top)
         out[key] = v if v and hexsha.match(v) else None
     if out["kit_commit"] is not None:
-        st = git("status", "--porcelain", "--", "driver", "tools/accuracy", cwd=top)
+        # --untracked-files=all explicitly: status.showUntrackedFiles=no in the
+        # user's git config would otherwise hide an untracked header
+        st = git("status", "--porcelain", "--untracked-files=all", "--", "driver", "tools/accuracy", cwd=top)
         out["clean"] = None if st is None else (st == "")
     return out
 
