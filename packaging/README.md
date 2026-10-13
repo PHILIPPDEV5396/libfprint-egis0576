@@ -365,8 +365,11 @@ Two Ubuntu series are supported, and each gets its own build:
 
 | Series | Status |
 |---|---|
-| **noble**, 24.04 LTS | tested on real hardware — see "Verified on real hardware" below |
-| **resolute**, 26.04 LTS | container build only, no hardware run yet |
+| **noble**, 24.04 LTS | sensor bring-up on real hardware only: the stock library loaded a v0.4.x module and `fp_device_open_sync` completed on an EH576 (maintainer, reported 2026-09-14); no enrol or verify through this package reported yet |
+| **resolute**, 26.04 LTS | real-finger use with the published package (vendor build), by sam-dant on 2026-09-26: v0.5.1 enrol, verify, `sudo`, screen-lock unlock and unlock after suspend/resume, and daily use of v0.4.5 before it |
+
+Both are built, installed and load-checked in CI on every tag. Details of
+the hardware runs are under "Verified on real hardware" below.
 
 A single `.deb` cannot serve both series, for a reason distinct from the
 symbol-versioning rule below: `dpkg-shlibdeps` bakes in the *exact* runtime
@@ -513,32 +516,47 @@ reason both series are built separately.
 
 ### Verified on real hardware
 
-The maintainer built the module (unmodified, from this source) in an
-`ubuntu:noble` container on `linux/amd64` and ran it against a real EH576
-on a Lenovo Yoga 7, passed through with `/dev/bus/usb`. The stock archive
-`libfprint-2-2` loaded the module, matched the device to this driver, and
-`fp_device_open_sync` completed the full bring-up on the physical sensor:
-the readiness poll, the 33-record vendor replay, and the six-step exposure
-calibration. He also confirmed the same noble-built binary loads under
-`1.95.1+tod1` on `ubuntu:26.04`.
+**noble, bring-up only.** The maintainer built the module (v0.4.x,
+unmodified, from this source) in an `ubuntu:noble` container on
+`linux/amd64` and ran it against a real EH576 on a Lenovo Yoga 7, passed
+through with `/dev/bus/usb` (reported in
+[#6](https://github.com/PHILIPPDEV5396/libfprint-egis0576/issues/6) on
+2026-09-14). The stock archive `libfprint-2-2` loaded the module, matched the
+device to this driver, and `fp_device_open_sync` completed the full bring-up on the
+physical sensor: the readiness poll, the 33-record vendor replay, and the
+six-step exposure calibration. He also confirmed the same noble-built binary
+loads under `1.95.1+tod1` on `ubuntu:26.04`. No finger was enrolled or
+verified in that run.
 
-Enrolling and verifying a real finger through the published package was
-first done by **sam-dant** on 2026-09-26, on a Lenovo IdeaPad Flex 5 14ITL05
-under Ubuntu 26.04.1 with the official
-`ubuntu-resolute-libfprint-2-tod1-egis0576_0.5.1.26.04_amd64.deb`
-(SHA-256 matched the release checksum, `dpkg -V` clean): all 12 enrolment
-stages, five of five `verify-match`, fingerprint `sudo` after `sudo -k`,
-screen-lock unlock, and unlock after suspend/resume both from the menu and via
-the lid. Not yet covered: login after a reboot, and long-term stability on
-v0.5.1.
+**resolute, a real finger.** The reports of the published package in real
+use are **sam-dant**'s, both posted in
+[#3](https://github.com/PHILIPPDEV5396/libfprint-egis0576/issues/3) on
+2026-09-26, from a Lenovo IdeaPad Flex 5 14ITL05 under Ubuntu 26.04.1 with
+the shipped sleep hook and activation gate installed:
+
+- **v0.4.5** (`0.4.5~26.04`), daily use since he moved to Ubuntu:
+  screen-lock unlock, suspend/resume and lid close/open worked in every test
+  he made, with no cycle count and no overnight test. `sudo` asked only for
+  the password; his `common-auth` had no `pam_fprintd.so` line, which he
+  read as PAM configuration rather than a reader failure.
+- **v0.5.1**, the official
+  `ubuntu-resolute-libfprint-2-tod1-egis0576_0.5.1.26.04_amd64.deb`
+  (SHA-256 matched the release checksum, `dpkg -V` clean), which is the
+  vendor-matcher TOD build (see below). He re-enrolled his right index
+  finger: all 12 stages, `enroll-completed`. The **first** verify right
+  after that returned `verify-no-match`; a later sequence of five separate
+  verifies returned five `verify-match`. Fingerprint `sudo` after `sudo -k`,
+  screen-lock unlock, and unlock after suspend/resume both from the menu and
+  via the lid passed. Not yet covered: login after a reboot, long-term or
+  overnight stability on v0.5.1, and resume without the hook and gate.
 
 **Which matcher this package builds.** The TOD module compiles the translated
 Egis engine (`egis_funcs.c` and friends, see `ubuntu-tod/meson.build`), i.e.
 the **vendor** matcher — not the clean-room Gabor matcher the Fedora, Arch and
 Debian packages install by default. That was an oversight when v0.5.0 changed
 the default, not a decision, and the v0.5.1 release notes said otherwise until
-they were corrected on 2026-09-26. The real-finger test above is therefore a
-test of the vendor build.
+they were corrected on 2026-09-26. Both real-finger reports above are
+therefore of the vendor build (as was every v0.4.x package).
 
 ### What the package contains
 
