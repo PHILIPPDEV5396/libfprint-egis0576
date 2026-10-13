@@ -19,9 +19,15 @@ presses, or with frames missing, are skipped with a warning and listed under
 
 Output: the table docs/matcher-comparison.md uses, and a results.json that
 holds ONLY scores, counts, thresholds, rates, finger labels, press/frame
-COUNTS, the exposure calibration values (register bytes, means, the six-step
-[register, mean] search trace), the capture and evaluation dates (day only)
-and the hardware info you opt in to.
+COUNTS, the per-press accept verdicts of the driver's rule (booleans), the
+exposure calibration values (register bytes, means, the six-step
+[register, mean] search trace), the capture and evaluation dates (day only),
+the hardware info you opt in to, and the build provenance object: the kit's
+git commit and the git tree hashes of driver/ and tools/accuracy/, one
+clean/modified boolean for those two directories, and per scorer whether it
+is up to date (`make -q`), whether its build-info-<flavour>.txt describes
+that very binary, and its build flags (repo-relative paths only, the
+compiler's version line; anything path-like is replaced by <path>).
 No frame data, no file names, nothing an image could be rebuilt from. That
 file is what you paste into an issue -- never the frames. The frame lists the
 scorer reads are handed over in memory (memfd) or, failing that, in a private
@@ -31,9 +37,12 @@ temporary directory INSIDE the dataset directory -- never under /tmp.
 """
 import argparse
 import datetime
+import getpass
+import hashlib
 import json
 import os
 import re
+import socket
 import subprocess
 import sys
 import tempfile
@@ -183,6 +192,170 @@ def failure_info(r):
         reason = EXIT_REASONS.get(rc, "scorer failed")
     detail = next((k for k in KNOWN_STDERR if k in r.stderr), None)
     return {"returncode": rc, "reason": reason, "detail": detail}
+
+
+# --- build provenance ---------------------------------------------------------
+# Which code produced a results.json: the kit's git commit, the tree hashes of
+# driver/ and tools/accuracy/ at that commit, whether either directory differs
+# from it, and per scorer whether `make` would rebuild it and how it was built
+# (build-info-<flavour>.txt, written by the Makefile when it links
+# score-<flavour>). Stale and tuned scorer builds have both happened; without
+# this a results.json cannot say which matcher it measured. Hashes, booleans
+# and flags with repo-relative paths only: never a path, user or host name.
+BUILD_INFO_KEYS = ("flavour", "extra_defines", "driver_dir", "cc", "cflags", "score_cflags")
+# options that take a path glued on (-I/usr/include): the option is kept
+_OPT_PATH = re.compile(r"(^|\s)(-(?:I|L|B|o|include|isystem|iquote|imacros|idirafter|isysroot|iprefix"
+                       r"|iwithprefix|iwithprefixbefore|specs=?|-sysroot=?))[/~][^\s'\"),;]*")
+_ABS_PATH = re.compile(r"(^|[\s=:'\"(,@])[/~][^\s'\"),;]*")
+
+
+def _personal_words():
+    words = set()
+    try:
+        words.add(getpass.getuser())
+    except Exception:
+        pass
+    try:
+        h = socket.gethostname()
+        words.update([h, h.split(".")[0]])
+    except Exception:
+        pass
+    return sorted((w for w in words if w and len(w) >= 3), key=len, reverse=True)
+
+
+def scrub(text):
+    """Anything path-like becomes <path>, the user and host name become <id>:
+    build flags and a compiler's version line are free text (GABOR_EXTRA, a
+    compiler built from a checkout under $HOME). Repo-relative include
+    directories (-Idriver/egis0576/gabor) are the Makefile's own and are left
+    alone, so a user called gabor does not rewrite the shipped flags."""
+    text = _OPT_PATH.sub(r"\1\2<path>", text)
+    text = _ABS_PATH.sub(r"\1<path>", text)
+    words = _personal_words()
+    if not words:
+        return text
+    pat = re.compile(r"(?<![\w.-])(?:" + "|".join(map(re.escape, words)) + r")(?![\w-])", re.I)
+    return "".join(tok if re.match(r"-I[^/~<\s]", tok) else pat.sub("<id>", tok)
+                   for tok in re.split(r"(\s+)", text))
+
+
+def _run_quiet(args, cwd=None, strip_git_env=False):
+    env = None
+    if strip_git_env:   # a GIT_DIR / GIT_WORK_TREE of the caller's shell must not redirect git
+        env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    try:
+        return subprocess.run(args, cwd=cwd, env=env, capture_output=True, text=True, timeout=120)
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
+def git_provenance():
+    """The kit's commit, the tree hashes of driver/ and tools/accuracy/ in it,
+    and whether those two directories are unmodified (untracked files count:
+    an untracked header there can change what the compiler includes). All
+    None when the kit is not run from a git checkout of this repository."""
+    out = {"kit_commit": None, "driver_tree": None, "kit_tree": None, "clean": None}
+
+    def git(*args, cwd=HERE):
+        r = _run_quiet(["git", "--no-optional-locks", *args], cwd=cwd, strip_git_env=True)
+        return r.stdout.strip() if r is not None and r.returncode == 0 else None
+
+    top = git("rev-parse", "--show-toplevel")
+    # the kit must sit at <toplevel>/tools/accuracy: a copy of it inside some
+    # other repository (a dotfiles repo in $HOME, say) is not a checkout of this one
+    if not top or os.path.realpath(os.path.join(top, "tools", "accuracy")) != os.path.realpath(HERE):
+        return out
+    hexsha = re.compile(r"^[0-9a-f]{40}([0-9a-f]{24})?$")
+    for key, rev in (("kit_commit", "HEAD^{commit}"), ("driver_tree", "HEAD:driver"),
+                     ("kit_tree", "HEAD:tools/accuracy")):
+        v = git("rev-parse", "--verify", "--quiet", rev, cwd=top)
+        out[key] = v if v and hexsha.match(v) else None
+    if out["kit_commit"] is not None:
+        st = git("status", "--porcelain", "--", "driver", "tools/accuracy", cwd=top)
+        out["clean"] = None if st is None else (st == "")
+    return out
+
+
+def read_build_info(path):
+    """(whitelisted, scrubbed fields, sha256 of the binary it describes)."""
+    try:
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            text = fh.read(65536)
+    except OSError:
+        return None, None
+    info, sha = {}, None
+    for line in text.splitlines():
+        k, sep, v = line.partition(":")
+        k, v = k.strip(), v.strip()
+        if not sep:
+            continue
+        if k == "sha256":
+            sha = v.lower() or None
+        elif k in BUILD_INFO_KEYS and k not in info:
+            # the two fixed-vocabulary fields are checked, not scrubbed
+            if k == "flavour":
+                info[k] = v if v in FLAVOURS else "<other>"
+            elif k == "driver_dir":
+                info[k] = v if v in ("driver/egis0576", "<overridden>") else "<other>"
+            else:
+                info[k] = scrub(v)
+    return info, sha
+
+
+def sha256_file(path):
+    h = hashlib.sha256()
+    try:
+        with open(path, "rb") as fh:
+            for chunk in iter(lambda: fh.read(1 << 20), b""):
+                h.update(chunk)
+    except OSError:
+        return None
+    return h.hexdigest()
+
+
+def scorer_provenance(flavour, binary):
+    """Is score-<flavour> what `make` builds from this tree now, and how was it
+    built. Only for the kit's own binaries: with --bin-dir pointing elsewhere
+    nothing can be said (in_kit_dir false, the rest null)."""
+    p = {"in_kit_dir": os.path.realpath(os.path.dirname(binary)) == os.path.realpath(HERE),
+         "up_to_date": None, "build_info": None, "build_info_matches_binary": None}
+    if not p["in_kit_dir"]:
+        return p
+    # 0: up to date, 1: make would rebuild it, 2: make itself failed
+    r = _run_quiet(["make", "-q", "--no-print-directory", "-C", HERE, f"score-{flavour}"])
+    if r is not None and r.returncode in (0, 1):
+        p["up_to_date"] = r.returncode == 0
+    info, sha = read_build_info(os.path.join(HERE, f"build-info-{flavour}.txt"))
+    if info is not None:
+        p["build_info"] = info
+        p["build_info_matches_binary"] = sha is not None and sha == sha256_file(binary)
+    return p
+
+
+def provenance_warnings(prov):
+    w = []
+    if prov["kit_commit"] is None:
+        w.append("not run from a git checkout of this repository (or git is unavailable): "
+                 "results.json cannot say which kit and driver code it measured")
+    elif prov["clean"] is not True:
+        w.append("driver/ or tools/accuracy/ differs from the checked-out commit "
+                 "(`git status -- driver tools/accuracy`): the results measure modified code")
+    for fl, s in prov["scorers"].items():
+        if not s["in_kit_dir"]:
+            w.append(f"score-{fl} is not the kit's own binary (--bin-dir): its build cannot be checked")
+            continue
+        if s["up_to_date"] is None:
+            w.append(f"could not ask make whether score-{fl} is up to date (`make -q` failed)")
+        elif s["up_to_date"] is not True:
+            w.append(f"score-{fl} is not what `make` builds from this tree now: "
+                     f"run `make -C {os.path.relpath(HERE)}` first")
+        if s["build_info"] is None or s["build_info_matches_binary"] is not True:
+            w.append(f"build-info-{fl}.txt is missing or does not describe score-{fl}: "
+                     "rebuild with `make clean && make`")
+        elif s["build_info"].get("extra_defines"):
+            w.append(f"score-{fl} was built with extra defines ({s['build_info']['extra_defines']}): "
+                     "this run measures a modified matcher")
+    return w
 
 
 def evaluate(flavour, binary, fingers, presses, base, thr, best_frame, var, ddir, on_var):
@@ -439,6 +612,12 @@ def main():
             raise SystemExit(f"{b} not found -- run `make` in {HERE} first")
         binaries[fl] = b
 
+    # Build provenance, taken before any scorer runs (README, "Build provenance").
+    provenance = git_provenance()
+    provenance["scorers"] = {fl: scorer_provenance(fl, binaries[fl]) for fl in flavours}
+    for w in provenance_warnings(provenance):
+        print(f"warning: {w}", file=sys.stderr)
+
     # Needed for every run since kit_version 3, not just --best-frame: the
     # driver scores a frame only when its raw variance says a finger is on the
     # sensor, and the kit cannot apply the driver's accept rule without that.
@@ -507,11 +686,23 @@ def main():
             "threshold": args.threshold,
         },
         "results": results,
+        # which code measured it: hashes, booleans, repo-relative build flags
+        "provenance": provenance,
     }
     if not out["hardware"]:
         del out["hardware"]
     if out["note"] is None:
         del out["note"]
+    kc = provenance["kit_commit"]
+    print(f"\nprovenance: kit {kc[:12] if kc else 'not a git checkout'}"
+          + ("" if kc is None else ", tree clean" if provenance["clean"] is True
+             else ", tree MODIFIED" if provenance["clean"] is False else ", tree state unknown")
+          + "; " + ", ".join(
+              f"score-{fl} " + ("up to date" if s["up_to_date"] else "NOT up to date" if s["up_to_date"] is False
+                                else "unchecked")
+              + (" (extra defines: " + s["build_info"]["extra_defines"] + ")"
+                 if s["build_info"] and s["build_info"].get("extra_defines") else "")
+              for fl, s in provenance["scorers"].items()))
     dest = os.path.abspath(args.out) if args.out else os.path.join(ddir, "results.json")
     with open(dest, "w") as fh:
         json.dump(out, fh, indent=1)

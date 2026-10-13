@@ -3,6 +3,7 @@
 #
 #   make            -> score-vendor score-cleanroom score-gabor pairdiag (next to this Makefile)
 #                      and the cross-session scorers score_xs-vendor score_xs-cleanroom score_xs-gabor
+#                      (+ build-info-<flavour>.txt: how score-<flavour> was built, see "Build provenance")
 #   make clean
 #
 # The vendor objects are Egis' matcher machine-translated from the Windows
@@ -62,14 +63,25 @@ XS_BIN := $(HERE)score_xs-vendor $(HERE)score_xs-cleanroom $(HERE)score_xs-gabor
 
 all: $(HERE)score-vendor $(HERE)score-cleanroom $(HERE)score-gabor $(HERE)pairdiag $(XS_BIN)
 
+# Linking score-<flavour> also writes build-info-<flavour>.txt (write_info,
+# "Build provenance" below).
 $(HERE)score-vendor: $(OBJ)/score.o $(VENDOR_OBJ)
 	$(CC) -o $@ $^ -lm
+	$(call write_info,vendor)
 
 $(HERE)score-cleanroom: $(OBJ)/score.o $(CLEAN_OBJ)
 	$(CC) -o $@ $^ -lm
+	$(call write_info,cleanroom)
 
 $(HERE)score-gabor: $(OBJ)/score.o $(GABOR_OBJ)
 	$(CC) -o $@ $^ -lm
+	$(call write_info,gabor)
+
+# the bare names (`make score-gabor`, and `make -q score-gabor`, which is how
+# evaluate.py asks whether a binary is up to date)
+score-vendor: $(HERE)score-vendor
+score-cleanroom: $(HERE)score-cleanroom
+score-gabor: $(HERE)score-gabor
 
 # Cross-session scorers (score_xs.c, driven by cross.py): score.c with a second
 # flat-field baseline for the probe session, linked against exactly the engine
@@ -95,7 +107,7 @@ score_xs-gabor: $(HERE)score_xs-gabor
 # only, which pairdiag.c #includes (it needs the front-end's static helpers),
 # so it is compiled from source here rather than linked as an object.
 $(HERE)pairdiag: $(HERE)pairdiag.c $(DRV)/gabor/egis_match_gabor.c $(DRV)/gabor/egis_match_check.h \
-                 $(DRV)/gabor/egis_cr_tuning_gabor.h $(DRV)/tsteppy/egis_match.h
+                 $(DRV)/gabor/egis_cr_tuning_gabor.h $(DRV)/tsteppy/egis_match.h $(OBJ)/stamp-gabor
 	$(CC) $(GABOR_CFLAGS) -o $@ $< -lm
 # `make pairdiag` (what pairdiag.c tells you to run) names the target by its
 # bare name; without this alias make falls back on its built-in %: %.c rule,
@@ -103,33 +115,33 @@ $(HERE)pairdiag: $(HERE)pairdiag.c $(DRV)/gabor/egis_match_gabor.c $(DRV)/gabor/
 pairdiag: $(HERE)pairdiag
 
 $(OBJ)/gabor/egis_engine_cleanroom.o: $(DRV)/egis_engine_cleanroom.c $(DRV)/gabor/egis_cr_tuning_gabor.h $(DRV)/gabor/egis_match_check.h \
-                                      $(DRV)/gabor/egis_match_evidence.h
+                                      $(DRV)/gabor/egis_match_evidence.h $(OBJ)/stamp-gabor
 	@mkdir -p $(dir $@)
 	$(CC) $(GABOR_CFLAGS) -c -o $@ $<
 
 $(OBJ)/gabor/egis_match_gabor.o: $(DRV)/gabor/egis_match_gabor.c $(DRV)/tsteppy/egis_match.h \
-                                 $(DRV)/gabor/egis_match_evidence.h
+                                 $(DRV)/gabor/egis_match_evidence.h $(OBJ)/stamp-gabor
 	@mkdir -p $(dir $@)
 	$(CC) $(GABOR_CFLAGS) -c -o $@ $<
 
 $(OBJ)/gabor/egis_match_evidence.o: $(DRV)/gabor/egis_match_evidence.c $(DRV)/gabor/egis_match_evidence.h \
-                                    $(DRV)/tsteppy/egis_match.h
+                                    $(DRV)/tsteppy/egis_match.h $(OBJ)/stamp-gabor
 	@mkdir -p $(dir $@)
 	$(CC) $(GABOR_CFLAGS) -c -o $@ $<
 
-$(OBJ)/score.o: $(HERE)score.c $(DRV)/egis_engine.h
+$(OBJ)/score.o: $(HERE)score.c $(DRV)/egis_engine.h $(OBJ)/stamp-score
 	@mkdir -p $(dir $@)
 	$(CC) $(SCORE_CFLAGS) -c -o $@ $<
 
-$(OBJ)/score_xs.o: $(HERE)score_xs.c $(HERE)score.c $(DRV)/egis_engine.h
+$(OBJ)/score_xs.o: $(HERE)score_xs.c $(HERE)score.c $(DRV)/egis_engine.h $(OBJ)/stamp-score
 	@mkdir -p $(dir $@)
 	$(CC) $(SCORE_CFLAGS) -c -o $@ $<
 
-$(OBJ)/vendor/%.o: $(DRV)/%.c
+$(OBJ)/vendor/%.o: $(DRV)/%.c $(OBJ)/stamp-vendor
 	@mkdir -p $(dir $@)
 	$(CC) $(VENDOR_CFLAGS) -c -o $@ $<
 
-$(OBJ)/cleanroom/egis_engine_cleanroom.o: $(DRV)/egis_engine_cleanroom.c
+$(OBJ)/cleanroom/egis_engine_cleanroom.o: $(DRV)/egis_engine_cleanroom.c $(OBJ)/stamp-cleanroom
 	@mkdir -p $(dir $@)
 	$(CC) $(CLEAN_CFLAGS) -c -o $@ $<
 
@@ -141,13 +153,64 @@ $(OBJ)/cleanroom/egis_engine_cleanroom.o: $(DRV)/egis_engine_cleanroom.c
 ifneq ($(strip $(EM_SRCH)),)
 CLEAN_CFLAGS += -DEM_SRCH=$(EM_SRCH)
 endif
-$(OBJ)/cleanroom/egis_match.o: $(DRV)/tsteppy/egis_match.c
+$(OBJ)/cleanroom/egis_match.o: $(DRV)/tsteppy/egis_match.c $(OBJ)/stamp-cleanroom
 	@mkdir -p $(dir $@)
 	$(CC) $(CLEAN_CFLAGS) -c -o $@ $<
 
+# ---- Build provenance --------------------------------------------------------
+# evaluate.py records in results.json how each scorer it ran was built, so a
+# stale binary, or one built with extra defines, shows in the shared file.
+# Per flavour this Makefile keeps a record of how its objects are compiled:
+# the flavour's extra defines (GABOR_EXTRA, EM_SRCH), the compiler's version
+# line and the flags, with the driver directory written repo-relative --
+# nothing absolute, no user or host name (the compiler is named by its
+# version line, never by its path). The record is a stamp, build/stamp-<name>,
+# that the flavour's objects depend on, and it is rewritten only when its
+# content would change (compared below, while make reads this file). So
+# `make GABOR_EXTRA=...` after a plain `make`, or the other way round,
+# recompiles that flavour instead of linking the old objects, an unchanged
+# record leaves the stamp's date alone, and `make -q score-gabor` answers
+# "would make rebuild it?" truthfully. Linking score-<flavour> copies the
+# record next to the binary as build-info-<flavour>.txt, plus the binary's
+# sha256, which evaluate.py checks against the binary it runs (and does not
+# copy into results.json). This block must stay below every flag assignment
+# (the EM_SRCH one above): the records are expanded where they are defined.
+CC_VERSION := $(shell $(CC) --version 2>/dev/null | head -n 1)
+DRV_REL    := $(if $(filter $(abspath $(HERE)../../driver/egis0576),$(DRV)),driver/egis0576,<overridden>)
+sq    = '$(subst ','\'',$(1))'
+rel   = $(strip $(subst $(DRV),$(DRV_REL),$(1)))
+record = $(call sq,flavour: $(1)) $(call sq,extra_defines: $(strip $(2))) \
+         $(call sq,driver_dir: $(DRV_REL)) $(call sq,cc: $(CC_VERSION)) \
+         $(call sq,cflags: $(call rel,$(3))) $(call sq,score_cflags: $(call rel,$(SCORE_CFLAGS)))
+INFO_vendor    := $(call record,vendor,,$(VENDOR_CFLAGS))
+INFO_cleanroom := $(call record,cleanroom,$(if $(strip $(EM_SRCH)),-DEM_SRCH=$(strip $(EM_SRCH))),$(CLEAN_CFLAGS))
+INFO_gabor     := $(call record,gabor,$(GABOR_EXTRA),$(GABOR_CFLAGS))
+INFO_score     := $(call sq,cc: $(CC_VERSION)) $(call sq,score_cflags: $(call rel,$(SCORE_CFLAGS)))
+# non-empty when build/stamp-$(1) does not hold exactly INFO_$(1)
+stale = $(shell [ "$$(printf '%s\n' $(INFO_$(1)))" = "$$(cat $(OBJ)/stamp-$(1) 2>/dev/null)" ] || echo stale)
+ifneq ($(call stale,vendor),)
+$(OBJ)/stamp-vendor: FORCE
+endif
+ifneq ($(call stale,cleanroom),)
+$(OBJ)/stamp-cleanroom: FORCE
+endif
+ifneq ($(call stale,gabor),)
+$(OBJ)/stamp-gabor: FORCE
+endif
+ifneq ($(call stale,score),)
+$(OBJ)/stamp-score: FORCE
+endif
+$(OBJ)/stamp-%:
+	@mkdir -p $(dir $@)
+	@printf '%s\n' $(INFO_$*) > $@
+FORCE:
+
+write_info = @{ cat $(OBJ)/stamp-$(1); printf 'sha256: %s\n' "$$(sha256sum $@ | cut -d ' ' -f 1)"; } \
+             > $(OBJ)/build-info-$(1).tmp && mv -f $(OBJ)/build-info-$(1).tmp $(HERE)build-info-$(1).txt
+
 clean:
 	rm -rf $(OBJ) $(HERE)score-vendor $(HERE)score-cleanroom $(HERE)score-gabor $(HERE)pairdiag $(HERE)nbis-count \
-	       $(XS_BIN)
+	       $(XS_BIN) $(HERE)build-info-vendor.txt $(HERE)build-info-cleanroom.txt $(HERE)build-info-gabor.txt
 
 # How many minutiae NBIS mindtct finds per frame (the "why not an image
 # driver" number, docs/matcher-comparison.md). Needs a libfprint source tree
@@ -163,4 +226,5 @@ nbis-count: $(HERE)nbis_count.c
 	    -I$(NBIS)/include -I$(NBIS)/libfprint-include -I$(LIBFPRINT_SRC)/libfprint \
 	    $(wildcard $(NBIS)/mindtct/*.c) $$(pkg-config --cflags --libs glib-2.0) -lm
 
-.PHONY: all clean nbis-count pairdiag score_xs-vendor score_xs-cleanroom score_xs-gabor
+.PHONY: all clean nbis-count pairdiag score_xs-vendor score_xs-cleanroom score_xs-gabor \
+        score-vendor score-cleanroom score-gabor FORCE

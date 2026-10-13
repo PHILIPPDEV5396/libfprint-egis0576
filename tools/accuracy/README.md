@@ -31,6 +31,7 @@ The only thing to share is `results.json` from `evaluate.py` (or
 `results-cross.json` from `cross.py`, which follows the same rules). It contains:
 
 - scores, counts, thresholds and error rates;
+- per press, whether the driver's rule accepts it (one `true` / `false` each);
 - your finger *labels* (the `--fingers` names; keep them generic), press and
   frame counts;
 - the exposure calibration values (two register bytes, a mean grey level and
@@ -39,7 +40,11 @@ The only thing to share is `results.json` from `evaluate.py` (or
 - the `--model` and `--distro` strings you *choose* to pass;
 - the `--note` text, **verbatim** — it is free text that goes straight into the
   shareable file, so put nothing personal in it (no names, no serial numbers,
-  no e-mail addresses).
+  no e-mail addresses);
+- which code produced the numbers (`provenance`, see "Build provenance"
+  below): git commit and tree hashes, booleans, and the scorers' build flags
+  with repo-relative paths and the compiler's version line — no path, user or
+  host name.
 
 It contains no frame data, no file names, nothing an image could be rebuilt
 from. `capture.py` refuses to write under `/tmp`, `/var/tmp`, `/dev/shm` or
@@ -106,6 +111,10 @@ against exactly the engine objects of `score-<flavour>` (see "Across
 sessions" at the end); `score-<flavour>` itself does not change.
 `score-gabor` is compiled exactly as the driver compiles the engine, so the
 kit's accept decisions are the driver's (see `kit_version 5` below).
+Linking `score-<flavour>` also writes `build-info-<flavour>.txt` next to it
+(how it was built; `evaluate.py` copies it into `results.json`, see "Build
+provenance"), and a changed `GABOR_EXTRA` or `EM_SRCH` recompiles that
+flavour by itself: no stale objects from the previous setting are linked.
 
 **The Gabor flavour** (`score-gabor`) is the clean-room adapter on a different
 front-end: `driver/egis0576/gabor/egis_match_gabor.c` replaces the isotropic
@@ -420,11 +429,6 @@ Quote the pair, never one of each. `score.c` prints the corroboration verdict
 as a third column for this; an older scorer simply omits it and every frame
 counts as corroborated, which is what the kit assumed before.
 
-`genuine_press_confirmed` / `impostor_press_confirmed` are the same verdict per
-press: one `true` / `false` each, in the order of `genuine_press_scores` /
-`impostor_press_scores` and the same press order for every flavour. Booleans
-only, no image data; they exist so two matchers can be compared press by press.
-
 ## `pairdiag`: why a unit separates, or does not
 
 `evaluate.py` says *whether* the populations separate. When they do not, the
@@ -635,6 +639,46 @@ score: its raw corroboration is disabled (always 1) and its early exit only
 cuts scores that are already over the accept point, so its decisions are the
 driver's either way. Results of `kit_version 4` and earlier for the Gabor
 flavour should be re-run; the frames need not be recaptured.
+
+**Per-press verdicts.** `genuine_press_confirmed` / `impostor_press_confirmed`
+are the driver's rule per press: one `true` / `false` each, in the order of
+`genuine_press_scores` / `impostor_press_scores`, and in the same press order
+for every flavour (one loop over fingers, folds and presses), so two matchers
+run on the same dataset can be compared press by press (paired) instead of by
+their totals. Booleans only, no image data. The pairing holds only when
+`failures` is empty for **both** flavours: a fold that could not be scored
+drops its presses from that flavour's lists, and index *i* then no longer
+names the same press in the two. The fields were added in commit `97d5ca5`
+(2026-10-13) with `kit_version` unchanged at 5 (nothing else in the file
+changed), so a `kit_version 5` file without them comes from an older
+`evaluate.py`; re-running it on the same dataset adds them.
+
+### Build provenance (`provenance`)
+
+Stale and tuned scorer builds have both been measured by mistake (a
+`score-gabor` linked before its sources changed, a build left over from a
+`GABOR_EXTRA` experiment), and a `results.json` used to carry nothing that
+showed it. `evaluate.py` now adds a top-level `provenance` object, taken
+before any scorer runs:
+
+| field | what it is |
+|---|---|
+| `kit_commit` | `git rev-parse HEAD` of the checkout the kit runs from; `null` when it is not a git checkout of this repository (then every other git field is `null` too) |
+| `driver_tree` | `git rev-parse HEAD:driver`: the tree hash of the driver sources at that commit. Two clean checkouts with the same `driver_tree` compile the same matcher sources, whatever else differs |
+| `kit_tree` | `git rev-parse HEAD:tools/accuracy`, the same for the kit |
+| `clean` | `true` when `git status --porcelain -- driver tools/accuracy` is empty: nothing modified, and no untracked file (an untracked header there could change what the compiler includes). A boolean only, never the file names |
+| `scorers.<flavour>.in_kit_dir` | the scorer is the kit's own `score-<flavour>` (`false` with `--bin-dir` elsewhere; the fields below are then `null`) |
+| `scorers.<flavour>.up_to_date` | `make -q score-<flavour>` says nothing would be rebuilt: the binary is newer than every source it is built from, and it was built with the flags a plain `make` (in the same environment) uses now |
+| `scorers.<flavour>.build_info` | `build-info-<flavour>.txt` as the Makefile wrote it when it linked the binary: `flavour`, `extra_defines` (`GABOR_EXTRA`, `-DEM_SRCH=`; empty for the shipped build), `driver_dir`, the compiler's version line `cc`, `cflags` and `score_cflags`, with the driver directory written repo-relative |
+| `scorers.<flavour>.build_info_matches_binary` | the sha256 the Makefile recorded at link time is the binary's: the build info describes the binary that ran (the hash itself is not copied) |
+
+No personal data: hashes, booleans, and flags with repo-relative paths.
+Anything path-like that a flag or a compiler version line could still carry
+(an absolute `-I` in `GABOR_EXTRA`, a compiler built under `$HOME`) is
+replaced by `<path>`, and the user and host name by `<id>`. `evaluate.py`
+warns on the terminal when a field says the run did not measure the
+committed code as the Makefile builds it; the run itself goes ahead (a
+`GABOR_EXTRA` experiment is a legitimate run, and now a labelled one).
 
 
 ## Across sessions: `cross.py` (2026-09-27)
