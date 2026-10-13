@@ -300,64 +300,30 @@ import lineage (`1:1.90.1`, `1:1.94.1`, ...), which this build does not
 follow — it tracks the tag pinned in `build.sh` instead. `dh_makeshlibs -- -c0`
 gives plain `${shlibs:Depends}` (soname + version floor) instead.
 
-**Verified with a real build** (`debian:trixie`, this session, `linux/arm64`
-only — the packaging logic is architecture-neutral, and CI builds and tests
-`linux/amd64` on every tag, but only `linux/arm64` was built and tested in
-this session):
+**What verifies it now: the release CI, on every tag.** Its `debian` leg
+builds this package set with `build.sh` in a `debian:trixie` container on
+`linux/amd64`, installs Debian's stock `libfprint-2-2` first, installs the
+three built `.deb` files over it with a plain `apt-get install` (no
+`--allow-downgrades`), and fails the release unless the installed version
+is the one in `packaging/debian/changelog`, the driver is compiled into
+`libfprint-2.so.2`, the sleep hook and the resume gate are installed and
+wired, and the retired udev rule is not; the exact checks are listed under
+"Release CI" below. The `linux/arm64` transcript irvingpop recorded when he
+contributed this packaging (pull request #8, commits of 2026-09-13/14,
+revision `99egis1`, a v0.4.x driver with the udev rule the package shipped
+then) is no longer reproduced here: later edits rewrote some of its version
+strings and not its file names, which left it describing no single build.
+The original reads consistently at commit `1957109`.
 
-```
-$ dpkg-deb -f libfprint-2-2_1.94.100-99egis1_arm64.deb Version
-1:1.94.100-99egis0.4.5
-
-$ dpkg -c libfprint-2-2_1.94.100-99egis1_arm64.deb | grep -E "system-sleep|libfprint-2.so"
--rw-r--r-- root/root   1208848 ... ./usr/lib/aarch64-linux-gnu/libfprint-2.so.2.0.0
--rwxr-xr-x root/root      2344 ... ./usr/lib/systemd/system-sleep/50-egis0576-fp-resume.sh
-lrwxrwxrwx root/root         0 ... ./usr/lib/aarch64-linux-gnu/libfprint-2.so.2 -> libfprint-2.so.2.0.0
-
-$ objdump -p usr/lib/aarch64-linux-gnu/libfprint-2.so.2.0.0 | grep SONAME
-  SONAME               libfprint-2.so.2
-```
-
-Plain `apt-get install`, no `--allow-downgrades`, against a container with
-Debian's own stock package already installed:
-
-```
-$ dpkg-query -W -f='${Version}' libfprint-2-2
-1:1.94.9-1
-
-$ apt-get install -y ./libfprint-2-2_1.94.100-99egis1_arm64.deb \
-                     ./libfprint-2-dev_1.94.100-99egis1_arm64.deb \
-                     ./gir1.2-fprint-2.0_1.94.100-99egis1_arm64.deb
-...
-Setting up libfprint-2-2 (1:1.94.100-99egis0.4.5) ...
-...
-
-$ dpkg-query -W -f='${Version}' libfprint-2-2
-1:1.94.100-99egis0.4.5
-
-$ strings /usr/lib/aarch64-linux-gnu/libfprint-2.so.2.0.0 | grep -i egis0576
-FpDeviceEgis0576
-egis0576
-libfprint-egis0576
-egis0576-capture
-../libfprint/drivers/egis0576.c
-No valid egis0576 templates to match
-Stored print has no valid egis0576 template
-../libfprint/drivers/egis0576/egis0576_proto.c
-egis0576_close
-```
-
-`lintian` on the built packages reports one warning, left as-is:
-`appstream-metadata-missing-modalias-provide` for the udev rule's
-`usb:v1C7Ap0576d*` match — the package ships no AppStream metainfo advertising
-that modalias. Fedora's `.spec` has the same gap (no AppStream entry for the
-sensor either), so this is not a regression from packaging for Debian; adding
-one is a separate, independent piece of work if this ever needs an AppStream
-listing. Adding `gir1.2-gobject-2.0-dev` and `gir1.2-gio-2.0-dev` to
+On that bring-up build `lintian` reported one warning, left as-is:
+`appstream-metadata-missing-modalias-provide`, for the udev rule's
+`usb:v1C7Ap0576d*` match. That rule has not been shipped since v0.5.0, and
+no `lintian` run on a later build is recorded here (CI does not run it).
+Adding `gir1.2-gobject-2.0-dev` and `gir1.2-gio-2.0-dev` to
 `Build-Depends`, and dropping `${shlibs:Depends}` from `gir1.2-fprint-2.0`'s
 `Depends` (that package ships no ELF binary needing a shlibs substitution),
 fixed the three cosmetic build warnings an earlier trial run of this same
-strategy hit; the build above shows none of them.
+strategy hit; the bring-up build showed none of them.
 
 ---
 
@@ -660,17 +626,31 @@ Fedora RPM is a Fedora 43 build only** (the container is `fedora:43`, so
 other Fedora versions, since its project builds separate chroots for each
 one. Each leg then installs its own freshly built package on top of the
 distro's stock package (where one ships) inside the same container, and
-checks the installed files: the package version, the shared library's
-presence and size, the egis0576 driver symbols compiled into it, and (Fedora
-and Debian) the suspend/resume hook and udev rule. Each Ubuntu leg installs
+checks the installed result. The Fedora, Arch and Debian legs check the
+installed version against the packaging file it was built from (`rpmspec`
+on the spec, the `PKGBUILD`'s `pkgver-pkgrel`, `dpkg-parsechangelog` on the
+changelog); that `libfprint-2.so.2` resolves to a non-empty file; and that
+three strings the driver contains by construction are in that file: the
+`FpDeviceEgis0576` type name, the registered full name `Egis Technology Inc.
+(aka. LighTuning) EH576`, and the transport's source path
+`drivers/egis0576/egis0576_proto.c`. The Fedora and Debian legs then check
+the integration files: the sleep hook is executable and calls `systemctl`
+on `fprintd`; the resume gate's helper `/usr/libexec/egis0576-fp-wait` is
+executable and waits on `/run/egis0576-fp-resume.pending`; the
+`fprintd.service.d` drop-in runs that helper as `ExecStartPre`; and the
+retired udev rule `60-egis0576-fp-nosuspend.rules` is **not** installed.
+The Arch leg checks that the sleep hook, the helper and the drop-in are
+absent, because its `PKGBUILD` does not ship them. Each Ubuntu leg installs
 its own series' `.deb` with a plain `apt install` (no `--allow-downgrades`,
-no `--force-depends`), checks the module landed under the `tod_driversdir`
+no `--force-depends`), checks that the installed version is the tag's plus
+the series suffix, that the module landed under the `tod_driversdir`
 `pkg-config` reports and that its file name satisfies the TOD loader's
-`lib*.so` rule, asserts `dpkg -V libfprint-2-2` is byte-for-byte unchanged
-from before the install, and builds and runs the same `fp_context_new()`
-probe documented in the Ubuntu section above to confirm the stock library
-logs `Loading driver egis0576` under `G_MESSAGES_DEBUG=all` — a probe that
-does not print that line fails the job, it is not just logged. The produced
+`lib*.so` rule, asserts that `dpkg -V libfprint-2-2` reports the same before
+and after the install, and builds and runs a five-line `fp_context_new()`
+probe to confirm the stock library logs `Loading driver egis0576` under
+`G_MESSAGES_DEBUG=all` — a probe that does not print that line fails the
+job, it is not just logged. No leg runs `lintian`, and no step opens a
+device: these are package checks, not driver tests. The produced
 `.deb` files are prefixed `debian-trixie-`, `ubuntu-noble-` or
 `ubuntu-resolute-` so all three read apart from each other on the Releases
 page. A failed check fails that leg's build, so a package this workflow does

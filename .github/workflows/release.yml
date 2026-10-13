@@ -82,9 +82,14 @@ jobs:
       # Container images stay pinned by tag, not by digest, unlike the
       # actions below. Digest-pinning fedora:43 or archlinux:latest would
       # freeze out routine distro package updates (security fixes included)
-      # between releases; the tradeoff is that a compromised upstream image
-      # could run here, which the actions/* pins below guard against for
-      # the one job that holds contents: write.
+      # between releases. The cost is a residual risk that nothing in this
+      # workflow mitigates: a compromised upstream image runs here, every
+      # package is built inside it, and the install checks below run inside
+      # it too, so it could alter a package without any check noticing. The
+      # publish job uploads whatever this job hands it, unmodified, and
+      # hashes those same files into SHA256SUMS, so the checksums attest to
+      # what was uploaded, not to a clean build. The SHA pins on the
+      # actions/* steps fix the actions' own code and do nothing about this.
       matrix:
         include:
           - distro: fedora
@@ -133,6 +138,14 @@ jobs:
 
       - name: Checkout (tag)
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          # Do not leave the job token in .git/config while rpmbuild,
+          # makepkg and dpkg-buildpackage run over this workspace. Nothing
+          # later in this job needs it: every fetch is anonymous HTTPS from
+          # a public URL (spectool's Source0/Source10, the PKGBUILD's git
+          # sources, build.sh's libfprint clone), and upload-artifact does
+          # not go through git.
+          persist-credentials: false
 
       # --- Fedora path ---
       - name: Install Fedora build deps
