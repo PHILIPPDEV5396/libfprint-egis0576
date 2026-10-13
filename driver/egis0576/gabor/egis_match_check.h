@@ -132,6 +132,50 @@ typedef struct
 #define EM_FQ_K1 9.5
 #endif
 #define EM_FQ_NK ((int) ((EM_FQ_K1 - EM_FQ_K0) / 0.5 + 1.5))   /* 12 */
+/* CAPTURE CONTRAST (Thaddeus Stepanovich's measurement: tsteppy, pull
+ * request 4 of tsteppy/egistec-eh576-libfprint, his comment of 2026-09-21).
+ * What the decision constants below reject depends on the contrast of the
+ * capture path, not only on the skin. They were set on the reference unit's
+ * frames (Provenance above); tsteppy ran the Gabor front-end with and
+ * without this check on his unit, captured at two sensor gains (reg 0x12):
+ *
+ *     his protocol        front-end    + the check
+ *     sessions, gain 6    FRR 7.14 %   identical, same single rejected frame
+ *     dataset/, gain 0    FRR 6.7 %    FRR 40.0 %
+ *
+ * The impostor maximum moved on neither: the check bought nothing against
+ * real impostor fingers there. Of the five extra false rejects at gain 0,
+ * two are the flat-map case the RESCUE constants were added for, missing
+ * EM_FQ_RESCUE_MAD 0.10 (mad 0.140 / 0.138 at NCC 0.944 / 0.929, corr
+ * 0.809 / 0.746), and two failed EM_FQ_MAX_MAD 0.5 (mad 0.509 / 0.535).
+ * His reading: a gain-0 frame's period map is noisier, so mad between two
+ * presses that genuinely match runs higher than where these constants were
+ * tuned. EM_FQ_RESCUE_MAD 0.15 with EM_FQ_MAX_MAD 0.6 took his gain-0 FRR
+ * back to 13.3 %, left gain 6 and both FARs unchanged, and still accepted
+ * 0 gratings of his two synthetic families (max 0.6998 / 0.6999, none
+ * reaching 0.70). They are the two constants that bind, both in the same
+ * direction. The defaults stay: he asked that his values not be shipped
+ * off one unit's 15 genuine comparisons, and this driver does not capture
+ * at gain 0 -- it leaves reg 0x12 at the init sequence's 0x05 and
+ * calibrates the exposure on reg 0x0f instead (egis0576_proto.c). A capture
+ * path at a different contrast should measure these two on its own frames;
+ * -DEM_FQ_RESCUE_MAD=0.15 -DEM_FQ_MAX_MAD=0.6 sets his values without
+ * editing this file.
+ *
+ * WHERE THE CHECK STILL DECIDES. In the out-of-tree project's v0.5.1
+ * release egis_verify and egis_identify accept on em_match(), so there
+ * these constants are on the accept path. In this tree they are not:
+ * verify and identify accept on the identity evidence of
+ * egis_match_evidence.c (W >= EGIS_CR_ACCEPT_EVIDENCE, under the driver's
+ * rule of two consecutive frames over the threshold, the second one's raw
+ * bytes corroborating the accept in egis_verify_raw_ok), and the evidence
+ * stage never calls em_match(). The check still runs inside em_match(),
+ * which the adapter now calls only for the enrolment duplicate gate, set to
+ * 1.0 and so disabled in this build (EGIS_CR_REDUNDANT_NCC,
+ * egis_cr_tuning_gabor.h); the enrolment steering uses em_match_ex(), which
+ * reports the period statistics without applying the check. tsteppy's
+ * numbers were measured with the check deciding on the NCC; they say
+ * nothing about the evidence decision. */
 #ifndef EM_FQ_MIN_NBLK
 #define EM_FQ_MIN_NBLK 12
 #endif
