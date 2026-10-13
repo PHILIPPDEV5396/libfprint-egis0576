@@ -22,8 +22,9 @@ certifiers with identical numbers):
   rule.
 - **False rejects: 74 of 540 genuine presses (13.7 %) against the vendor
   matcher's 66 of 540 (12.2 %)** on the same presses. Discordant presses
-  40 vs 32, exact McNemar p = 0.41. The pre-registered bar then was "pooled
-  false rejects <= vendor", so v4.1 was **not certified**.
+  40 vs 32 (exact McNemar p = 0.41 two-sided, 0.20 one-sided). The
+  pre-registered bar then was "pooled false rejects <= vendor", so v4.1 was
+  **not certified**.
 
 The released default (v0.5.x, `gabor` without the gate) is known to accept
 other fingers under the driver's rule: 18 of 480 impostor presses on the
@@ -34,6 +35,12 @@ not measurably worse than the vendor matcher at rejecting genuine presses,
 on units other than his own** — and asked for the measurement before any such
 number existed.
 
+**This bar is looser than the one v4.1 missed, and it was set after that
+miss.** Applied to the certification presses above, rule (b) below gives
+one-sided p = 0.20: a pass. That is exactly why the maintainer's unit cannot
+test it — the bar was chosen knowing its result — and why only units other
+than his count.
+
 ## The rule
 
 Applied by `decide.py` in this directory (sha256 `82672fa3aa508bbfd0a4d5c51302bd296867867bef97d287c9c734039707c29f`)
@@ -43,8 +50,10 @@ to the `results.json` files of `tools/accuracy/evaluate.py`, comparing the
 every press, kit_version 5):
 
 - **(a)** per dataset: v4.1 confirms **no** impostor press. Any -> FAIL.
-- **(c)** per dataset: v4.1's strongest impostor press scores at most
-  **0.67x** the accept point (any-frame score, no corroboration). Above -> FAIL.
+- **(c)** per dataset: v4.1's strongest impostor press, scored frame by frame
+  without the raw corroboration, reaches at most **0.67x** the accept point.
+  Above -> FAIL. (On the certification session this measure reached 0.56x,
+  while every impostor press scored 0.000x under the driver's full rule.)
 - **(b)** pooled over all datasets, genuine presses paired press by press:
   b = presses vendor accepts and v4.1 rejects, c = the reverse;
   one-sided exact McNemar p = P(X >= b | X ~ Bin(b + c, 1/2)).
