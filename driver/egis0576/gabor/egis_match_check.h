@@ -134,15 +134,21 @@ typedef struct
 #define EM_FQ_NK ((int) ((EM_FQ_K1 - EM_FQ_K0) / 0.5 + 1.5))   /* 12 */
 /* CAPTURE CONTRAST (Thaddeus Stepanovich's measurement: tsteppy, pull
  * request 4 of tsteppy/egistec-eh576-libfprint, his comment of 2026-09-21).
- * What the decision constants below reject depends on the contrast of the
- * capture path, not only on the skin. They were set on the reference unit's
- * frames (Provenance above); tsteppy ran the Gabor front-end with and
- * without this check on his unit, captured at two sensor gains (reg 0x12):
+ * What the decision constants below reject can depend on the capture path,
+ * not only on the skin. They were set on the reference unit's frames
+ * (Provenance above); tsteppy ran the Gabor front-end with and without this
+ * check on his unit, on two capture sets that differ in sensor gain (reg
+ * 0x12) and also in enrolment -- five arbitrary presses in dataset/, eight
+ * guided ones in the sessions (his docs/gabor-frontend-second-unit.md) --
+ * so his data alone cannot separate the two causes:
  *
  *     his protocol        front-end    + the check
  *     sessions, gain 6    FRR 7.14 %   identical, same single rejected frame
  *     dataset/, gain 0    FRR 6.7 %    FRR 40.0 %
  *
+ * He measured the check as pull request 4 had it on that day, with
+ * EM_FQ_MIN_NBLK at 20; it is 12 here since 2026-09-22, and every other
+ * threshold of the decision below is as he had it.
  * The impostor maximum moved on neither: the check bought nothing against
  * real impostor fingers there. Of the five extra false rejects at gain 0,
  * two are the flat-map case the RESCUE constants were added for, missing
@@ -154,18 +160,19 @@ typedef struct
  * back to 13.3 %, left gain 6 and both FARs unchanged, and still accepted
  * 0 gratings of his two synthetic families (max 0.6998 / 0.6999, none
  * reaching 0.70). They are the two constants that bind, both in the same
- * direction. The defaults stay: he asked that his values not be shipped
- * off one unit's 15 genuine comparisons, and this driver does not capture
- * at gain 0 -- it leaves reg 0x12 at the init sequence's 0x05 and
+ * direction. The defaults stay: he said he was not asking for his values to
+ * ship off one unit's 15 genuine comparisons, and this driver does not
+ * capture at gain 0 -- it leaves reg 0x12 at the init sequence's 0x05 and
  * calibrates the exposure on reg 0x0f instead (egis0576_proto.c). A capture
- * path at a different contrast should measure these two on its own frames;
+ * path at a different contrast, in a build where the check decides (below),
+ * should measure these two on its own frames;
  * -DEM_FQ_RESCUE_MAD=0.15 -DEM_FQ_MAX_MAD=0.6 sets his values without
  * editing this file.
  *
  * WHERE THE CHECK STILL DECIDES. In the out-of-tree project's v0.5.1
- * release egis_verify and egis_identify accept on em_match(), so there
- * these constants are on the accept path. In this tree they are not:
- * verify and identify accept on the identity evidence of
+ * release (its Gabor build) egis_verify and egis_identify accept on
+ * em_match(), so there these constants are on the accept path. In this
+ * tree they are not: verify and identify accept on the identity evidence of
  * egis_match_evidence.c (W >= EGIS_CR_ACCEPT_EVIDENCE, under the driver's
  * rule of two consecutive frames over the threshold, the second one's raw
  * bytes corroborating the accept in egis_verify_raw_ok), and the evidence
