@@ -207,6 +207,8 @@ BUILD_INFO_KEYS = ("flavour", "extra_defines", "driver_dir", "cc", "cflags", "sc
 _OPT_PATH = re.compile(r"(^|\s)(-(?:I|L|B|o|include|isystem|iquote|imacros|idirafter|isysroot|iprefix"
                        r"|iwithprefix|iwithprefixbefore|specs=?|-sysroot=?))[/~][^\s'\"),;]*")
 _ABS_PATH = re.compile(r"(^|[\s=:'\"(,@])[/~][^\s'\"),;]*")
+# the Makefile's own include directories, exactly as the build info writes them
+_OWN_INCLUDES = ("-Idriver/egis0576", "-Idriver/egis0576/tsteppy", "-Idriver/egis0576/gabor")
 
 
 def _personal_words():
@@ -226,16 +228,17 @@ def _personal_words():
 def scrub(text):
     """Anything path-like becomes <path>, the user and host name become <id>:
     build flags and a compiler's version line are free text (GABOR_EXTRA, a
-    compiler built from a checkout under $HOME). Repo-relative include
-    directories (-Idriver/egis0576/gabor) are the Makefile's own and are left
-    alone, so a user called gabor does not rewrite the shipped flags."""
+    compiler built from a checkout under $HOME). The Makefile's own include
+    directories (-Idriver/egis0576/gabor, _OWN_INCLUDES) are left alone, so a
+    user called gabor does not rewrite the shipped flags; any other relative
+    -I (-I../<user>/inc in GABOR_EXTRA) is scrubbed like the rest."""
     text = _OPT_PATH.sub(r"\1\2<path>", text)
     text = _ABS_PATH.sub(r"\1<path>", text)
     words = _personal_words()
     if not words:
         return text
     pat = re.compile(r"(?<![\w.-])(?:" + "|".join(map(re.escape, words)) + r")(?![\w-])", re.I)
-    return "".join(tok if re.match(r"-I[^/~<\s]", tok) else pat.sub("<id>", tok)
+    return "".join(tok if tok in _OWN_INCLUDES else pat.sub("<id>", tok)
                    for tok in re.split(r"(\s+)", text))
 
 
