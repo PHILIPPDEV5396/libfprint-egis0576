@@ -5,7 +5,7 @@ libfprint-egis0576-tod (0.5.1) UNRELEASED; urgency=medium
     does not export and the driver calls; without it the module did not
     link. The driver source stays the one submitted upstream.
 
- -- PHILIPPDEV5396 <philipp2861@gmail.com>  Tue, 22 Sep 2026 22:40:00 +0200
+ -- PHILIPPDEV5396 <PHILIPPDEV5396@outlook.de>  Tue, 22 Sep 2026 22:40:00 +0200
 
 libfprint-egis0576-tod (0.5.0) UNRELEASED; urgency=medium
 
@@ -16,7 +16,7 @@ libfprint-egis0576-tod (0.5.0) UNRELEASED; urgency=medium
   * The default matcher is the clean-room one; templates do not survive
     the upgrade.
 
- -- PHILIPPDEV5396 <philipp2861@gmail.com>  Tue, 22 Sep 2026 22:00:00 +0200
+ -- PHILIPPDEV5396 <PHILIPPDEV5396@outlook.de>  Tue, 22 Sep 2026 22:00:00 +0200
 
 libfprint-egis0576-tod (0.4.5) UNRELEASED; urgency=medium
 
@@ -73,4 +73,4 @@ libfprint-egis0576-tod (0.4.4) UNRELEASED; urgency=medium
     working mailbox, and this field is shown by apt show and used by
     Launchpad to mail PPA build failures.
 
- -- Irving Popovetsky <libfprint-egis0576@popovetsky.com>  Mon, 15 Sep 2026 00:00:00 +0000
+ -- Irving Popovetsky <libfprint-egis0576@popovetsky.com>  Tue, 15 Sep 2026 00:00:00 +0000

@@ -20,7 +20,7 @@ login / `sudo` / screen-unlock through PAM, on stock GNOME/KDE.
 | PAM login, `sudo`, unlock | ✅ works (`sufficient`, password fallback intact) |
 | Cross-reboot matching | ✅ (per-boot flat-field) |
 | Accuracy (shipped matcher) | **It admits false accepts on every dataset but one.** Under the driver's own rule (two consecutive frames over the threshold): the reference unit's session of 2026-09-13 — the one every matcher constant was tuned on — 0 of 60 false rejects, 0 of 480 false accepts; **the same unit, person and fingers five days later: 13 of 60 false rejects, 18 of 480 false accepts** (right thumb taken for right index, where the vendor matcher on the same frames accepts none); enrolled on one of those sessions and tried with the other, 9 and 15 of 240 false accepts; sam-dant's unit 2 of 60 and 2 of 480. On irvingpop's unit 58 of 480 under the kit's looser press-maximum rule; on the second unit, under its owner's protocol, 6.9 % false rejects at 1.1 % false accepts. The cause is what the matcher measures (ridge flow and period, not identity), not any constant measured so far — see [2026-09-26: what prevents a universal 0/0](docs/matcher-comparison.md#2026-09-26-what-prevents-a-universal-00). Until that date this row led with the 2026-09-13 0 / 0 as the reference unit's result. "Impostor" is always the same person's other fingers: **no false-accept figure in this project comes from a second person**, and physical artefacts were never tried. |
-| Validated on | **four** laptop models (AMD + Intel; Fedora, Arch and Ubuntu); one of the four is a partial pass. See "Tested platforms" below. |
+| Validated on | **five** laptop models (AMD + Intel; Fedora, Arch and Ubuntu). See "Tested platforms" below for what each report covered and what it left untested. |
 
 ## The sensor, briefly
 
@@ -75,7 +75,14 @@ runs now exist — the author's plus sam-dant's and irvingpop's in
 [#5](https://github.com/PHILIPPDEV5396/libfprint-egis0576/issues/5) — and they
 disagree sharply: with the vendor matcher, 0, 2 and 37 of 60 genuine presses
 were rejected at the shipped threshold (on the worst run 33 of those 37 scored
-exactly 0). Each run is one person on one unit in one session, so person and
+exactly 0). Those three vendor figures are from before `kit_version 4` and
+flatter the vendor matcher: it adapts while it verifies, and the kit loaded
+each gallery once per fold where the driver reloads it for every action.
+Re-measured with kit v4, the reference unit's 0 of 60 holds; the other two
+have not been re-run and are lower bounds
+([kit v4](tools/accuracy/README.md#kit_version-4-2026-09-26-every-press-starts-from-the-enrolled-template),
+[re-measurement](docs/matcher-comparison.md#2026-09-26-the-vendor-numbers-were-measured-with-a-memory-the-driver-does-not-have)).
+Each run is one person on one unit in one session, so person and
 unit change together and nothing in the data says which of the two the spread
 comes from. Exposure calibration and template size both order the runs the
 *wrong* way; the one measurement that does track the failure is how often the
@@ -98,11 +105,19 @@ not the driver's own login success rate.
 | Lenovo Yoga 7 15ITL5 | Intel Core i5-1135G7 | 15.72 | Fedora 44 | ✅ full stack, 17-point PASS incl. 3× suspend/resume | [#2](https://github.com/PHILIPPDEV5396/libfprint-egis0576/issues/2) |
 | Lenovo IdeaPad Flex 5 16IRU8 | Intel Core i7-1355U | 15.72 | Arch Linux (Omarchy 4.0.2) | ✅ full stack (enroll, verify, sudo/PAM, polkit, lock screen, reboot, 3× suspend/resume); the long-lock stale-claim failure from the original report is gone on v0.4.5, re-tested over a 10 h 46 min locked screen and 1265 verification timeouts with zero refused claims | [#3](https://github.com/PHILIPPDEV5396/libfprint-egis0576/issues/3) |
 | Lenovo Yoga 6 13ALC6 | AMD Ryzen 7 5700U | 15.72 | Ubuntu 26.04 | ✅ enroll, verify, sudo/PAM, polkit, unlock, suspend/resume (GDM login not tested) | [#4](https://github.com/PHILIPPDEV5396/libfprint-egis0576/pull/4) |
-| Lenovo IdeaPad Flex 5 14ITL05 | Intel (11th gen) | 15.72 | Zorin OS 18.1 | ⚠️ enroll, verify and screen-lock unlock work; unlock after suspend needs an extra activation gate on top of the shipped hook, see report. Reporter confirms stable daily use since (2026-09-20) | [#3](https://github.com/PHILIPPDEV5396/libfprint-egis0576/issues/3) |
+| Lenovo IdeaPad Flex 5 14ITL05 | Intel (11th gen) | 15.72 | Ubuntu 26.04.1 (earlier Zorin OS 18.1) | ✅ v0.5.1 Ubuntu TOD package, the vendor build: enroll, verify (the first verify right after enrolling did not match; a later run of five all matched), `sudo`, screen-lock unlock, unlock after suspend/resume from the menu and via the lid (2026-09-26), with the sleep hook and activation gate installed; login after a reboot and long-term use on v0.5.1 not yet tested. The gate is the reporter's design and ships since v0.4.5 (on v0.4.3, with the hook alone, unlock after suspend was not offered). Before that, v0.4.5 in daily use: stable on Zorin OS 18.1 (2026-09-20), no failure seen on Ubuntu 26.04.1 (2026-09-26) | [#3](https://github.com/PHILIPPDEV5396/libfprint-egis0576/issues/3) |
 
 Got a different machine with an EH576? **Please open an issue with your results.**
 
 ## Install
+
+> **Upgrading to v0.5.x from any earlier release? Re-enrol every finger.**
+> v0.5.0 changed how a print is stored (a versioned record instead of the bare
+> template bytes every release up to v0.4.5 wrote) and changed the default
+> matcher with it, so the driver refuses prints enrolled under an earlier
+> release instead of scoring them, and verifying against one fails. This holds
+> for every package, the Ubuntu TOD module included, although that one still
+> builds the vendor matcher. Run `fprintd-delete $USER`, then enrol again.
 
 > **Upgrading from a release before v0.4.0?** Those builds spoke a TLS-PSK
 > transport and left the sensor in a mode it keeps until something resets it — so
@@ -111,8 +126,9 @@ Got a different machine with an EH576? **Please open an issue with your results.
 > the sensor stays on the bus until the next transfer to it, then drops off and
 > re-enumerates (~0.4 s), after which attempts work normally. Details in
 > [`docs/sensor-tuning.md` §6](docs/sensor-tuning.md#6-forceresetdevice-takes-effect-on-the-next-transfer).
-> **No re-enrollment is needed**: existing prints keep matching, because the
-> exposure target and register are unchanged.
+> That step to v0.4.x needed **no re-enrollment**: existing prints kept
+> matching, because the exposure target and register are unchanged. Going on
+> to v0.5.x does need one, see the note above.
 >
 > The same change fixes dual-boot: earlier releases left the sensor in a state
 > where Windows' own driver failed to start it (Device Manager **Code 10**) until
@@ -126,8 +142,9 @@ Got a different machine with an EH576? **Please open an issue with your results.
 > main loop inside gusb's synchronous transfer helpers, narrow enough to
 > survive months of use before it was caught on hardware. **v0.4.3 fixes it**
 > — the capture thread no longer depends on the main loop at all (write-up in
-> [`docs/worker-thread.md`](docs/worker-thread.md)). No re-enrollment is
-> needed; capture and matching are unchanged.
+> [`docs/worker-thread.md`](docs/worker-thread.md)). That fix needed no
+> re-enrollment, since capture and matching were unchanged; v0.5.x does, see
+> the first note above.
 
 
 How the driver reaches `fprintd` depends on the distribution. On Fedora, Arch and
@@ -144,10 +161,54 @@ module that the distro's own libfprint picks up
 
 **Fedora (COPR):**
 ```bash
-sudo dnf copr enable PHILIPPDEV5396/libfprint-egis0576
+sudo dnf copr enable philippdev5396/libfprint-egis0576
 sudo dnf upgrade 'libfprint*'
 sudo systemctl restart fprintd
 ```
+
+The COPR owner name is lower-case; `dnf copr enable PHILIPPDEV5396/…` fails
+with a 404. **As of October 2026 COPR serves v0.4.5, not v0.5.1:** its newest build is
+`libfprint-1.94.100-99.fcNN.egis10` from 2026-09-14 (the vendor matcher and
+the v0.4 template format); v0.5.0 and v0.5.1 have not been built there.
+v0.5.1's Fedora package is on the
+[release page](https://github.com/PHILIPPDEV5396/libfprint-egis0576/releases/tag/v0.5.1),
+built for Fedora 43 only, and because the spec's `Release:` was not bumped
+after v0.4.5 it carries the same name, version and release as COPR's Fedora
+43 build, so `dnf install` of it over that build does nothing. On Fedora 43:
+
+```bash
+curl -LO https://github.com/PHILIPPDEV5396/libfprint-egis0576/releases/download/v0.5.1/libfprint-1.94.100-99.fc43.egis10.x86_64.rpm
+sudo dnf reinstall ./libfprint-1.94.100-99.fc43.egis10.x86_64.rpm   # over the COPR build
+# sudo dnf install ./libfprint-1.94.100-99.fc43.egis10.x86_64.rpm   # over Fedora's own libfprint
+sudo systemctl restart fprintd
+```
+
+then re-enrol (first note above). For Fedora 44 and later there is no v0.5.1
+package; build from source below.
+
+**Debian 13 (trixie), Ubuntu 24.04 (noble) and 26.04 (resolute):** download
+the `.deb` for your system from the
+[release page](https://github.com/PHILIPPDEV5396/libfprint-egis0576/releases/tag/v0.5.1)
+(check it against `SHA256SUMS` there) and install it with `apt`:
+
+```bash
+# Ubuntu: a TOD module next to the stock libfprint, nothing replaced
+sudo apt install ./ubuntu-resolute-libfprint-2-tod1-egis0576_0.5.1.26.04_amd64.deb   # 26.04
+sudo apt install ./ubuntu-noble-libfprint-2-tod1-egis0576_0.5.1.24.04_amd64.deb      # 24.04
+# Debian trixie: replaces libfprint-2-2 (never install these on Ubuntu)
+sudo apt install ./debian-trixie-libfprint-2-2_1.94.100-99egis0.5.1_amd64.deb \
+                 ./debian-trixie-libfprint-2-dev_1.94.100-99egis0.5.1_amd64.deb \
+                 ./debian-trixie-gir1.2-fprint-2.0_1.94.100-99egis0.5.1_amd64.deb
+sudo systemctl restart fprintd
+```
+
+They are files, not a repository, so `apt upgrade` will not update them;
+install the next release's `.deb` the same way. The Ubuntu and the Debian
+packages both install the suspend/resume hook and its gate. The Ubuntu module
+builds the vendor matcher, the Debian package the clean-room default. A real
+finger has been reported on the 26.04 module only; on 24.04 only the sensor
+bring-up was tried on hardware
+([`packaging/`](packaging/README.md#verified-on-real-hardware)).
 
 **Arch (PKGBUILD, not on AUR yet):**
 ```bash
@@ -162,14 +223,13 @@ sleep hook and its fprintd gate — install them by hand, see
 [`integration/`](integration/).
 
 Packaging sources and how they're published live in [`packaging/`](packaging/).
-Both replace the stock `libfprint` (same soname); your other fingerprint hardware
-keeps working because the build includes the full **upstream** default driver set.
-One caveat on Fedora: the COPR build is pristine upstream, so it does not carry
-Fedora's *downstream* `egis_etu905` driver (`1c7a:05ae` / `1c7a:9201`). That only
-matters if you also own one of those readers — see [`packaging/`](packaging/) for a
-rebased patch that keeps both.
+The Fedora, Arch and Debian packages replace the stock `libfprint` (same soname);
+your other fingerprint hardware keeps working because the build includes the full
+**upstream** default driver set. Since libfprint 1.94.100 that set includes the
+`egis_etu905` driver (`1c7a:05ae` / `1c7a:9201`) Fedora used to carry as a
+downstream patch, so the Fedora build no longer drops it.
 
-> Not published to a repo yet? Build from source below — it's the same result.
+> No package for your distribution? Build from source below.
 
 ## Building from source (any distro / development)
 
@@ -267,14 +327,20 @@ EGIS0576_MESON_ARGS="-Degis0576_matcher=cleanroom" ./install.sh  # his original 
 driver — what this driver used until v0.4.x, and what keeps it out of upstream
 libfprint. On the three accuracy-tested units it rejected 0 %, 3.33 % and
 61.7 % of genuine presses and scored 0 on all 480 impostor comparisons of each
-run. `cleanroom` is his original front-end behind the same adapter: at its
+run. Those false-reject rates predate `kit_version 4` and are too favourable
+to `vendor` (see "Accuracy is a separate axis" above): re-measured, the
+reference unit's 0 % holds, the other two have not been re-run and are
+lower bounds, and on the
+reference unit's second session (2026-09-18) kit v4 gives 4 of 60 under the
+driver's rule where the earlier kit gave 2. `cleanroom` is his original
+front-end behind the same adapter: at its
 published threshold it rejects 35 %, 73.3 % and 93.3 % of genuine presses on
 those same captures (5 false accepts of 480 on one unit). It is not the only
 flavour with measured false accepts: the default produced 58 of 480 on the
 third unit under the same press-maximum rule, and 18 of 480 on the reference
 unit's own second session under the driver's rule. `vendor` is the only one that
 has never accepted an impostor press on any unit measured so far — at the cost
-of the 61.7 % above. All three are measured on identical captures in
+of the 61.7 % (or more) above. All three are measured on identical captures in
 [`docs/matcher-comparison.md`](docs/matcher-comparison.md); reproduce on your
 own unit with [`tools/accuracy/`](tools/accuracy/README.md).
 
@@ -444,6 +510,9 @@ driver shortcoming. Details and the full investigation:
   and issued a reset; the sensor re-enumerates on the next access
   ([`docs/sensor-tuning.md` §6](docs/sensor-tuning.md#6-forceresetdevice-takes-effect-on-the-next-transfer)).
   See the note under [Install](#install).
+- **Every verify fails right after upgrading to v0.5.x:** prints enrolled under
+  v0.4.x or earlier are refused, not scored. Re-enrol; see the first note under
+  [Install](#install).
 
 - **`fprintd` still uses the old driver / device not found:** confirm
   `ldconfig -p | grep libfprint-2` points at your `PREFIX`, then
@@ -473,10 +542,19 @@ Most wanted, in order:
    `results.json` summary is shared, never frames) and open an issue titled
    `accuracy: <laptop model>` as its README asks — collected under
    [#5](https://github.com/PHILIPPDEV5396/libfprint-egis0576/issues/5).
-4. **Packaging** — AUR, Debian/Ubuntu `.deb` and release CI (coordinated in
-   [#6](https://github.com/PHILIPPDEV5396/libfprint-egis0576/issues/6)), a way
-   to rebuild automatically when the distro updates libfprint, other distro
-   build recipes.
+4. **Packaging.** The release CI and the Debian/Ubuntu `.deb` packages landed
+   through [#6](https://github.com/PHILIPPDEV5396/libfprint-egis0576/issues/6)
+   (closed 2026-09-21): the release workflow builds, and v0.5.1 carries, a
+   Fedora 43 RPM, an Arch package, Debian trixie `.deb`s and Ubuntu
+   noble/resolute TOD `.deb`s. Still wanted: the `PKGBUILD` published on the
+   AUR (it is not there); an apt repository or PPA for the `.deb`s (today
+   they are release-page files that `apt upgrade` never updates, and the PPA
+   named in
+   [`packaging/`](packaging/README.md#ubuntu--tod-module----packagingubuntu-tod)
+   does not exist yet); COPR rebuilt on every release tag, since it is the only source
+   of Fedora 44 and later packages and is still at v0.4.5 (the release
+   workflow never pushes there); a way to rebuild automatically when a
+   distro updates libfprint; recipes for other distributions.
 
 ## License & legal
 
