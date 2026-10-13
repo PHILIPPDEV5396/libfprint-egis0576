@@ -79,7 +79,7 @@ exactly 0). Those three vendor figures are from before `kit_version 4` and
 flatter the vendor matcher: it adapts while it verifies, and the kit loaded
 each gallery once per fold where the driver reloads it for every action.
 Re-measured with kit v4, the reference unit's 0 of 60 holds; the other two
-are lower bounds
+have not been re-run and are lower bounds
 ([kit v4](tools/accuracy/README.md#kit_version-4-2026-09-26-every-press-starts-from-the-enrolled-template),
 [re-measurement](docs/matcher-comparison.md#2026-09-26-the-vendor-numbers-were-measured-with-a-memory-the-driver-does-not-have)).
 Each run is one person on one unit in one session, so person and
@@ -167,7 +167,7 @@ sudo systemctl restart fprintd
 ```
 
 The COPR owner name is lower-case; `dnf copr enable PHILIPPDEV5396/…` fails
-with a 404. **COPR serves v0.4.5 today, not v0.5.1:** its newest build is
+with a 404. **As of October 2026 COPR serves v0.4.5, not v0.5.1:** its newest build is
 `libfprint-1.94.100-99.fcNN.egis10` from 2026-09-14 (the vendor matcher and
 the v0.4 template format); v0.5.0 and v0.5.1 have not been built there.
 v0.5.1's Fedora package is on the
@@ -184,7 +184,7 @@ sudo systemctl restart fprintd
 ```
 
 then re-enrol (first note above). For Fedora 44 and later there is no v0.5.1
-package; build from source below. The next release fixes the numbering.
+package; build from source below.
 
 **Debian 13 (trixie), Ubuntu 24.04 (noble) and 26.04 (resolute):** download
 the `.deb` for your system from the
@@ -329,7 +329,8 @@ libfprint. On the three accuracy-tested units it rejected 0 %, 3.33 % and
 61.7 % of genuine presses and scored 0 on all 480 impostor comparisons of each
 run. Those false-reject rates predate `kit_version 4` and are too favourable
 to `vendor` (see "Accuracy is a separate axis" above): re-measured, the
-reference unit's 0 % holds, the other two are lower bounds, and on the
+reference unit's 0 % holds, the other two have not been re-run and are
+lower bounds, and on the
 reference unit's second session (2026-09-18) kit v4 gives 4 of 60 under the
 driver's rule where the earlier kit gave 2. `cleanroom` is his original
 front-end behind the same adapter: at its

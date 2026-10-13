@@ -170,9 +170,9 @@ installs alongside the stock package as a TOD module.
 ### Users install with
 
 Not published to a repository. Since v0.5.1 the GitHub release carries the
-three `debian-trixie-*.deb` files built and checked by the release CI; install
-all three together with `apt install ./…`, the same way as below. Or build
-them from this repo:
+`debian-trixie-*.deb` files built and checked by the release CI; install the
+three that are not `-dbgsym` together with `apt install ./…`, the same way
+as below. Or build them from this repo:
 
 ```bash
 git clone https://github.com/PHILIPPDEV5396/libfprint-egis0576.git
@@ -390,7 +390,7 @@ Two Ubuntu series are supported, and each gets its own build:
 | Series | Status |
 |---|---|
 | **noble**, 24.04 LTS | sensor bring-up on real hardware only: the stock library loaded a v0.4.x module and `fp_device_open_sync` completed on an EH576 (maintainer, reported 2026-09-14); no enrol or verify through this package reported yet |
-| **resolute**, 26.04 LTS | real-finger use with the published package (vendor build), by sam-dant on 2026-09-26: v0.5.1 enrol, verify, `sudo`, screen-lock unlock and unlock after suspend/resume, and daily use of v0.4.5 before it |
+| **resolute**, 26.04 LTS | real-finger use by sam-dant, reported 2026-09-26: the published v0.5.1 package (vendor build) for enrol, verify, `sudo`, screen-lock unlock and unlock after suspend/resume, and before it daily use of a v0.4.5 build of this package, which was not a release-page file |
 
 Both are built, installed and load-checked in CI on every tag. Details of
 the hardware runs are under "Verified on real hardware" below.
@@ -552,13 +552,14 @@ six-step exposure calibration. He also confirmed the same noble-built binary
 loads under `1.95.1+tod1` on `ubuntu:26.04`. No finger was enrolled or
 verified in that run.
 
-**resolute, a real finger.** The reports of the published package in real
-use are **sam-dant**'s, both posted in
+**resolute, a real finger.** The reports of this package in real use are
+**sam-dant**'s, both posted in
 [#3](https://github.com/PHILIPPDEV5396/libfprint-egis0576/issues/3) on
 2026-09-26, from a Lenovo IdeaPad Flex 5 14ITL05 under Ubuntu 26.04.1 with
 the shipped sleep hook and activation gate installed:
 
-- **v0.4.5** (`0.4.5~26.04`), daily use since he moved to Ubuntu:
+- **v0.4.5** (`0.4.5~26.04`; v0.4.5 predates the release CI, so this was
+  not a release-page file), daily use since he moved to Ubuntu:
   screen-lock unlock, suspend/resume and lid close/open worked in every test
   he made, with no cycle count and no overnight test. `sudo` asked only for
   the password; his `common-auth` had no `pam_fprintd.so` line, which he
