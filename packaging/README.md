@@ -16,6 +16,15 @@ Two layers below: **installing** (for users, once published) and **publishing**
 ---
 
 
+## Upgrading to v0.5.x: re-enrol every finger
+
+v0.5.0 changed how a print is stored (a versioned record instead of the bare
+template bytes every release up to v0.4.5 wrote) and changed the default
+matcher with it, so the driver refuses prints enrolled under any earlier
+release instead of scoring them. This applies to every package here,
+including the Ubuntu TOD module, which still builds the vendor matcher:
+after installing v0.5.x, run `fprintd-delete $USER` and enrol again.
+
 ## Upgrading from a release before v0.4.0
 
 Those builds spoke a TLS-PSK transport to the sensor and left it in a mode it keeps
@@ -27,8 +36,9 @@ upgrade:
   the sensor stays on the bus until the next transfer to it, then drops off and
   re-enumerates (~0.4 s), after which attempts work normally. Details in
   [`../docs/sensor-tuning.md` §6](../docs/sensor-tuning.md#6-forceresetdevice-takes-effect-on-the-next-transfer).
-- **No re-enrollment is needed.** Existing prints keep matching — the exposure
-  target and register are unchanged.
+- **That step needs no re-enrollment.** Prints from before v0.4.0 keep
+  matching under v0.4.x — the exposure target and register are unchanged. A
+  move on to v0.5.x needs one anyway, see above.
 
 The same change also fixes dual-boot: earlier releases left the sensor in a state
 where the Windows vendor driver failed to start it (Device Manager **Code 10**)
@@ -40,10 +50,16 @@ a sensor it finds stuck in it.
 ### Users install with
 
 ```bash
-sudo dnf copr enable PHILIPPDEV5396/libfprint-egis0576
+sudo dnf copr enable philippdev5396/libfprint-egis0576
 sudo dnf upgrade 'libfprint*'      # switches libfprint to the egis0576 build
 sudo systemctl restart fprintd
 ```
+
+The COPR owner name is lower-case (`philippdev5396`); `dnf copr enable` with
+the upper-case GitHub name fails with a 404. As of October 2026 the newest
+COPR build is v0.4.5 (`1.94.100-99.fcNN.egis10`, 2026-09-14); v0.5.0 and
+v0.5.1 have not been built there. The top-level README's "Fedora (COPR)"
+says how to install the v0.5.1 release-page RPM over it.
 
 ### Maintainer: publish to COPR
 
@@ -153,7 +169,10 @@ installs alongside the stock package as a TOD module.
 
 ### Users install with
 
-Not published to a repository — build the `.deb` files from this repo:
+Not published to a repository. Since v0.5.1 the GitHub release carries the
+three `debian-trixie-*.deb` files built and checked by the release CI; install
+all three together with `apt install ./…`, the same way as below. Or build
+them from this repo:
 
 ```bash
 git clone https://github.com/PHILIPPDEV5396/libfprint-egis0576.git
@@ -348,6 +367,11 @@ not specific to this driver or scoped to it. See
 [`../docs/suspend-resume.md`](../docs/suspend-resume.md).
 
 ### Users install with
+
+The PPA below does not exist yet. Until it does, install the `.deb` for your
+series from the release page (since v0.5.1: `ubuntu-noble-…_<version>.24.04_amd64.deb`
+or `ubuntu-resolute-…_<version>.26.04_amd64.deb`) with
+`sudo apt install ./<file>.deb`, then `sudo systemctl restart fprintd`.
 
 ```bash
 sudo add-apt-repository ppa:PHILIPPDEV5396/libfprint-egis0576   # once published

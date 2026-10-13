@@ -111,6 +111,14 @@ Got a different machine with an EH576? **Please open an issue with your results.
 
 ## Install
 
+> **Upgrading to v0.5.x from any earlier release? Re-enrol every finger.**
+> v0.5.0 changed how a print is stored (a versioned record instead of the bare
+> template bytes every release up to v0.4.5 wrote) and changed the default
+> matcher with it, so the driver refuses prints enrolled under an earlier
+> release instead of scoring them, and verifying against one fails. This holds
+> for every package, the Ubuntu TOD module included, although that one still
+> builds the vendor matcher. Run `fprintd-delete $USER`, then enrol again.
+
 > **Upgrading from a release before v0.4.0?** Those builds spoke a TLS-PSK
 > transport and left the sensor in a mode it keeps until something resets it — so
 > the **first** fingerprint attempt after the upgrade can fail once: the driver
@@ -118,8 +126,9 @@ Got a different machine with an EH576? **Please open an issue with your results.
 > the sensor stays on the bus until the next transfer to it, then drops off and
 > re-enumerates (~0.4 s), after which attempts work normally. Details in
 > [`docs/sensor-tuning.md` §6](docs/sensor-tuning.md#6-forceresetdevice-takes-effect-on-the-next-transfer).
-> **No re-enrollment is needed**: existing prints keep matching, because the
-> exposure target and register are unchanged.
+> That step to v0.4.x needed **no re-enrollment**: existing prints kept
+> matching, because the exposure target and register are unchanged. Going on
+> to v0.5.x does need one, see the note above.
 >
 > The same change fixes dual-boot: earlier releases left the sensor in a state
 > where Windows' own driver failed to start it (Device Manager **Code 10**) until
@@ -133,8 +142,9 @@ Got a different machine with an EH576? **Please open an issue with your results.
 > main loop inside gusb's synchronous transfer helpers, narrow enough to
 > survive months of use before it was caught on hardware. **v0.4.3 fixes it**
 > — the capture thread no longer depends on the main loop at all (write-up in
-> [`docs/worker-thread.md`](docs/worker-thread.md)). No re-enrollment is
-> needed; capture and matching are unchanged.
+> [`docs/worker-thread.md`](docs/worker-thread.md)). That fix needed no
+> re-enrollment, since capture and matching were unchanged; v0.5.x does, see
+> the first note above.
 
 
 How the driver reaches `fprintd` depends on the distribution. On Fedora, Arch and
@@ -151,10 +161,54 @@ module that the distro's own libfprint picks up
 
 **Fedora (COPR):**
 ```bash
-sudo dnf copr enable PHILIPPDEV5396/libfprint-egis0576
+sudo dnf copr enable philippdev5396/libfprint-egis0576
 sudo dnf upgrade 'libfprint*'
 sudo systemctl restart fprintd
 ```
+
+The COPR owner name is lower-case; `dnf copr enable PHILIPPDEV5396/…` fails
+with a 404. **COPR serves v0.4.5 today, not v0.5.1:** its newest build is
+`libfprint-1.94.100-99.fcNN.egis10` from 2026-09-14 (the vendor matcher and
+the v0.4 template format); v0.5.0 and v0.5.1 have not been built there.
+v0.5.1's Fedora package is on the
+[release page](https://github.com/PHILIPPDEV5396/libfprint-egis0576/releases/tag/v0.5.1),
+built for Fedora 43 only, and because the spec's `Release:` was not bumped
+after v0.4.5 it carries the same name, version and release as COPR's Fedora
+43 build, so `dnf install` of it over that build does nothing. On Fedora 43:
+
+```bash
+curl -LO https://github.com/PHILIPPDEV5396/libfprint-egis0576/releases/download/v0.5.1/libfprint-1.94.100-99.fc43.egis10.x86_64.rpm
+sudo dnf reinstall ./libfprint-1.94.100-99.fc43.egis10.x86_64.rpm   # over the COPR build
+# sudo dnf install ./libfprint-1.94.100-99.fc43.egis10.x86_64.rpm   # over Fedora's own libfprint
+sudo systemctl restart fprintd
+```
+
+then re-enrol (first note above). For Fedora 44 and later there is no v0.5.1
+package; build from source below. The next release fixes the numbering.
+
+**Debian 13 (trixie), Ubuntu 24.04 (noble) and 26.04 (resolute):** download
+the `.deb` for your system from the
+[release page](https://github.com/PHILIPPDEV5396/libfprint-egis0576/releases/tag/v0.5.1)
+(check it against `SHA256SUMS` there) and install it with `apt`:
+
+```bash
+# Ubuntu: a TOD module next to the stock libfprint, nothing replaced
+sudo apt install ./ubuntu-resolute-libfprint-2-tod1-egis0576_0.5.1.26.04_amd64.deb   # 26.04
+sudo apt install ./ubuntu-noble-libfprint-2-tod1-egis0576_0.5.1.24.04_amd64.deb      # 24.04
+# Debian trixie: replaces libfprint-2-2 (never install these on Ubuntu)
+sudo apt install ./debian-trixie-libfprint-2-2_1.94.100-99egis0.5.1_amd64.deb \
+                 ./debian-trixie-libfprint-2-dev_1.94.100-99egis0.5.1_amd64.deb \
+                 ./debian-trixie-gir1.2-fprint-2.0_1.94.100-99egis0.5.1_amd64.deb
+sudo systemctl restart fprintd
+```
+
+They are files, not a repository, so `apt upgrade` will not update them;
+install the next release's `.deb` the same way. The Ubuntu and the Debian
+packages both install the suspend/resume hook and its gate. The Ubuntu module
+builds the vendor matcher, the Debian package the clean-room default. A real
+finger has been reported on the 26.04 module only; on 24.04 only the sensor
+bring-up was tried on hardware
+([`packaging/`](packaging/README.md#verified-on-real-hardware)).
 
 **Arch (PKGBUILD, not on AUR yet):**
 ```bash
@@ -169,14 +223,13 @@ sleep hook and its fprintd gate — install them by hand, see
 [`integration/`](integration/).
 
 Packaging sources and how they're published live in [`packaging/`](packaging/).
-Both replace the stock `libfprint` (same soname); your other fingerprint hardware
-keeps working because the build includes the full **upstream** default driver set.
-One caveat on Fedora: the COPR build is pristine upstream, so it does not carry
-Fedora's *downstream* `egis_etu905` driver (`1c7a:05ae` / `1c7a:9201`). That only
-matters if you also own one of those readers — see [`packaging/`](packaging/) for a
-rebased patch that keeps both.
+The Fedora, Arch and Debian packages replace the stock `libfprint` (same soname);
+your other fingerprint hardware keeps working because the build includes the full
+**upstream** default driver set. Since libfprint 1.94.100 that set includes the
+`egis_etu905` driver (`1c7a:05ae` / `1c7a:9201`) Fedora used to carry as a
+downstream patch, so the Fedora build no longer drops it.
 
-> Not published to a repo yet? Build from source below — it's the same result.
+> No package for your distribution? Build from source below.
 
 ## Building from source (any distro / development)
 
@@ -456,6 +509,9 @@ driver shortcoming. Details and the full investigation:
   and issued a reset; the sensor re-enumerates on the next access
   ([`docs/sensor-tuning.md` §6](docs/sensor-tuning.md#6-forceresetdevice-takes-effect-on-the-next-transfer)).
   See the note under [Install](#install).
+- **Every verify fails right after upgrading to v0.5.x:** prints enrolled under
+  v0.4.x or earlier are refused, not scored. Re-enrol; see the first note under
+  [Install](#install).
 
 - **`fprintd` still uses the old driver / device not found:** confirm
   `ldconfig -p | grep libfprint-2` points at your `PREFIX`, then
@@ -485,10 +541,19 @@ Most wanted, in order:
    `results.json` summary is shared, never frames) and open an issue titled
    `accuracy: <laptop model>` as its README asks — collected under
    [#5](https://github.com/PHILIPPDEV5396/libfprint-egis0576/issues/5).
-4. **Packaging** — AUR, Debian/Ubuntu `.deb` and release CI (coordinated in
-   [#6](https://github.com/PHILIPPDEV5396/libfprint-egis0576/issues/6)), a way
-   to rebuild automatically when the distro updates libfprint, other distro
-   build recipes.
+4. **Packaging.** The release CI and the Debian/Ubuntu `.deb` packages landed
+   through [#6](https://github.com/PHILIPPDEV5396/libfprint-egis0576/issues/6)
+   (closed 2026-09-21): the release workflow builds, and v0.5.1 carries, a
+   Fedora 43 RPM, an Arch package, Debian trixie `.deb`s and Ubuntu
+   noble/resolute TOD `.deb`s. Still wanted: the `PKGBUILD` published on the
+   AUR (it is not there); an apt repository or PPA for the `.deb`s (today
+   they are release-page files that `apt upgrade` never updates, and the PPA
+   named in
+   [`packaging/`](packaging/README.md#ubuntu--tod-module----packagingubuntu-tod)
+   does not exist yet); COPR rebuilt on every release tag, since it is the only source
+   of Fedora 44 and later packages and is still at v0.4.5 (the release
+   workflow never pushes there); a way to rebuild automatically when a
+   distro updates libfprint; recipes for other distributions.
 
 ## License & legal
 
