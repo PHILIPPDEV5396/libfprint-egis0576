@@ -293,6 +293,14 @@ def evaluate(flavour, binary, fingers, presses, base, thr, best_frame, var, ddir
     far = (sum(1 for s in imp if s >= thr) / len(imp)) if imp else None
     imp_acc = sum(1 for seq in imp_seq if driver_accepts(seq))
     far_confirmed = imp_acc / len(imp_seq) if imp_seq else None
+    # The same verdicts press by press, booleans only, in the order of
+    # genuine_press_scores / impostor_press_scores (gen_seq / imp_seq are
+    # filled in the same loop, and that loop -- fingers, folds, presses -- is
+    # the same for every flavour). Index i is the same press for every
+    # matcher, so two of them can be compared on the same presses (paired);
+    # a fold under `failures` drops its presses from that flavour's lists.
+    gen_confirmed = [driver_accepts(seq) for seq in gen_seq]
+    imp_confirmed = [driver_accepts(seq) for seq in imp_seq]
     # Equal error rate, but ONLY where the two curves actually cross. When no
     # impostor scores at all (the vendor matcher does this: every impostor
     # comparison in all three published runs scored exactly 0), FAR is 0 at
@@ -330,6 +338,10 @@ def evaluate(flavour, binary, fingers, presses, base, thr, best_frame, var, ddir
         # an impostor: there is no equal-error point to report.
         "eer_defined": bool(best),
         "genuine_press_scores": gen, "impostor_press_scores": imp,
+        # the driver's rule per press (genuine_presses_confirmed /
+        # impostor_presses_confirmed are their sums), same order as above
+        "genuine_press_confirmed": gen_confirmed,
+        "impostor_press_confirmed": imp_confirmed,
         "enrolment": diags,
         # Extraction health, counts only: how many probe frames the engine could
         # not extract features from, and how many presses had no extractable

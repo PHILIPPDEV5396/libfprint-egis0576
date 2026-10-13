@@ -420,6 +420,11 @@ Quote the pair, never one of each. `score.c` prints the corroboration verdict
 as a third column for this; an older scorer simply omits it and every frame
 counts as corroborated, which is what the kit assumed before.
 
+`genuine_press_confirmed` / `impostor_press_confirmed` are the same verdict per
+press: one `true` / `false` each, in the order of `genuine_press_scores` /
+`impostor_press_scores` and the same press order for every flavour. Booleans
+only, no image data; they exist so two matchers can be compared press by press.
+
 ## `pairdiag`: why a unit separates, or does not
 
 `evaluate.py` says *whether* the populations separate. When they do not, the
