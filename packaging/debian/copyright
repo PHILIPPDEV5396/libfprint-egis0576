@@ -11,6 +11,15 @@ Files: libfprint/nbis/*
 Copyright: National Institute of Standards and Technology
 License: public-domain
 
+# The Debian packaging itself (debian/control, debian/rules, debian/changelog
+# and the rest of debian/), written by Irving Popovetsky, not the upstream
+# authors credited above. The more specific debian/extra-driver/,
+# debian/extra-integration/ and debian/patches/ stanzas below come after it
+# and take precedence for those files, as dep5 resolves the last match.
+Files: debian/*
+Copyright: Irving Popovetsky <libfprint-egis0576@popovetsky.com>
+License: LGPL-2.1-or-later
+
 # PROVENANCE.md category 1: original work written from scratch for
 # libfprint, licensed the same as the rest of the tree. Exception:
 # egis0576_proto.c's EGIS_STEP_TABLE is a 16-entry table taken byte-exact
